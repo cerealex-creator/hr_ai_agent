@@ -1,0 +1,11 @@
+streamlit
+openai
+whisper
+python-docx
+openpyxl
+boto3
+python-dotenv
+pyyaml
+requests
+PyPDF2
+reportlab
