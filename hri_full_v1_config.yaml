@@ -1,0 +1,17 @@
+# hri_full_v1_config.yaml
+app:
+  name: "HR-помогатор"
+  version: "2.0"
+
+model:
+  name: "qwen/qwen3.5-plus-20260420"
+  base_url: "https://routerai.ru/api/v1"
+  api_key_env: "ROUTERAI_API_KEY"
+  temperature: 0.3
+  max_tokens: 4000
+  supports_temperature: true
+  token_param_type: "max_tokens"
+
+paths:
+  templates_dir: "data/templates"
+  output_dir: "data/output"

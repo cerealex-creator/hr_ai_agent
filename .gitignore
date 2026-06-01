@@ -1,0 +1,37 @@
+# Виртуальное окружение
+venv/
+__pycache__/
+*.pyc
+
+# Секреты
+.env
+
+# ВСЯ папка data (временные файлы, транскрипты, видео)
+data/
+
+# Шрифты
+fonts/
+
+# Папки с бэкапами и загрузками
+Downloads/
+backups/
+
+# Логи и системные файлы
+*.log
+.DS_Store
+
+# Тестовые скрипты
+generate_profile.py
+get_direct_link_simple.py
+search_resumes.py
+test_openai.py
+test_pdf_extraction.py
+test_what_is_downloaded.py
+transcribe.py
+
+# Бэкап рабочей версии (не нужно в репозитории)
+hri_full_v1_backup_working.py
+
+# IDE
+.vscode/
+.idea/
