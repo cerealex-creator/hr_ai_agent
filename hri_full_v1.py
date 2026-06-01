@@ -811,46 +811,11 @@ st.markdown("**Разработчик:** А.А. Крупин")
 st.caption("Загрузите любой файл с информацией о вакансии (аудио-, видео-, текст) и получите профессиональный профиль должности, текст вакансии, опросник и ключевые слова.")
 
 
-# Боковая панель (только конфигурация, без загрузчиков образцов)
-# Боковая панель (только конфигурация, без загрузчиков образцов)
+# Боковая панель (только конфигурация)
 with st.sidebar:
     st.header("⚙️ Конфигурация")
     st.write(f"**Модель:** `{config['model']['name']}`")
     st.write(f"**Температура:** {config['model']['temperature']}")
-
-    st.divider()
-    st.subheader("🎨 Интерфейс")
-    
-    # Маппинг значений темы
-    theme_map = {"light": "Светлая", "dark": "Тёмная", "system": "Системная"}
-    reverse_theme_map = {v: k for k, v in theme_map.items()}
-    
-    current_display = theme_map.get(st.session_state.theme, "Светлая")
-    theme_choice = st.radio(
-        "Тема оформления",
-        ["Светлая", "Тёмная", "Системная"],
-        index=["Светлая", "Тёмная", "Системная"].index(current_display),
-        horizontal=True
-    )
-    new_theme = reverse_theme_map[theme_choice]
-    if new_theme != st.session_state.theme:
-        st.session_state.theme = new_theme
-        apply_theme_and_css()
-        st.rerun()
-    
-    # Выбор цвета акцента
-    new_accent = st.color_picker("Акцентный цвет", st.session_state.accent_color)
-    if new_accent != st.session_state.accent_color:
-        st.session_state.accent_color = new_accent
-        apply_theme_and_css()
-        st.rerun()
-    
-    # Компактный режим
-    compact = st.checkbox("Компактный режим (уменьшить отступы)", value=st.session_state.compact_mode)
-    if compact != st.session_state.compact_mode:
-        st.session_state.compact_mode = compact
-        apply_theme_and_css()
-        st.rerun()
 
     st.divider()
     if st.button("🔄 Перезагрузить конфиг"):
