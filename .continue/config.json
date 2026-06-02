@@ -1,0 +1,25 @@
+{
+  "models": [
+    {
+      "title": "DeepSeek V3 (RouterAI)",
+      "provider": "openai",
+      "model": "deepseek/deepseek-v3-0324",
+      "apiBase": "https://routerai.ru/api/v1",
+      "apiKey": "sk-5F_4HE3a1Mbdff7p__QjCKMuYWKIxeo7"
+    },
+    {
+      "title": "Qwen 2.5 Coder 32B (RouterAI)",
+      "provider": "openai",
+      "model": "qwen/qwen-2.5-coder-32b-instruct",
+      "apiBase": "https://routerai.ru/api/v1",
+      "apiKey": "sk-5F_4HE3a1Mbdff7p__QjCKMuYWKIxeo7"
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Qwen 2.5 Coder 32B (AutoComplete)",
+    "provider": "openai",
+    "model": "qwen/qwen-2.5-coder-32b-instruct",
+    "apiBase": "https://routerai.ru/api/v1",
+    "apiKey": "sk-5F_4HE3a1Mbdff7p__QjCKMuYWKIxeo7"
+  }
+}
