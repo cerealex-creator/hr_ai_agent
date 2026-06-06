@@ -25,6 +25,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.units import mm
 import tempfile
 from datetime import datetime
+import glob
+import re
 
 # ============================================================
 # ОСНОВНЫЕ КОНСТАНТЫ
@@ -283,56 +285,250 @@ def extract_text(uploaded_file):
     else:
         raise ValueError("Неподдерживаемый формат файла")
 
+# Улучшенная функция получения прямой ссылки с Яндекс.Диска 
 def get_direct_yandex_link(public_url):
-    if "disk.yandex.ru" in public_url:
-        return public_url.replace("/i/", "/d/")
-    elif "yadi.sk" in public_url:
-        return public_url.replace("/i/", "/d/")
-    return public_url
+    """
+    Преобразует публичную ссылку Яндекс.Диска в прямую ссылку на скачивание.
+    Использует API Яндекс.Диска для надежности.
+    """
+    if not public_url:
+        return None
+        
+    if "disk.yandex.ru" in public_url or "yadi.sk" in public_url:
+        try:
+            # Извлекаем public key из ссылки
+            if "/i/" in public_url:
+                public_key = public_url.split("/i/")[-1].split("?")[0]
+            elif "/d/" in public_url:
+                # Если уже прямая ссылка, возвращаем как есть
+                return public_url
+            else:
+                return public_url
+            
+            # Используем API Яндекс.Диска для получения информации о файле
+            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key=https://disk.yandex.ru/i/{public_key}&offset=0&limit=100"
+            
+            response = requests.get(api_url, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                # Получаем прямую ссылку на скачивание
+                download_url = data.get("file")
+                if download_url:
+                    print(f"✅ Получена прямая ссылка через API")
+                    return download_url
+                else:
+                    print(f"⚠️ API не вернул ссылку. Ответ: {data}")
+            
+            # Если API не сработал, пробуем старый метод
+            print(f"⚠️ Пробуем метод с заменой /i/ на /d/")
+            return public_url.replace("/i/", "/d/")
+            
+        except Exception as e:
+            print(f"❌ Ошибка получения прямой ссылки: {e}")
+            return public_url.replace("/i/", "/d/") if "/i/" in public_url else public_url
+    else:
+        return public_url
 
+# Улучшенная функция извлечения текста из PDF 
 def extract_text_from_pdf_url(pdf_url):
+    """
+    Скачивает PDF по ссылке с Яндекс.Диска и извлекает текст.
+    """
+    if not pdf_url:
+        print("⚠️ PDF URL пустой")
+        return ""
+        
     try:
+        print(f"📥 Получаем прямую ссылку для PDF...")
         download_url = get_direct_yandex_link(pdf_url)
-        response = requests.get(download_url, timeout=30)
+        if not download_url:
+            print("❌ Не удалось получить прямую ссылку")
+            return ""
+        
+        print(f"📥 Скачиваем PDF...")
+        response = requests.get(download_url, timeout=60)
         if response.status_code == 200:
+            print(f"✅ PDF скачан, размер: {len(response.content)} байт")
             pdf_file = BytesIO(response.content)
-            reader = PyPDF2.PdfReader(pdf_file)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-            return text.strip()
-        return None
+            try:
+                reader = PyPDF2.PdfReader(pdf_file)
+                text = ""
+                for i, page in enumerate(reader.pages):
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                        print(f"  Страница {i+1}: {len(page_text)} символов")
+                result = text.strip()
+                print(f"✅ Извлечено текста: {len(result)} символов")
+                return result
+            except Exception as e:
+                print(f"❌ Ошибка чтения PDF: {e}")
+                return ""
+        else:
+            print(f"❌ Ошибка скачивания PDF: статус {response.status_code}")
+            return ""
     except Exception as e:
-        print(f"Ошибка извлечения текста из PDF: {e}")
-        return None
+        print(f"❌ Ошибка извлечения текста из PDF: {e}")
+        import traceback
+        traceback.print_exc()
+        return ""
+
+# Новая функция транскрипции видео по ссылке 
+def transcribe_video_from_link(video_link):
+    """
+    Скачивает видео/аудио по ссылке, конвертирует и возвращает текст.
+    Исправленная версия с надёжной конвертацией.
+    """
+    if not video_link:
+        print("⚠️ Ссылка на видео пустая")
+        return ""
+    
+    tmp_path = None
+    pcm_path = None
+    
+    try:
+        print(f"🎥 Начинаем расшифровку видео...")
+        print(f"🔗 Ссылка: {video_link[:50]}...")
+        
+        # Получаем прямую ссылку
+        print(f"📥 Получаем прямую ссылку...")
+        direct_url = get_direct_yandex_link(video_link)
+        if not direct_url:
+            print("❌ Не удалось получить прямую ссылку на видео")
+            return ""
+        
+        print(f"✅ Прямая ссылка получена")
+        
+        # Скачиваем файл
+        print(f"📥 Скачиваем файл (это может занять время)...")
+        response = requests.get(direct_url, timeout=300, stream=True)
+        if response.status_code != 200:
+            print(f"❌ Ошибка скачивания видео: статус {response.status_code}")
+            return ""
+        
+        # Определяем расширение
+        content_type = response.headers.get('content-type', '')
+        print(f"📄 Content-Type: {content_type}")
+        
+        ext = '.mp4'
+        if 'webm' in content_type or '.webm' in video_link:
+            ext = '.webm'
+        elif 'mp3' in content_type or '.mp3' in video_link:
+            ext = '.mp3'
+        elif 'wav' in content_type or '.wav' in video_link:
+            ext = '.wav'
+        elif 'ogg' in content_type or '.ogg' in video_link:
+            ext = '.ogg'
+        
+        # Сохраняем во временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+        
+        file_size = os.path.getsize(tmp_path)
+        print(f"✅ Файл скачан: {tmp_path}, размер: {file_size / (1024*1024):.1f} МБ")
+        
+        # Конвертируем в WAV (более надёжный формат для Whisper)
+        print(f"🔄 Конвертация в WAV...")
+        wav_path = tmp_path + ".wav"
+        
+        # Используем ffmpeg для конвертации в WAV
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-i', tmp_path,
+            '-ar', '16000',        # 16kHz
+            '-ac', '1',             # моно
+            '-c:a', 'pcm_s16le',   # 16-bit PCM
+            wav_path
+        ], check=True, capture_output=True)
+        
+        print(f"✅ WAV создан: {wav_path}")
+        
+        # Загружаем модель Whisper
+        print(f"🎙️ Загружаем модель Whisper (base)...")
+        model = whisper.load_model("base")
+        print(f"✅ Модель загружена")
+        
+        # Расшифровываем
+        print(f"🎙️ Начинаем расшифровку...")
+        result = model.transcribe(wav_path, language="ru", task="transcribe")
+        text = result["text"]
+        print(f"✅ Расшифровка завершена! Текст: {len(text)} символов")
+        
+        return text.strip()
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Ошибка ffmpeg: {e}")
+        print(f"stderr: {e.stderr.decode() if e.stderr else 'нет данных'}")
+        return ""
+    except Exception as e:
+        print(f"❌ Ошибка транскрипции: {e}")
+        import traceback
+        traceback.print_exc()
+        return ""
+    finally:
+        # Очищаем временные файлы
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+            print(f"🗑️ Временный файл удален")
+        if pcm_path and os.path.exists(pcm_path):
+            os.unlink(pcm_path)
+            print(f"🗑️ PCM файл удален")
+        # Удаляем WAV если создан
+        wav_path = tmp_path + ".wav" if tmp_path else None
+        if wav_path and os.path.exists(wav_path):
+            os.unlink(wav_path)
+            print(f"🗑️ WAV файл удален")
 
 # ============================================================
 # ФУНКЦИИ ДЛЯ ЯНДЕКС ОБЛАКА
 # ============================================================
 def upload_to_s3_and_get_url(local_path, bucket, access_key, secret_key):
-    session = boto3.session.Session()
-    s3 = session.client(
-        service_name='s3',
-        endpoint_url='https://storage.yandexcloud.net',
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key
-    )
-    object_name = os.path.basename(local_path)
-    file_size = os.path.getsize(local_path)
+    """
+    Загружает локальный файл в Yandex Object Storage и возвращает публичную ссылку.
+    БЕЗ callback — чтобы избежать ошибки NoSessionContext в Streamlit.
+    """
+    import boto3
+    from boto3 import client
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    def callback(bytes_transferred):
-        progress = int(bytes_transferred / file_size * 100)
-        progress_bar.progress(progress)
-        status_text.text(f"Загрузка в облако: {progress}%")
-    
-    s3.upload_file(local_path, bucket, object_name, Callback=callback)
-    progress_bar.empty()
-    status_text.empty()
-    
-    return f"https://storage.yandexcloud.net/{bucket}/{object_name}"
+    try:
+        # Создаем клиент НАПРЯМУЮ, без session.Session()
+        s3_client = client(
+            's3',
+            endpoint_url='https://storage.yandexcloud.net',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
+        )
+        
+        object_name = os.path.basename(local_path)
+        file_size_mb = os.path.getsize(local_path) / (1024 * 1024)
+        
+        st.info(f"📁 Загружаю файл: {object_name} ({file_size_mb:.1f} МБ)")
+        st.info("⏳ Это может занять 1-3 минуты...")
+        
+        # Загружаем файл БЕЗ callback!
+        s3_client.upload_file(local_path, bucket, object_name)
+        
+        # Формируем прямую ссылку
+        url = f"https://storage.yandexcloud.net/{bucket}/{object_name}"
+        
+        st.success(f"✅ Файл загружен в облако!")
+        st.info(f"🔗 Ссылка: {url}")
+        
+        return url
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка загрузки: {type(e).__name__}")
+        st.error(f"📄 Детали: {str(e)}")
+        st.warning("💡 Проверьте:")
+        st.write("1. Что бакет существует и публичный")
+        st.write("2. Правильность ключей доступа")
+        st.write("3. Права сервисного аккаунта (роль storage.editor)")
+        
+        import traceback
+        st.code(traceback.format_exc())
+        
+        raise
 
 def convert_to_pcm(input_path, output_path=None):
     if output_path is None:
@@ -465,9 +661,34 @@ def save_chats(chats_list):
 def load_vacancies():
     if not os.path.exists(VACANCIES_FILE):
         return []
-    with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        vacancies = data.get("vacancies", [])
+    try:
+        with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            vacancies = data.get("vacancies", [])
+    except json.JSONDecodeError as e:
+        st.error(f"Ошибка чтения файла vacancies_db.json: {e}. Данные повреждены.")
+        # Создаем бэкап повреждённого файла
+        backup_name = f"{VACANCIES_FILE}.broken_{int(time.time())}.json"
+        try:
+            os.rename(VACANCIES_FILE, backup_name)
+            st.warning(f"Повреждённый файл сохранён как {backup_name}. Будет создан новый файл.")
+        except:
+            pass
+        backup_files = glob.glob(f"{VACANCIES_FILE}.backup_*")
+        if backup_files:
+            latest_backup = max(backup_files, key=os.path.getctime)
+            try:
+                with open(latest_backup, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    vacancies = data.get("vacancies", [])
+                st.info(f"Загружен бэкап от {latest_backup}")
+                return vacancies
+            except:
+                pass
+        vacancies = []
+        save_vacancies(vacancies)
+        return vacancies
+
     migrated = False
     for v in vacancies:
         if "documents" not in v:
@@ -479,6 +700,28 @@ def load_vacancies():
                 "notes": ""
             }
             migrated = True
+        if "active" not in v:
+            v["active"] = True
+            migrated = True
+        if "created_at" not in v:
+            v["created_at"] = datetime.now().isoformat()
+            migrated = True
+        if "closed_at" not in v:
+            v["closed_at"] = None
+            migrated = True
+        if "vacancy_summary" not in v:
+            v["vacancy_summary"] = ""
+            migrated = True
+        for candidate in v.get("candidates", []):
+            if "task_link" not in candidate:
+                candidate["task_link"] = ""
+                migrated = True
+            if "office_interview_time" not in candidate:
+                candidate["office_interview_time"] = ""
+                migrated = True
+            if "client_final_verdict" not in candidate:
+                candidate["client_final_verdict"] = ""
+                migrated = True
     if migrated:
         save_vacancies(vacancies)
     return vacancies
@@ -497,6 +740,10 @@ def create_vacancy(title, chat_id, client_id=0):
         "title": title,
         "chat_id": chat_id,
         "client_id": client_id,
+        "active": True,
+        "created_at": datetime.now().isoformat(),
+        "closed_at": None,
+        "vacancy_summary": "",
         "documents": {
             "profile": "",
             "vacancy_text": "",
@@ -835,9 +1082,6 @@ with st.sidebar:
 st.sidebar.subheader("👥 Клиентские зоны")
 departments = load_departments()
 for dept in departments:
-    # Создаём прямую ссылку на страницу клиента с параметром dept
-    #st.sidebar.markdown(f"🏢 [{dept['name']}](/client?dept={dept['name']})")
-    # Альтернативно, можно использовать link_button (если ваша версия Streamlit поддерживает)
     st.sidebar.link_button(f"🏢 {dept['name']}", f"/client?dept={dept['name']}")
 
 # Вкладки
@@ -869,16 +1113,62 @@ with tab1:
                         result = model.transcribe(audio_path, language="ru", task="transcribe", fp16=False)
                         transcript_text = result["text"]
                     else:
+                        transcript_text = ""  # Инициализируем заранее
                         try:
-                            pcm_path = convert_to_pcm(audio_path)
-                            audio_url = upload_to_s3_and_get_url(pcm_path,
-                                os.getenv("YANDEX_BUCKET_NAME"),
-                                os.getenv("YANDEX_ACCESS_KEY_ID"),
-                                os.getenv("YANDEX_SECRET_ACCESS_KEY"))
-                            transcript_text = recognize_long_audio(audio_url, os.getenv("YANDEX_API_KEY"))
+                            # Шаг 1: Проверяем переменные окружения
+                            st.info("🔍 Проверка настроек...")
+                            bucket = os.getenv("YANDEX_BUCKET_NAME")
+                            access_key = os.getenv("YANDEX_ACCESS_KEY_ID")
+                            secret_key = os.getenv("YANDEX_SECRET_ACCESS_KEY")
+                            api_key = os.getenv("YANDEX_API_KEY")
+                            
+                            if not all([bucket, access_key, secret_key, api_key]):
+                                st.error("❌ Не все переменные окружения Yandex Cloud настроены!")
+                                st.error("Проверьте файл .env:")
+                                st.code("YANDEX_BUCKET_NAME=ваш_бакет\nYANDEX_ACCESS_KEY_ID=ваш_ключ\nYANDEX_SECRET_ACCESS_KEY=ваш_секретный_ключ\nYANDEX_API_KEY=ваш_api_ключ")
+                                st.stop()
+                            
+                            # Шаг 2: Конвертация в PCM
+                            st.info("🔄 Конвертация аудио в формат PCM...")
+                            try:
+                                pcm_path = convert_to_pcm(audio_path)
+                                st.success("✅ Конвертация завершена")
+                            except FileNotFoundError:
+                                st.error("❌ Не найден ffmpeg. Установите его:")
+                                st.code("brew install ffmpeg  # для Mac\nsudo apt install ffmpeg  # для Linux")
+                                st.stop()
+                            except Exception as e:
+                                st.error(f"❌ Ошибка конвертации: {e}")
+                                st.stop()
+                            
+                            # Шаг 3: Загрузка в облако
+                            st.info("📤 Загрузка в Yandex Object Storage...")
+                            try:
+                                audio_url = upload_to_s3_and_get_url(pcm_path, bucket, access_key, secret_key)
+                                st.success(f"✅ Загружено: {audio_url}")
+                            except Exception as e:
+                                st.error(f"❌ Ошибка загрузки в облако: {e}")
+                                st.error("Проверьте правильность YANDEX_ACCESS_KEY_ID и YANDEX_SECRET_ACCESS_KEY")
+                                st.stop()
+                            
+                            # Шаг 4: Распознавание
+                            st.info("🎙️ Распознавание речи через Yandex SpeechKit...")
+                            try:
+                                transcript_text = recognize_long_audio(audio_url, api_key)
+                                if transcript_text and transcript_text.strip():
+                                    st.success("✅ Расшифровка завершена!")
+                                else:
+                                    st.warning("⚠️ SpeechKit вернул пустой результат")
+                                    transcript_text = ""
+                            except Exception as e:
+                                st.error(f"❌ Ошибка распознавания: {e}")
+                                st.error("Проверьте YANDEX_API_KEY и права доступа")
+                                st.stop()
+                                
                         except Exception as e:
-                            st.error(f"Ошибка: {e}")
-                            transcript_text = ""
+                            st.error(f"❌ Неожиданная ошибка: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
                     if transcript_text:
                         st.session_state.transcript = transcript_text
                         base = os.path.splitext(uploaded_audio.name)[0]
@@ -1067,7 +1357,6 @@ with tab2:
                     chat_opts = {c["name"]: c["id"] for c in chats}
                     selected_chat_name = st.selectbox("Чат Telegram", list(chat_opts.keys()))
                     chat_id = chat_opts[selected_chat_name]
-                    # Получаем client_id из настроек чата
                     selected_chat = next((c for c in chats if c["name"] == selected_chat_name), None)
                     client_id = selected_chat.get("department_id", 0) if selected_chat else 0
                     dept_name = selected_chat.get("department_name", "Админ") if selected_chat else "Админ"
@@ -1199,7 +1488,6 @@ with tab3:
                 st.error(f"Ошибка создания PDF: {e}")
     else:
         st.info("Сгенерируйте документы во второй вкладке.")
-
 # ---------- ВКЛАДКА 4: ВОРОНКА КАНДИДАТОВ ----------
 with tab4:
     st.header("🎯 Воронка кандидатов")
@@ -1273,7 +1561,6 @@ with tab4:
             selected_chat_name = st.selectbox("Чат", list(chat_options.keys()), key="vac4_chat_select")
             chat_id = chat_options[selected_chat_name]
             
-            # Находим выбранный чат в списке chats
             selected_chat_obj = None
             for c in chats:
                 if c["name"] == selected_chat_name:
@@ -1319,109 +1606,247 @@ with tab4:
                 st.rerun()
         
         st.divider()
-        selected_title = st.selectbox("Выберите вакансию для работы", [v["title"] for v in vacancies])
-        selected_vacancy = next(v for v in vacancies if v["title"] == selected_title)
-
-        with st.expander("📄 Документы вакансии (редактирование)"):
-            docs = selected_vacancy.get("documents", {})
-            new_profile = st.text_area("Профиль", value=docs.get("profile", ""), height=200)
-            new_vac_text = st.text_area("Текст вакансии", value=docs.get("vacancy_text", ""), height=200)
-            new_questions = st.text_area("Вопросы", value=docs.get("questions", ""), height=200)
-            new_keywords = st.text_area("Ключевые слова", value=docs.get("keywords", ""), height=100)
-            if st.button("💾 Сохранить документы"):
-                update_vacancy_docs(selected_title, {
-                    "profile": new_profile,
-                    "vacancy_text": new_vac_text,
-                    "questions": new_questions,
-                    "keywords": new_keywords
-                })
-                st.success("Сохранено!")
-                st.rerun()
-
-        st.markdown(f"### 🔍 Кандидаты для «{selected_title}»")
-        if selected_vacancy["candidates"]:
-            for idx, cand in enumerate(selected_vacancy["candidates"]):
-                with st.expander(f"👤 {cand.get('name', 'Без имени')}"):
-                    col1, col2 = st.columns([4,1])
-                    with col1:
-                        st.markdown(f"**Резюме:** {cand.get('resume_link', '—')}")
-                        st.markdown(f"**Видео:** {cand.get('video_link', '—')}")
-                        transcript = st.text_area("Расшифровка собеседования", value=cand.get('transcript', ''), key=f"trans_{idx}", height=100)
-                        if transcript != cand.get('transcript', ''):
-                            selected_vacancy["candidates"][idx]['transcript'] = transcript
-                            save_vacancies(vacancies)
-                            st.success("Расшифровка сохранена!")
-                        if cand.get('ai_score') is not None:
-                            st.metric("Оценка ИИ", f"{cand['ai_score']}/10")
-                            if cand.get('ai_comment'):
-                                st.info(cand['ai_comment'])
-                    with col2:
-                        if st.button("🤖 Оценить", key=f"eval_{idx}"):
-                            with st.spinner("Оценка..."):
-                                resume_text = extract_text_from_pdf_url(cand.get('resume_link', '')) or ""
-                                eval_result = evaluate_candidate_with_ai(resume_text, cand.get('transcript', ''), selected_title)
-                                selected_vacancy["candidates"][idx]["ai_score"] = eval_result.get("score", 0)
-                                selected_vacancy["candidates"][idx]["ai_comment"] = eval_result.get("comment", "")
-                                selected_vacancy["candidates"][idx]["ai_strengths"] = eval_result.get("strengths", [])
-                                selected_vacancy["candidates"][idx]["ai_weaknesses"] = eval_result.get("weaknesses", [])
-                                save_vacancies(vacancies)
-                                st.success("Оценка завершена!")
-                                st.rerun()
-                        hr_comment = st.text_area("Комментарий рекрутера", value=cand.get('hr_comment', ''), key=f"hr_{idx}", height=50)
-                        if hr_comment != cand.get('hr_comment', ''):
-                            selected_vacancy["candidates"][idx]['hr_comment'] = hr_comment
-                            save_vacancies(vacancies)
-                            st.success("Комментарий сохранён!")
-                        if st.button("🗑️ Удалить", key=f"del_cand_{idx}"):
-                            selected_vacancy["candidates"].pop(idx)
-                            save_vacancies(vacancies)
-                            st.rerun()
+        active_vacancies = [v for v in vacancies if v.get("active", True)]
+        if not active_vacancies:
+            st.info("Нет активных вакансий. Создайте новую или восстановите из архива.")
         else:
-            st.info("Нет кандидатов.")
+            selected_title = st.selectbox("Выберите вакансию для работы", [v["title"] for v in active_vacancies])
+            selected_vacancy = next(v for v in active_vacancies if v["title"] == selected_title)
 
-        st.markdown("### ➕ Добавить кандидата")
-        with st.form("add_candidate", clear_on_submit=True):
-            vacancies_list = load_vacancies()
-            vacancy_titles = [v["title"] for v in vacancies_list]
-            selected_vacancy_title = st.selectbox("Вакансия", vacancy_titles, key="cand_vacancy")
-            selected_vacancy_obj = next(v for v in vacancies_list if v["title"] == selected_vacancy_title)
-            name = st.text_input("ФИО")
-            resume_link = st.text_input("Ссылка на резюме")
-            video_link = st.text_input("Ссылка на видео")
-            hr_comment = st.text_area("Комментарий")
-            submitted = st.form_submit_button("Добавить и уведомить")
-            if submitted:
-                if name.strip():
-                    new_cand = {
-                        "vacancy_id": selected_vacancy_obj["id"],
-                        "name": name.strip(),
-                        "resume_link": resume_link.strip(),
-                        "video_link": video_link.strip(),
-                        "transcript": "",
-                        "hr_comment": hr_comment.strip(),
-                        "client_status": "wait",
-                        "client_comment": "",
-                        "office_interview_date": "",
-                        "ai_score": None,
-                        "ai_comment": "",
-                        "ai_strengths": [],
-                        "ai_weaknesses": []
-                    }
-                    selected_vacancy["candidates"].append(new_cand)
-                    save_vacancies(vacancies)
-                    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-                    chat_id = selected_vacancy.get("chat_id")
-                    if bot_token and chat_id:
-                        msg = f"🆕 <b>Новый кандидат</b>\n🏢 {selected_title}\n👤 {name.strip()}"
-                        if resume_link.strip():
-                            msg += f"\n📄 <a href='{resume_link.strip()}'>Резюме</a>"
-                        if video_link.strip():
-                            msg += f"\n🎥 <a href='{video_link.strip()}'>Видео</a>"
-                        send_telegram_message(bot_token, chat_id, msg)
-                    st.success("Кандидат добавлен!")
+            with st.expander("📄 Документы вакансии (редактирование)"):
+                docs = selected_vacancy.get("documents", {})
+                new_profile = st.text_area("Профиль", value=docs.get("profile", ""), height=200)
+                new_vac_text = st.text_area("Текст вакансии", value=docs.get("vacancy_text", ""), height=200)
+                new_questions = st.text_area("Вопросы", value=docs.get("questions", ""), height=200)
+                new_keywords = st.text_area("Ключевые слова", value=docs.get("keywords", ""), height=100)
+                if st.button("💾 Сохранить документы"):
+                    update_vacancy_docs(selected_title, {
+                        "profile": new_profile,
+                        "vacancy_text": new_vac_text,
+                        "questions": new_questions,
+                        "keywords": new_keywords
+                    })
+                    st.success("Сохранено!")
                     st.rerun()
+
+            st.markdown(f"### 🔍 Кандидаты для «{selected_title}»")
+            if selected_vacancy["candidates"]:
+                for idx, cand in enumerate(selected_vacancy["candidates"]):
+                    with st.expander(f"👤 {cand.get('name', 'Без имени')}"):
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**Резюме:** {cand.get('resume_link', '—')}")
+                            st.markdown(f"**Видео:** {cand.get('video_link', '—')}")
+                            
+                            transcript = st.text_area("Расшифровка собеседования", value=cand.get('transcript', ''), key=f"trans_{idx}", height=100)
+                            if transcript != cand.get('transcript', ''):
+                                selected_vacancy["candidates"][idx]['transcript'] = transcript
+                                save_vacancies(vacancies)
+                                st.success("Расшифровка сохранена!")
+                            
+                            hr_comment = st.text_area("Комментарий рекрутера", value=cand.get('hr_comment', ''), key=f"hr_{idx}", height=50)
+                            if hr_comment != cand.get('hr_comment', ''):
+                                selected_vacancy["candidates"][idx]['hr_comment'] = hr_comment
+                                save_vacancies(vacancies)
+                                st.success("Комментарий сохранён!")
+                            
+                            task_link = st.text_input("Ссылка на задание", value=cand.get('task_link', ''), key=f"task_{idx}")
+                            if task_link != cand.get('task_link', ''):
+                                selected_vacancy["candidates"][idx]['task_link'] = task_link
+                                save_vacancies(vacancies)
+                                st.success("Ссылка на задание сохранена!")
+                            
+                            if cand.get('task_link', '').strip():
+                                if st.button("📢 Отправить уведомление о задании", key=f"notify_task_{idx}"):
+                                    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                                    chat_id = selected_vacancy.get("chat_id")
+                                    if bot_token and chat_id:
+                                        msg = f"✅ <b>Выполнено задание</b>\n👤 {cand.get('name', 'Кандидат')}\n🔗 <a href='{cand['task_link']}'>Ссылка на задание</a>"
+                                        send_telegram_message(bot_token, chat_id, msg)
+                                        st.success("Уведомление отправлено!")
+                                    else:
+                                        st.warning("Не настроен Telegram-бот или chat_id")
+                            
+                            final_verdict = st.text_area("Итог по кандидату", value=cand.get('client_final_verdict', ''), key=f"verdict_{idx}", height=100)
+                            if final_verdict != cand.get('client_final_verdict', ''):
+                                selected_vacancy["candidates"][idx]['client_final_verdict'] = final_verdict
+                                save_vacancies(vacancies)
+                                st.success("Итог сохранён!")
+                            
+                            if cand.get('ai_score') is not None:
+                                st.metric("Оценка ИИ", f"{cand['ai_score']}/10")
+                                if cand.get('ai_comment'):
+                                    st.info(cand['ai_comment'])
+                        
+                        with col2:
+                            if st.button("🤖 Оценить", key=f"eval_{idx}"):
+                                with st.spinner("Оценка..."):
+                                    # 1. Текст из резюме
+                                    resume_text = extract_text_from_pdf_url(cand.get('resume_link', '')) or ""
+                                    if not resume_text:
+                                        st.warning("Не удалось извлечь текст из резюме. Проверьте ссылку.")
+                                    
+                                    # 2. Расшифровка собеседования (если есть – используем, иначе пытаемся расшифровать видео)
+                                    transcript_text = cand.get('transcript', '')
+                                    if not transcript_text and cand.get('video_link'):
+                                        with st.spinner("Расшифровка видео (может занять время)..."):
+                                            transcript_text = transcribe_video_from_link(cand.get('video_link')) or ""
+                                            if transcript_text:
+                                                selected_vacancy["candidates"][idx]['transcript'] = transcript_text
+                                                save_vacancies(vacancies)
+                                                st.success("Видео расшифровано!")
+                                            else:
+                                                st.warning("Не удалось расшифровать видео.")
+                                    
+                                    # 3. Оценка ИИ
+                                    eval_result = evaluate_candidate_with_ai(resume_text, transcript_text, selected_title)
+                                    selected_vacancy["candidates"][idx]["ai_score"] = eval_result.get("score", 0)
+                                    selected_vacancy["candidates"][idx]["ai_comment"] = eval_result.get("comment", "")
+                                    selected_vacancy["candidates"][idx]["ai_strengths"] = eval_result.get("strengths", [])
+                                    selected_vacancy["candidates"][idx]["ai_weaknesses"] = eval_result.get("weaknesses", [])
+                                    save_vacancies(vacancies)
+                                    st.success("Оценка завершена!")
+                                    st.rerun()
+                            
+                            if st.button("🗑️ Удалить", key=f"del_cand_{idx}"):
+                                selected_vacancy["candidates"].pop(idx)
+                                save_vacancies(vacancies)
+                                st.success("Кандидат удалён!")
+                                st.rerun()
+            else:
+                st.info("Нет кандидатов.")
+
+            st.markdown("### ➕ Добавить кандидата")
+            with st.form("add_candidate", clear_on_submit=True):
+                name = st.text_input("ФИО")
+                resume_link = st.text_input("Ссылка на резюме")
+                video_link = st.text_input("Ссылка на видео")
+                task_link = st.text_input("Ссылка на тестовое задание (или статус)")
+                hr_comment = st.text_area("Комментарий")
+                send_notification = st.checkbox("📢 Отправить уведомление в Telegram", value=False)
+                submitted = st.form_submit_button("Добавить кандидата")
+                
+                if submitted:
+                    if name.strip():
+                        new_cand = {
+                            "vacancy_id": selected_vacancy["id"],
+                            "name": name.strip(),
+                            "resume_link": resume_link.strip(),
+                            "video_link": video_link.strip(),
+                            "task_link": task_link.strip(),
+                            "transcript": "",
+                            "hr_comment": hr_comment.strip(),
+                            "client_status": "wait",
+                            "client_comment": "",
+                            "office_interview_date": "",
+                            "office_interview_time": "",
+                            "client_final_verdict": "",
+                            "ai_score": None,
+                            "ai_comment": "",
+                            "ai_strengths": [],
+                            "ai_weaknesses": []
+                        }
+                        selected_vacancy["candidates"].append(new_cand)
+                        save_vacancies(vacancies)
+                        
+                        if send_notification:
+                            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                            chat_id = selected_vacancy.get("chat_id")
+                            if bot_token and chat_id:
+                                msg = f"🆕 <b>Новый кандидат</b>\n🏢 {selected_title}\n👤 {name.strip()}"
+                                if resume_link.strip():
+                                    msg += f"\n📄 <a href='{resume_link.strip()}'>Резюме</a>"
+                                if video_link.strip():
+                                    msg += f"\n🎥 <a href='{video_link.strip()}'>Видео</a>"
+                                if task_link.strip():
+                                    msg += f"\n✅ <a href='{task_link.strip()}'>Задание</a>"
+                                if hr_comment.strip():
+                                    msg += f"\n\n💬 <i>Комментарий рекрутера:</i>\n<i>{hr_comment.strip()}</i>"
+                                send_telegram_message(bot_token, chat_id, msg)
+                        st.success("Кандидат добавлен в базу!" + (" Уведомление отправлено." if send_notification else ""))
+                        st.rerun()
+                    else:
+                        st.error("Введите ФИО")
+
+            # --- Архивные вакансии ---
+            st.divider()
+            with st.expander("📦 Архивные вакансии"):
+                archived = [v for v in vacancies if not v.get("active", True)]
+                if not archived:
+                    st.info("Нет архивированных вакансий.")
                 else:
-                    st.error("Введите ФИО")
+                    for vac in archived:
+                        created = vac.get("created_at", "неизвестно")[:10]
+                        closed = vac.get("closed_at", "неизвестно")[:10] if vac.get("closed_at") else "неизвестно"
+                        period = f"с {created} по {closed}" if closed != "неизвестно" else "активна"
+                        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+                        col1.write(f"**{vac['title']}**")
+                        col2.caption(f"Период: {period}")
+                        col3.caption(f"Кандидатов: {len(vac.get('candidates', []))}")
+                        col4.caption(f"Итог: {vac.get('vacancy_summary', '—')[:50]}")
+                        if st.button("🔄 Восстановить", key=f"restore_{vac['id']}"):
+                            vac["active"] = True
+                            vac["closed_at"] = None
+                            save_vacancies(vacancies)
+                            st.success(f"Вакансия «{vac['title']}» восстановлена!")
+                            st.rerun()
+                        with st.expander(f"✏️ Редактировать итог вакансии «{vac['title']}»"):
+                            new_summary = st.text_area("Общий итог по вакансии", value=vac.get("vacancy_summary", ""), key=f"summary_{vac['id']}")
+                            if st.button("Сохранить итог", key=f"save_summary_{vac['id']}"):
+                                vac["vacancy_summary"] = new_summary
+                                save_vacancies(vacancies)
+                                st.success("Итог сохранён!")
+                                st.rerun()
+
+            # --- Статистика закрытых вакансий ---
+            with st.expander("📊 Статистика закрытых вакансий"):
+                closed_vacs = [v for v in vacancies if not v.get("active", True) and v.get("closed_at")]
+                if not closed_vacs:
+                    st.info("Нет закрытых вакансий.")
+                else:
+                    stats_data = []
+                    for vac in closed_vacs:
+                        created = datetime.fromisoformat(vac["created_at"]) if vac.get("created_at") else None
+                        closed = datetime.fromisoformat(vac["closed_at"]) if vac.get("closed_at") else None
+                        days_open = (closed - created).days if created and closed else None
+                        candidates = vac.get("candidates", [])
+                        total = len(candidates)
+                        ready = sum(1 for c in candidates if c.get("client_status") == "ready")
+                        reject = sum(1 for c in candidates if c.get("client_status") == "reject")
+                        wait = sum(1 for c in candidates if c.get("client_status") == "wait")
+                        stats_data.append({
+                            "Вакансия": vac["title"],
+                            "Создана": vac.get("created_at", "-")[:10],
+                            "Закрыта": vac.get("closed_at", "-")[:10],
+                            "Дней открыта": days_open,
+                            "Всего кандидатов": total,
+                            "Принято (ready)": ready,
+                            "Отказов (reject)": reject,
+                            "В работе (wait)": wait,
+                            "Итог": vac.get("vacancy_summary", "-")[:100]
+                        })
+                    st.dataframe(stats_data, use_container_width=True)
+
+            # --- Кнопка деактивации текущей вакансии ---
+            st.divider()
+            st.subheader("🔒 Закрыть вакансию")
+            if selected_vacancy.get("active", True):
+                with st.form("close_vacancy_form"):
+                    st.warning("Закрытие вакансии переместит её в архив. Вы сможете её восстановить позже.")
+                    closing_summary = st.text_area("Общий итог по вакансии (обязательно для закрытия)", value=selected_vacancy.get("vacancy_summary", ""))
+                    submit_close = st.form_submit_button("Закрыть вакансию")
+                    if submit_close:
+                        if not closing_summary.strip():
+                            st.error("Пожалуйста, заполните итог по вакансии перед закрытием.")
+                        else:
+                            selected_vacancy["active"] = False
+                            selected_vacancy["closed_at"] = datetime.now().isoformat()
+                            selected_vacancy["vacancy_summary"] = closing_summary
+                            save_vacancies(vacancies)
+                            st.success(f"Вакансия «{selected_title}» закрыта и перемещена в архив.")
+                            st.rerun()
+            else:
+                st.info("Эта вакансия уже закрыта. Чтобы изменить итог, воспользуйтесь редактированием в архиве.")
 
 # ---------- ВКЛАДКА 5: ИНСТРУКЦИИ ----------
 with tab5:
