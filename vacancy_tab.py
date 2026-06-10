@@ -5,6 +5,7 @@ import streamlit as st
 from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form
 from candidate_funnel import render_candidates_zone
 from vacancy_stats import render_vacancy_stats
+from resume_mockups import render_mockups_zone
 
 
 def render_vacancy_picker(active):
@@ -36,14 +37,18 @@ def render_active_vacancy_workspace(vacancy, deps):
         unsafe_allow_html=True,
     )
 
-    sub_cands, sub_docs, sub_stats = st.tabs([
+    sub_cands, sub_mockups, sub_docs, sub_stats = st.tabs([
         "👥 Кандидаты",
+        "📋 Макеты HH",
         "📄 Документы по вакансии",
         "📊 Статистика",
     ])
 
     with sub_cands:
         render_candidates_zone(vacancy, deps)
+
+    with sub_mockups:
+        render_mockups_zone(vacancy, deps)
 
     with sub_docs:
         render_existing_documents_zone(vacancy, deps)
