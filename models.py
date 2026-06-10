@@ -12,6 +12,7 @@ HR_STAGES = {
     "client_review": "На оценке у заказчика",
     "client_meeting": "Встреча с заказчиком",
     "offer": "Оффер",
+    "started_work": "Вышел на работу",
     "rejected": "Отказ",
     "archived": "Архив",
     "rejected_candidate": "Отказ кандидата",
@@ -41,7 +42,21 @@ YELLOW_STAGES = frozenset({
 })
 
 OFFER_STAGE = "offer"
+STARTED_WORK_STAGE = "started_work"
 CLIENT_ZONE_ENTRY_STAGE = "client_review"
+
+HR_STAGE_TO_CLIENT_STATUS = {
+    OFFER_STAGE: "offer",
+    STARTED_WORK_STAGE: "started",
+    "rejected_client": "reject",
+}
+
+CLIENT_STATUS_TO_HR_STAGE = {
+    "ready": "client_meeting",
+    "reject": "rejected_client",
+    "offer": OFFER_STAGE,
+    "started": STARTED_WORK_STAGE,
+}
 
 
 def reached_hr_stage(candidate, target_stage):
@@ -73,6 +88,7 @@ def is_visible_in_client_zone(candidate):
 # Порядок кандидатов в списке (сверху вниз)
 LIST_DISPLAY_STAGE_ORDER = [
     "resume_screening",
+    "started_work",
     "offer",
     "client_meeting",
     "client_review",
@@ -114,7 +130,7 @@ def get_stage_tone(stage):
     """Тон подсветки строки кандидата: rejected, offer, green, yellow или None."""
     if stage in REJECTION_STAGES or stage == "rejected":
         return "rejected"
-    if stage == OFFER_STAGE:
+    if stage in (OFFER_STAGE, STARTED_WORK_STAGE):
         return "offer"
     if stage in GREEN_STAGES:
         return "green"
@@ -126,8 +142,10 @@ def get_stage_tone(stage):
 def format_stage_option(stage):
     """Подпись статуса в выпадающем списке."""
     label = HR_STAGES.get(stage, stage)
-    if stage == OFFER_STAGE:
+    if stage == STARTED_WORK_STAGE:
         return f"👑 {label}"
+    if stage == OFFER_STAGE:
+        return f"🟢 {label}"
     tone = get_stage_tone(stage)
     if tone == "rejected":
         return f"🔴 {label}"
@@ -157,7 +175,11 @@ CLIENT_STATUS_LABELS = {
     "ready": "Рассматриваем",
     "reject": "Отказ",
     "think": "Надо подумать",
+    "offer": "Оффер",
+    "started": "Вышел на работу",
 }
+
+CLIENT_REVIEW_STATUSES = frozenset({"wait", "ready", "think", "offer"})
 
 
 def default_candidate_fields():
@@ -276,15 +298,23 @@ def set_hr_stage(candidate, new_stage, note=""):
     if new_stage == CLIENT_ZONE_ENTRY_STAGE and old != CLIENT_ZONE_ENTRY_STAGE:
         candidate["client_status"] = "wait"
         candidate["status_updated_at"] = datetime.now().isoformat()
+    elif reached_hr_stage(candidate, CLIENT_ZONE_ENTRY_STAGE):
+        client_status = HR_STAGE_TO_CLIENT_STATUS.get(new_stage)
+        if client_status and candidate.get("client_status") != client_status:
+            candidate["client_status"] = client_status
+            candidate["status_updated_at"] = datetime.now().isoformat()
 
 
 def sync_hr_stage_from_client_status(candidate):
     """Предлагает синхронизацию hr_stage при изменении client_status."""
     status = candidate.get("client_status", "wait")
-    if status == "ready" and candidate.get("hr_stage") == "client_review":
-        return "client_meeting"
-    if status == "reject":
-        return "rejected_client"
+    if status == "ready":
+        if candidate.get("hr_stage") == "client_review":
+            return "client_meeting"
+        return None
+    mapped = CLIENT_STATUS_TO_HR_STAGE.get(status)
+    if mapped and candidate.get("hr_stage") != mapped:
+        return mapped
     return None
 
 

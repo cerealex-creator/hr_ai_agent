@@ -33,12 +33,10 @@ dept_names = {d["id"]: d["name"] for d in departments}
 data = migrate_vacancies_data(load_vacancies())
 production_vacancies = get_production_vacancies(data.get("vacancies", []), departments)
 
-render_master_dashboard(production_vacancies, dept_names)
-
 if not production_vacancies:
+    st.info("Нет активных вакансий в работе.")
     st.stop()
 
-st.divider()
 st.subheader("Кандидаты по вакансии")
 
 vacancy_labels = [
@@ -53,14 +51,15 @@ selected_label = selectbox_no_default(
     vacancy_labels,
     key="master_vac_picker",
 )
-if not selected_label:
-    st.info("Выберите вакансию из списка.")
-    st.stop()
+if selected_label:
+    selected_vacancy = next(
+        v for v in production_vacancies if vacancy_picker_label(v, dept_names) == selected_label
+    )
+    dept = dept_names.get(selected_vacancy.get("client_id"), "—")
+    st.markdown(f"**{dept}** · {selected_vacancy['title']}")
+    render_candidates_section(data, selected_vacancy, key_prefix="master")
+else:
+    st.info("Выберите вакансию из списка, чтобы работать с кандидатами.")
 
-selected_vacancy = next(
-    v for v in production_vacancies if vacancy_picker_label(v, dept_names) == selected_label
-)
-dept = dept_names.get(selected_vacancy.get("client_id"), "—")
-st.markdown(f"**{dept}** · {selected_vacancy['title']}")
-
-render_candidates_section(data, selected_vacancy, key_prefix="master")
+st.divider()
+render_master_dashboard(production_vacancies, dept_names)

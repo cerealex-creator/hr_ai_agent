@@ -6,16 +6,24 @@ from datetime import datetime, time
 import streamlit as st
 
 from eval_ui import has_ai_evaluation, render_ai_score_badge, render_ai_evaluation_block
-from models import CLIENT_ZONE_ENTRY_STAGE, is_visible_in_client_zone, set_hr_stage
+from models import (
+    CLIENT_ZONE_ENTRY_STAGE,
+    OFFER_STAGE,
+    STARTED_WORK_STAGE,
+    is_visible_in_client_zone,
+    set_hr_stage,
+)
 
 STATUS_CONFIG = {
     "wait": {"label": "Ждёт оценки", "icon": "⚪", "badge_class": "status-badge-wait"},
     "ready": {"label": "Рассматриваем", "icon": "🟢", "badge_class": "status-badge-ready"},
     "reject": {"label": "Отказ", "icon": "🔴", "badge_class": "status-badge-reject"},
     "think": {"label": "Надо подумать", "icon": "🟡", "badge_class": "status-badge-think"},
+    "offer": {"label": "Оффер", "icon": "🟢", "badge_class": "status-badge-offer"},
+    "started": {"label": "Вышел на работу", "icon": "👑", "badge_class": "status-badge-started"},
 }
 
-STATUS_ORDER = {"wait": 0, "ready": 1, "think": 2, "reject": 3}
+STATUS_ORDER = {"wait": 0, "ready": 1, "think": 2, "offer": 3, "started": 4, "reject": 5}
 STATUS_OPTIONS = [cfg["label"] for cfg in STATUS_CONFIG.values()]
 STATUS_LABEL_TO_KEY = {cfg["label"]: key for key, cfg in STATUS_CONFIG.items()}
 
@@ -141,6 +149,8 @@ def apply_client_styles():
             .status-badge-ready { background: #dcfce7; color: #15803d; }
             .status-badge-reject { background: #fee2e2; color: #b91c1c; }
             .status-badge-think { background: #fef3c7; color: #b45309; }
+            .status-badge-offer { background: #dcfce7; color: #15803d; font-weight: 700; }
+            .status-badge-started { background: #fef9c3; color: #854d0e; font-weight: 700; }
             .link-btn-compact {
                 display: inline-block;
                 background: #2563eb;
@@ -359,6 +369,10 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
 
                 if saved_status == "reject":
                     set_hr_stage(cand, "rejected_client", "отказ в клиентской зоне")
+                elif saved_status == "offer":
+                    set_hr_stage(cand, OFFER_STAGE, "оффер в клиентской зоне")
+                elif saved_status == "started":
+                    set_hr_stage(cand, STARTED_WORK_STAGE, "вышел на работу (клиентская зона)")
 
                 if show_interview_fields:
                     cand["office_interview_date"] = new_date.strftime("%Y-%m-%d") if new_date else ""
