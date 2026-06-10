@@ -30,7 +30,7 @@ import re
 from urllib.parse import quote
 from corporate_ui import apply_corporate_ui
 from eval_ui import render_ai_score_badge
-from vacancy_tab import render_vacancy_tab
+from vacancy_tab import render_vacancy_tab, render_mockups_main_tab
 from models import migrate_candidate
 
 # ============================================================
@@ -1752,11 +1752,16 @@ st.caption("HR-платформа: подготовка вакансий, вор
 # Боковая панель
 departments = load_departments()
 with st.sidebar:
-    st.markdown('<p class="sidebar-section-label">Клиентские зоны</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sidebar-section-label">Разделы</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<a class="client-zone-btn" href="/mockups" target="_self">📋 Макеты HH</a>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         '<a class="client-zone-btn" href="/master" target="_self">🏢 Мастер-зона (руководитель)</a>',
         unsafe_allow_html=True,
     )
+    st.markdown('<p class="sidebar-section-label">Клиентские зоны</p>', unsafe_allow_html=True)
     client_zone_links = "".join(
         f'<a class="client-zone-btn" href="/client?dept={quote(dept["name"])}" target="_self">{dept["name"]}</a>'
         for dept in departments
@@ -1810,8 +1815,9 @@ with st.sidebar:
 
 
 # Вкладки
-tab_vacancies, tab5, tab6, tab_settings = st.tabs([
+tab_vacancies, tab_mockups, tab5, tab6, tab_settings = st.tabs([
     "🏢 Вакансии",
+    "📋 Макеты HH",
     "📖 Инструкции",
     "📜 История",
     "⚙️ Настройки",
@@ -1821,6 +1827,9 @@ tab_vacancies, tab5, tab6, tab_settings = st.tabs([
 
 with tab_vacancies:
     render_vacancy_tab(build_vacancy_deps())
+
+with tab_mockups:
+    render_mockups_main_tab(build_vacancy_deps())
 
 with tab5:
     st.header("📖 Инструкции по работе с HR-помогатором")

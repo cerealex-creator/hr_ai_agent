@@ -2,6 +2,8 @@
 
 import streamlit as st
 
+from ui_helpers import selectbox_no_default
+
 from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form
 from candidate_funnel import render_candidates_zone
 from vacancy_stats import render_vacancy_stats
@@ -37,18 +39,14 @@ def render_active_vacancy_workspace(vacancy, deps):
         unsafe_allow_html=True,
     )
 
-    sub_cands, sub_mockups, sub_docs, sub_stats = st.tabs([
+    sub_cands, sub_docs, sub_stats = st.tabs([
         "👥 Кандидаты",
-        "📋 Макеты HH",
         "📄 Документы по вакансии",
         "📊 Статистика",
     ])
 
     with sub_cands:
         render_candidates_zone(vacancy, deps)
-
-    with sub_mockups:
-        render_mockups_zone(vacancy, deps)
 
     with sub_docs:
         render_existing_documents_zone(vacancy, deps)
@@ -104,6 +102,39 @@ def render_vacancies_in_work(deps):
     st.divider()
     st.subheader(vacancy["title"])
     render_active_vacancy_workspace(vacancy, deps)
+
+
+def render_mockups_main_tab(deps):
+    """Верхнеуровневый раздел «Макеты HH» с выбором вакансии."""
+    st.header("📋 Макеты HH")
+    st.caption(
+        "Оценка резюме без контактов по профилю должности. "
+        "Массовая оценка ИИ и рейтинг кандидатов относительно друг друга."
+    )
+
+    vacancies = deps["load_vacancies"]()
+    active = [v for v in vacancies if v.get("active", True)]
+    if not active:
+        st.info("Нет активных вакансий. Создайте вакансию во вкладке «Вакансии».")
+        return
+
+    labels = [v["title"] for v in sorted(active, key=lambda x: x.get("title", ""))]
+    selected_title = selectbox_no_default(
+        "Выберите вакансию",
+        labels,
+        key="mockups_main_vacancy",
+    )
+    if not selected_title:
+        st.info("Выберите вакансию из списка.")
+        return
+
+    vacancy = next(v for v in active if v["title"] == selected_title)
+    vacancies = deps["load_vacancies"]()
+    vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
+
+    st.divider()
+    st.subheader(vacancy["title"])
+    render_mockups_zone(vacancy, deps)
 
 
 def render_vacancy_tab(deps):

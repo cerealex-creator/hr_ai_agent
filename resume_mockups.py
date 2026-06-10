@@ -432,3 +432,124 @@ def render_mockups_zone(vacancy, deps):
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
+
+
+def _vacancy_has_profile(vacancy):
+    profile = vacancy.get("documents", {}).get("profile", "")
+    if not profile or not str(profile).strip():
+        return False
+    text = str(profile).strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            return bool(parsed)
+        except json.JSONDecodeError:
+            return False
+    return len(text) >= 30
+
+
+def _get_vacancy_profile_text(vacancy):
+    profile = vacancy.get("documents", {}).get("profile", "")
+    if not profile:
+        return ""
+    text = str(profile).strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            raw = (parsed.get("raw") or "").strip()
+            if raw:
+                return raw
+            return json.dumps(parsed, ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+def build_mockups_deps():
+    """Зависимости для отдельной страницы /mockups без импорта hri_full_v1."""
+    import os
+
+    import yaml
+    from dotenv import load_dotenv
+    from io import BytesIO
+    from openai import OpenAI
+    import PyPDF2
+    import requests
+
+    root = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(root, ".env"), override=True)
+    with open(os.path.join(root, "hri_full_v1_config.yaml"), encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    api_key = os.getenv(config["model"].get("api_key_env", "PROXYAPI_KEY"))
+    client = OpenAI(
+        base_url=config["model"].get("base_url", "https://api.proxyapi.ru/openai/v1"),
+        api_key=api_key,
+    )
+
+    def load_vacancies():
+        path = os.path.join(root, "data/vacancies_db.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("vacancies", [])
+
+    def save_vacancies(vacancies_list):
+        path = os.path.join(root, "data/vacancies_db.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"vacancies": vacancies_list}, f, ensure_ascii=False, indent=2)
+
+    def get_direct_yandex_link(public_url):
+        if not public_url:
+            return None
+        if "disk.yandex.ru" not in public_url and "yadi.sk" not in public_url:
+            return public_url
+        try:
+            if "/i/" in public_url:
+                public_key = public_url.split("/i/")[-1].split("?")[0]
+            elif "/d/" in public_url:
+                return public_url
+            else:
+                return public_url
+            api_url = (
+                "https://cloud-api.yandex.net/v1/disk/public/resources"
+                f"?public_key=https://disk.yandex.ru/i/{public_key}&offset=0&limit=100"
+            )
+            response = requests.get(api_url, timeout=30)
+            if response.status_code == 200:
+                download_url = response.json().get("file")
+                if download_url:
+                    return download_url
+            return public_url.replace("/i/", "/d/")
+        except Exception:
+            return public_url.replace("/i/", "/d/") if "/i/" in public_url else public_url
+
+    def extract_text_from_pdf_url(pdf_url):
+        if not pdf_url:
+            return ""
+        try:
+            download_url = get_direct_yandex_link(pdf_url)
+            if not download_url:
+                return ""
+            response = requests.get(download_url, timeout=60)
+            if response.status_code != 200:
+                return ""
+            reader = PyPDF2.PdfReader(BytesIO(response.content))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception:
+            return ""
+
+    def extract_text(uploaded_file):
+        if uploaded_file.name.lower().endswith(".pdf"):
+            reader = PyPDF2.PdfReader(uploaded_file)
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        return ""
+
+    return {
+        "client": client,
+        "config": config,
+        "load_vacancies": load_vacancies,
+        "save_vacancies": save_vacancies,
+        "extract_text": extract_text,
+        "extract_text_from_pdf_url": extract_text_from_pdf_url,
+        "vacancy_has_profile": _vacancy_has_profile,
+        "get_vacancy_profile_text": _get_vacancy_profile_text,
+    }
