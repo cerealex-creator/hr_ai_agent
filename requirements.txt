@@ -9,3 +9,8 @@ pyyaml
 requests
 PyPDF2
 reportlab
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+aiogram
+aiohttp

@@ -27,6 +27,11 @@ import tempfile
 from datetime import datetime
 import glob
 import re
+from urllib.parse import quote
+from corporate_ui import apply_corporate_ui
+from eval_ui import render_ai_score_badge
+from vacancy_tab import render_vacancy_tab
+from models import migrate_candidate
 
 # ============================================================
 # ОСНОВНЫЕ КОНСТАНТЫ
@@ -50,7 +55,7 @@ def load_departments():
                 {"id": 4, "name": "Склад", "slug": "warehouse"},
                 {"id": 5, "name": "Логистика", "slug": "logistics"},
                 {"id": 6, "name": "Руководители", "slug": "managers"},
-                {"id": 99, "name": "Тестовый", "slug": "test"}
+                {"id": 99, "name": "Тестировочный", "slug": "test"}
             ]
         }
         save_departments(default)
@@ -81,67 +86,6 @@ def get_department_by_id(dept_id):
         if d["id"] == dept_id:
             return d
     return None
-
-# ============================================================
-# НАСТРОЙКИ ТЕМЫ И КАСТОМИЗАЦИИ ИНТЕРФЕЙСА
-# ============================================================
-if "theme" not in st.session_state:
-    st.session_state.theme = "light"
-if "accent_color" not in st.session_state:
-    st.session_state.accent_color = "#00a3ff"
-if "compact_mode" not in st.session_state:
-    st.session_state.compact_mode = False
-
-def apply_theme_and_css():
-    """Применяет выбранную тему, цвет акцента и компактный режим через CSS."""
-    if st.session_state.theme == "dark":
-        bg = "#0e1111"
-        text = "#ffffff"
-        card_bg = "#262730"
-        secondary_bg = "#1a1c23"
-    elif st.session_state.theme == "system":
-        bg = "var(--st-bg)"
-        text = "var(--st-text)"
-        card_bg = "var(--st-card-bg)"
-        secondary_bg = "var(--st-secondary-bg)"
-    else:  # light
-        bg = "#ffffff"
-        text = "#0e1111"
-        card_bg = "#f0f2f6"
-        secondary_bg = "#e6e9ef"
-
-    accent = st.session_state.accent_color
-    compact_css = """
-        div.block-container {padding-top: 0.5rem; padding-bottom: 0.5rem;}
-        .stMarkdown p, .stTextArea label, .stSelectbox label {margin-bottom: 0.2rem;}
-        .stButton button {padding: 0.3rem 0.8rem;}
-    """ if st.session_state.compact_mode else ""
-
-    st.markdown(f"""
-    <style>
-        .stApp {{ background-color: {bg}; }}
-        .reportview-container .main .block-container {{
-            background-color: {bg};
-            color: {text};
-        }}
-        .st-bw, .st-cb, .st-at {{ background-color: {card_bg} !important; }}
-        .stButton button, .stDownloadButton button {{
-            background-color: {accent} !important;
-            border-color: {accent} !important;
-        }}
-        .stButton button:hover, .stDownloadButton button:hover {{ filter: brightness(0.9); }}
-        .custom-card {{
-            background-color: {card_bg};
-            border-radius: 10px;
-            padding: 1rem;
-            margin: 1rem 0;
-            border-left: 4px solid {accent};
-        }}
-        {compact_css}
-    </style>
-    """, unsafe_allow_html=True)
-
-#apply_theme_and_css()
 
 # ============================================================
 # ЗАГРУЗКА КОНФИГУРАЦИИ И КЛЮЧЕЙ
@@ -217,6 +161,59 @@ Hard Skills, которые толковый кандидат может осв�
 Зарплатные условия на период испытательного срока
 """
 
+EXAMPLE_FILLED_PROFILE = """
+Профиль должности: Младший менеджер по маркетплейсам (Wildberries)
+
+Подразделение: Отдел маркетинга
+
+Непосредственный руководитель: Руководитель отдела маркетинга
+
+ЦКП должности: Выполненные в срок и качественно задачи по наполнению контентом карточек товаров
+
+Основные обязанности:
+- Создание карточек товаров (работа в паре со старшим менеджером)
+- Наполнение карточки описанием и характеристиками
+- Работа с баллами за отзывы (своевременный запуск)
+- Работа с рекомендациями продавца в карточках товаров
+- Внесение изменений в карточки товаров по запросу от других сотрудников
+- Ответы на отзывы и вопросы (в рамках помощи ответственному специалисту)
+- SEO в карточках товаров (сбор ключевых запросов, выделение ключей)
+
+Анкетные данные:
+- Образование: желательно высшее/среднее специальное
+- Пол: лучше женский
+- Возраст: от 25 лет, желательно 30-45 лет
+- Семейное положение: если женщина, то без детей, либо дети школьного возраста
+- Место жительства: СПб Янино, не более 1 часа дороги до офиса
+
+Стоп-факторы:
+- Частая смена работы (несколько последних мест работы не более 3 месяцев)
+- Неготовность к офисному формату работы
+
+Hard Skills (обязательные):
+- Знание специфики работы с маркетплейсами (может ответить на проверочные вопросы)
+- Опыт любой работы с карточками товаров (выполняет простую тестовую задачу)
+
+Hard Skills (желательные, освоит за 1-6 недель):
+- Опыт работы с контентом в карточках товаров
+- Знание возможностей массового редактирования в ЛК ВБ
+- Знание 1С на базовом уровне
+- Опыт работы с SEO в текстах карточек
+
+Личные качества:
+- Высокая скорость и лояльность к рутинным задачам (делает задачи в срок, быстро соображает)
+- Средний уровень предпринимателя (творчество как вспомогательный инструмент)
+- Уровень Интегратора ниже среднего (не стремится понравиться всем)
+- Администратор уровне выше среднего (уделяет внимание важным деталям)
+
+Условия работы:
+- Формат: Офисный (офис в СПб на м. Ладожская)
+- Режим: 09:00-18:00
+- Оклад: 80 000 руб. после испытательного срока
+- Испытательный срок: 1-3 месяца
+- Зарплата на испытательный срок: 70 000 руб.
+"""
+
 EXAMPLE_VACANCY = """
 Младший менеджер по маркетплейсам (Wildberries)
 от 75 000 до 85 000 ₽ за месяц, до вычета налогов
@@ -264,6 +261,30 @@ EXAMPLE_QUESTIONNAIRE = """
 8    Итог:                                                                                       Проходной балл.
 """
 
+EXAMPLE_FILLED_QUESTIONNAIRE = """
+1. Основной: «Расскажите, почему сейчас рассматриваете смену работы? Что для вас важно в новом месте?»
+   Уточняющие: «Что именно не устраивает на текущем месте?», «Какие условия для вас принципиальны?»
+   Проверяет: мотивация, ожидания по условиям | Категория: experience
+
+2. Основной: «Был ли у Вас опыт работы с карточками товаров на маркетплейсах? Как именно Вы это делали — расскажите на конкретном примере.»
+   Уточняющие: «Сколько артикулов вели одновременно?», «Какие задачи выполняли сами, а что делегировали?»
+   Проверяет: обязательный hard skill «опыт с карточками товаров» | Категория: hard_skills
+"""
+
+QUESTIONNAIRE_GENERATION_RULES = """
+**Требования к опроснику для первичного собеседования:**
+- Сформируй 6–8 ОСНОВНЫХ вопросов (максимум 10). Каждый основной вопрос привязан к конкретному требованию профиля.
+- Первые два вопроса — мотивация: «Почему ищете работу?» и «Что важно в работе / какие условия ищете?» — в разговорной форме.
+- Остальные вопросы покрывают: обязательные hard skills, ключевые желательные навыки, 1–2 soft skills, анкетные/опытные требования.
+- Стиль беседы: вопросы НЕ должны звучать как допрос или чек-лист. Используй формулу:
+  «Был ли у Вас опыт ...? Как именно Вы это делали — расскажите на примере»,
+  «Расскажите о ситуации, когда ...», «Как Вы обычно подходите к ...?»
+- К каждому основному вопросу добавь 1–3 УТОЧНЯЮЩИХ вопроса (уточняющие_вопросы) — их задают, если ответ на основной был общим или неполным.
+- Для каждого пункта укажи: проверяет_требование (какой пункт профиля проверяем) и категория (hard_skills / soft_skills / experience).
+- пример_ответа — реалистичный ответ сильного кандидата с конкретикой (цифры, инструменты, примеры).
+- Опросник должен позволить по расшифровке интервью объективно оценить наличие/отсутствие и глубину каждого требования профиля.
+"""
+
 # ============================================================
 # ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ И ТЕКСТОМ
 # ============================================================
@@ -275,13 +296,19 @@ def extract_text(uploaded_file):
         doc = Document(uploaded_file)
         return "\n".join([p.text for p in doc.paragraphs])
     elif filename.endswith(".xlsx"):
-        wb = load_workbook(uploaded_file)
+        wb = load_workbook(BytesIO(uploaded_file.getvalue()), read_only=True, data_only=True)
         sheet = wb.active
         rows = []
         for row in sheet.iter_rows(values_only=True):
-            row_text = " | ".join([str(cell) if cell is not None else "" for cell in row])
+            if not any(cell is not None and str(cell).strip() for cell in row):
+                continue
+            row_text = " | ".join(str(cell).strip() if cell is not None else "" for cell in row)
             rows.append(row_text)
+        wb.close()
         return "\n".join(rows)
+    elif filename.endswith(".pdf"):
+        reader = PyPDF2.PdfReader(uploaded_file)
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
     else:
         raise ValueError("Неподдерживаемый формат файла")
 
@@ -587,13 +614,24 @@ HISTORY_INDEX_FILE = os.path.join(HISTORY_DIR, "index.json")
 def ensure_history_dir():
     os.makedirs(HISTORY_DIR, exist_ok=True)
 
+
+def sanitize_history_slug(text):
+    """Безопасное имя файла: убирает / и другие символы, ломающие путь."""
+    if not text or not str(text).strip():
+        return "unknown"
+    slug = str(text).strip().replace(" ", "_")
+    slug = re.sub(r'[/\\:*?"<>|]', "_", slug)
+    slug = re.sub(r"_+", "_", slug).strip("_.")
+    return slug[:120] if slug else "unknown"
+
+
 def save_generation_to_history(generated_data, transcript_text=None, vacancy_title=None):
     ensure_history_dir()
     timestamp = int(time.time())
     dt_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(timestamp))
-    title = generated_data.get("должность", "unknown").replace(" ", "_")
+    title = sanitize_history_slug(generated_data.get("должность", "unknown"))
     if vacancy_title:
-        title = vacancy_title.replace(" ", "_")
+        title = sanitize_history_slug(vacancy_title)
     filename = f"{dt_str}_{title}.json"
     filepath = os.path.join(HISTORY_DIR, filename)
     
@@ -722,6 +760,22 @@ def load_vacancies():
             if "client_final_verdict" not in candidate:
                 candidate["client_final_verdict"] = ""
                 migrated = True
+            if "ignore_flags" not in candidate or not isinstance(candidate.get("ignore_flags"), dict):
+                candidate["ignore_flags"] = default_ignore_flags()
+                migrated = True
+            else:
+                for flag_key, flag_val in default_ignore_flags().items():
+                    if flag_key not in candidate["ignore_flags"]:
+                        candidate["ignore_flags"][flag_key] = flag_val
+                        migrated = True
+            if "profile_checked" not in candidate:
+                candidate["profile_checked"] = False
+                migrated = True
+            if "transcript" not in candidate:
+                candidate["transcript"] = ""
+                migrated = True
+            if migrate_candidate(candidate, default_ignore_flags):
+                migrated = True
     if migrated:
         save_vacancies(vacancies)
     return vacancies
@@ -732,13 +786,14 @@ def save_vacancies(vacancies_list):
         json.dump({"vacancies": vacancies_list}, f, ensure_ascii=False, indent=2)
 
 def create_vacancy(title, chat_id, client_id=0):
+    from telegram_notify import normalize_chat_id
     vacancies = load_vacancies()
     if any(v["title"] == title for v in vacancies):
         return False, "Вакансия с таким названием уже существует"
     new_vacancy = {
         "id": len(vacancies) + 1,
         "title": title,
-        "chat_id": chat_id,
+        "chat_id": normalize_chat_id(chat_id),
         "client_id": client_id,
         "active": True,
         "created_at": datetime.now().isoformat(),
@@ -782,46 +837,607 @@ def delete_vacancy(vacancy_title):
 # ФУНКЦИИ TELEGRAM
 # ============================================================
 def send_telegram_message(bot_token, chat_id, text):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    try:
-        response = requests.post(url, json=payload)
-        data = response.json()
-        if data.get("ok"):
-            return True, "Уведомление доставлено в Telegram"
-        else:
-            return False, f"Ошибка Telegram: {data.get('description', 'неизвестно')}"
-    except Exception as e:
-        return False, f"Сетевая ошибка: {e}"
+    from telegram_notify import send_telegram_html
+    return send_telegram_html(chat_id, text, bot_token=bot_token)
 
 # ============================================================
 # ОЦЕНКА КАНДИДАТА ИИ
 # ============================================================
-def evaluate_candidate_with_ai(resume_text, transcript_text, job_title):
-    prompt = f"""
-Ты — опытный HR-директор. Оцени кандидата на позицию: {job_title}
+def default_ignore_flags():
+    return {
+        "ignore_age": False,
+        "ignore_experience": False,
+        "ignore_work_format": False,
+        "ignore_office_distance": False,
+        "ignore_hard_skills": False,
+        "ignored_hard_skills_text": "",
+    }
 
-РЕЗЮМЕ:
-{resume_text}
 
-РАСШИФРОВКА:
-{transcript_text if transcript_text else "Не предоставлена"}
+def vacancy_has_profile(vacancy):
+    profile = vacancy.get("documents", {}).get("profile", "")
+    if not profile or not str(profile).strip():
+        return False
+    text = str(profile).strip()
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            return bool(parsed)
+        except json.JSONDecodeError:
+            return False
+    return len(text) >= 30
 
-Верни JSON: {{"score": 7, "comment": "...", "strengths": [], "weaknesses": []}}
+
+def get_vacancy_profile_text(vacancy):
+    profile = vacancy.get("documents", {}).get("profile", "")
+    if not profile:
+        return ""
+    text = str(profile).strip()
+    if text.startswith("{"):
+        try:
+            return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+def parse_ai_json_response(content):
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0]
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0]
+    return json.loads(content.strip())
+
+
+def build_ignore_flags_prompt(ignore_flags):
+    flags = ignore_flags or default_ignore_flags()
+    active = []
+    if flags.get("ignore_age"):
+        active.append("ignore_age — требования к возрасту")
+    if flags.get("ignore_experience"):
+        active.append("ignore_experience — требования к опыту")
+    if flags.get("ignore_work_format"):
+        active.append("ignore_work_format — формат работы (офис/удалёнка)")
+    if flags.get("ignore_office_distance"):
+        active.append("ignore_office_distance — расстояние до офиса")
+    if flags.get("ignore_hard_skills"):
+        skills_text = flags.get("ignored_hard_skills_text", "").strip()
+        detail = f" ({skills_text})" if skills_text else ""
+        active.append(f"ignore_hard_skills — конкретные hard skills{detail}")
+    if not active:
+        return "Активные флаги игнорирования: нет"
+    return "Активные флаги игнорирования:\n- " + "\n- ".join(active)
+
+
+SCORE_CATEGORY_RANGES = {
+    0: (0, 29),
+    1: (10, 39),
+    2: (30, 79),
+    3: (60, 89),
+    4: (90, 100),
+}
+
+EVAL_CATEGORY_KEYS = ("hard_skills", "soft_skills", "experience")
+
+EVAL_SYSTEM_PROMPT = """Ты — опытный HR-директор. Оцениваешь кандидата строго по профилю должности.
+
+Правила:
+1. Сначала оцени соответствие по категориям (profile_requirements_met), затем выведи общий score на их основе.
+2. profile_requirements_met — это ЦЕЛЫЕ ПРОЦЕНТЫ от 0 до 100 (не доли 0.03, не баллы 0–4):
+   - hard_skills: обязательные и желательные hard skills из профиля
+   - soft_skills: психологические черты и коммуникативные качества
+   - experience: опыт, анкетные требования, релевантность прошлых ролей
+3. Согласованность score и процентов (ОБЯЗАТЕЛЬНО):
+   - score 4 → каждая категория 90–100%, среднее ≥ 90%
+   - score 3 → каждая категория 60–89%, среднее 70–85%
+   - score 2 → каждая категория 30–79%, среднее 40–70%
+   - score 1 → каждая категория 10–39%, среднее 15–35%
+   - score 0 → каждая категория 0–29%, стоп-фактор или полный провал
+4. В comment явно перечисли: какие требования профиля выполнены, частично, не выполнены; как категории повлияли на score.
+5. strengths/weaknesses — ссылки на конкретные пункты профиля.
+6. Если передан флаг игнорирования — не штрафуй за это требование и укажи в comment: «Требование X проигнорировано по флагу».
+7. РАСШИФРОВКА СОБЕСЕДОВАНИЯ — это запись первичного интервью в разговорной форме:
+   - Ответы кандидата часто косвенные, не по всем пунктам профиля; ищи подтверждения в примерах, деталях, формулировках.
+   - Если требование не обсуждалось на интервью — укажи «не раскрыто на интервью», не ставь 0% автоматически; учти резюме.
+   - Если в резюме есть навык, а на интервью не уточняли — оцени как частично подтверждённый (умеренный %), не как полный провал.
+   - Сопоставляй фрагменты расшифровки с вопросами опросника (если передан) и требованиями профиля.
+   - Не требуй дословных формулировок из профиля в ответах кандидата.
+8. Если передан КОММЕНТАРИЙ HR — обязательно учти его: это замечания рекрутера после контакта с кандидатом; согласуй оценку и score с ними, отрази в comment.
+9. Отвечай ТОЛЬКО валидным JSON без markdown."""
+
+
+def normalize_category_percent(value):
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 0 < v <= 1:
+        v *= 100
+    return int(round(max(0, min(100, v))))
+
+
+def normalize_evaluation_result(result):
+    """Приводит score и profile_requirements_met к согласованным значениям."""
+    try:
+        score = int(float(result.get("score", 0)))
+    except (TypeError, ValueError):
+        score = 0
+    score = max(0, min(4, score))
+    result["score"] = score
+
+    met = result.get("profile_requirements_met") or {}
+    if not isinstance(met, dict):
+        met = {}
+
+    normalized = {key: normalize_category_percent(met.get(key)) for key in EVAL_CATEGORY_KEYS}
+    low, high = SCORE_CATEGORY_RANGES[score]
+    mid = (low + high) // 2
+
+    present = [normalized[k] for k in EVAL_CATEGORY_KEYS if normalized[k] is not None]
+    if present and max(present) <= 4 and score >= 2:
+        normalized = {key: mid for key in EVAL_CATEGORY_KEYS}
+
+    avg = sum(normalized[k] for k in EVAL_CATEGORY_KEYS if normalized[k] is not None) / len(EVAL_CATEGORY_KEYS) if present else 0
+    if score >= 3 and avg < 20:
+        if avg > 0:
+            expected_mid = (low + high) / 2
+            scale = expected_mid / avg
+            for key in EVAL_CATEGORY_KEYS:
+                if normalized[key] is not None:
+                    normalized[key] = int(round(normalized[key] * scale))
+        else:
+            normalized = {key: mid for key in EVAL_CATEGORY_KEYS}
+
+    for key in EVAL_CATEGORY_KEYS:
+        if normalized[key] is None:
+            normalized[key] = mid
+        normalized[key] = max(low, min(high, normalized[key]))
+
+    result["profile_requirements_met"] = normalized
+    return result
+
+
+def get_vacancy_questionnaire_text(vacancy):
+    questions = vacancy.get("documents", {}).get("questions", "")
+    if not questions or not str(questions).strip():
+        return ""
+    text = str(questions).strip()
+    if text.startswith("["):
+        try:
+            return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+QUESTIONNAIRE_JSON_SCHEMA = """{
+  "опросник": [{
+    "вопрос": "основной вопрос в разговорной форме",
+    "уточняющие_вопросы": ["уточнение 1"],
+    "проверяет_требование": "какой пункт профиля проверяем",
+    "категория": "hard_skills | soft_skills | experience",
+    "пример_ответа": "реалистичный ответ сильного кандидата"
+  }]
+}"""
+
+QUESTIONNAIRE_REGENERATE_SYSTEM = f"""Ты — HR-директор с опытом проведения первичных собеседований.
+Твоя задача — сформировать или пересобрать опросник для первичного интервью по профилю должности.
+
+{QUESTIONNAIRE_GENERATION_RULES}
+
+Если передан текущий опросник — улучши его с учётом коррективов, сохраняя удачные формулировки где уместно.
+Верни ТОЛЬКО валидный JSON без markdown по схеме:
+{QUESTIONNAIRE_JSON_SCHEMA}"""
+
+
+def profile_to_text(profile):
+    if isinstance(profile, dict):
+        return json.dumps(profile, ensure_ascii=False, indent=2)
+    return str(profile or "").strip()
+
+
+def parse_questionnaire_input(questionnaire):
+    if isinstance(questionnaire, list):
+        return normalize_docs({"опросник": questionnaire})["опросник"]
+    text = str(questionnaire or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return normalize_docs({"опросник": parsed})["опросник"]
+        except json.JSONDecodeError:
+            pass
+    return normalize_docs({"опросник": [{"вопрос": text, "пример_ответа": ""}]})["опросник"]
+
+
+def regenerate_questionnaire_with_ai(job_title, profile, current_questionnaire=None, corrections=""):
+    profile_text = profile_to_text(profile)
+    if not profile_text:
+        raise ValueError("Профиль должности пуст — сначала сформируйте или загрузите профиль.")
+
+    current_list = parse_questionnaire_input(current_questionnaire) if current_questionnaire else []
+    user_parts = [f"Должность: {job_title or '—'}", f"ПРОФИЛЬ ДОЛЖНОСТИ:\n{profile_text}"]
+    if current_list:
+        current_json = json.dumps(current_list, ensure_ascii=False, indent=2)
+        user_parts.append(f"ТЕКУЩИЙ ОПРОСНИК:\n{current_json}")
+    if corrections and str(corrections).strip():
+        user_parts.append(f"КОРРЕКТИВЫ ОТ HR (обязательно учти):\n{str(corrections).strip()}")
+    user_parts.append("Сформируй опросник для первичного собеседования.")
+
+    response = client.chat.completions.create(
+        model=config["model"]["name"],
+        messages=[
+            {"role": "system", "content": QUESTIONNAIRE_REGENERATE_SYSTEM},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=config["model"]["temperature"],
+        max_tokens=config["model"]["max_tokens"],
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    raw = result.get("опросник", result if isinstance(result, list) else [])
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("ИИ вернул пустой или некорректный опросник.")
+    return normalize_docs({"опросник": raw})["опросник"]
+
+
+PROFILE_REGENERATE_SYSTEM = """Ты — HR-директор. Обнови профиль должности по коррективам HR.
+Верни ТОЛЬКО JSON: {"профиль": { структура как в образце профиля }}."""
+
+VACANCY_TEXT_REGENERATE_SYSTEM = """Ты — HR-директор. Обнови текст вакансии по коррективам HR.
+Верни ТОЛЬКО JSON: {"текст_вакансии": "..."}."""
+
+KEYWORDS_REGENERATE_SYSTEM = """Ты — HR-рекрутер. Обнови ключевые слова для поиска кандидатов по коррективам HR.
+Верни ТОЛЬКО JSON: {"ключевые_слова": ["слово1", "слово2"]}."""
+
+
+def regenerate_profile_with_ai(job_title, profile, corrections=""):
+    profile_text = profile_to_text(profile)
+    if not profile_text:
+        raise ValueError("Профиль пуст — нечего перегенерировать.")
+    user_parts = [f"Должность: {job_title or '—'}", f"ТЕКУЩИЙ ПРОФИЛЬ:\n{profile_text}"]
+    if corrections and str(corrections).strip():
+        user_parts.append(f"КОРРЕКТИВЫ ОТ HR:\n{str(corrections).strip()}")
+    response = client.chat.completions.create(
+        model=config["model"]["name"],
+        messages=[
+            {"role": "system", "content": PROFILE_REGENERATE_SYSTEM},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=config["model"]["temperature"],
+        max_tokens=config["model"]["max_tokens"],
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    prof = result.get("профиль", result if isinstance(result, dict) and "задачи" in result else {})
+    return normalize_docs({"профиль": prof})["профиль"]
+
+
+def regenerate_vacancy_text_with_ai(job_title, profile, current_text, corrections=""):
+    profile_text = profile_to_text(profile)
+    user_parts = [
+        f"Должность: {job_title or '—'}",
+        f"ПРОФИЛЬ:\n{profile_text or '—'}",
+        f"ТЕКУЩИЙ ТЕКСТ ВАКАНСИИ:\n{current_text or '—'}",
+    ]
+    if corrections and str(corrections).strip():
+        user_parts.append(f"КОРРЕКТИВЫ ОТ HR:\n{str(corrections).strip()}")
+    response = client.chat.completions.create(
+        model=config["model"]["name"],
+        messages=[
+            {"role": "system", "content": VACANCY_TEXT_REGENERATE_SYSTEM},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=config["model"]["temperature"],
+        max_tokens=config["model"]["max_tokens"],
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    return result.get("текст_вакансии", current_text)
+
+
+def regenerate_keywords_with_ai(job_title, profile, current_keywords, corrections=""):
+    profile_text = profile_to_text(profile)
+    kw_text = current_keywords if isinstance(current_keywords, str) else ", ".join(current_keywords or [])
+    user_parts = [
+        f"Должность: {job_title or '—'}",
+        f"ПРОФИЛЬ:\n{profile_text or '—'}",
+        f"ТЕКУЩИЕ КЛЮЧЕВЫЕ СЛОВА:\n{kw_text or '—'}",
+    ]
+    if corrections and str(corrections).strip():
+        user_parts.append(f"КОРРЕКТИВЫ ОТ HR:\n{str(corrections).strip()}")
+    response = client.chat.completions.create(
+        model=config["model"]["name"],
+        messages=[
+            {"role": "system", "content": KEYWORDS_REGENERATE_SYSTEM},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=config["model"]["temperature"],
+        max_tokens=800,
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    kws = result.get("ключевые_слова", [])
+    return ", ".join(kws) if isinstance(kws, list) else str(kws)
+
+
+def render_questionnaire_item(index, q):
+    if not isinstance(q, dict):
+        st.markdown(f"**{index}. {q}**")
+        return
+    st.markdown(f"**{index}. {q.get('вопрос', '')}**")
+    meta = []
+    if q.get("проверяет_требование"):
+        meta.append(f"Проверяет: {q['проверяет_требование']}")
+    if q.get("категория"):
+        meta.append(f"Категория: {q['категория']}")
+    if meta:
+        st.caption(" · ".join(meta))
+    followups = q.get("уточняющие_вопросы", [])
+    if followups:
+        with st.expander("Уточняющие вопросы", expanded=False):
+            for j, followup in enumerate(followups, 1):
+                st.markdown(f"{j}. {followup}")
+    if q.get("пример_ответа"):
+        st.caption(f"Пример ответа: {q['пример_ответа']}")
+
+
+def render_questionnaire_edit_panel(job_title, profile, questionnaire, key_prefix, on_apply):
+    """Панель коррективов, перегенерации и ручного редактирования опросника."""
+    questions = parse_questionnaire_input(questionnaire)
+    st.markdown("##### ✏️ Коррективы и перегенерация")
+    corrections = st.text_area(
+        "Укажите, что изменить в опроснике",
+        placeholder=(
+            "Например: добавить вопрос про опыт с Excel; убрать вопрос про зарплату; "
+            "сделать вопросы мягче; больше проверять навык «аналитика данных»"
+        ),
+        height=100,
+        key=f"{key_prefix}_corrections",
+    )
+    if st.button("🔄 Перегенерировать опросник", key=f"{key_prefix}_regen", use_container_width=True):
+        with st.spinner("Перегенерация опросника..."):
+            try:
+                new_questions = regenerate_questionnaire_with_ai(
+                    job_title, profile, questions, corrections
+                )
+                on_apply(new_questions)
+                st.success("Опросник перегенерирован!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка перегенерации: {e}")
+
+    with st.expander("📝 Редактировать опросник вручную (JSON)", expanded=False):
+        json_value = json.dumps(questions, ensure_ascii=False, indent=2)
+        edited_json = st.text_area(
+            "JSON опросника",
+            value=json_value,
+            height=280,
+            key=f"{key_prefix}_json_edit",
+        )
+        if st.button("✅ Сохранить ручные правки", key=f"{key_prefix}_save_json"):
+            try:
+                parsed = json.loads(edited_json)
+                if not isinstance(parsed, list):
+                    raise ValueError("Ожидается JSON-массив вопросов.")
+                on_apply(normalize_docs({"опросник": parsed})["опросник"])
+                st.success("Ручные правки сохранены!")
+                st.rerun()
+            except (json.JSONDecodeError, ValueError) as e:
+                st.error(f"Некорректный JSON: {e}")
+
+    st.divider()
+    st.markdown("##### 📋 Текущий опросник")
+    if not questions:
+        st.info("Опросник пуст. Перегенерируйте его по профилю должности.")
+    for i, q in enumerate(questions, 1):
+        render_questionnaire_item(i, q)
+
+
+def transcribe_whisper_local(audio_path, model_size="medium"):
+    """Расшифровка аудио/видео через локальный Whisper."""
+    model = whisper.load_model(model_size)
+    result = model.transcribe(audio_path, language="ru", task="transcribe", fp16=False)
+    return (result.get("text") or "").strip()
+
+
+def transcribe_speechkit_cloud(audio_path):
+    """Расшифровка через Яндекс SpeechKit (файл загружается в Object Storage)."""
+    pcm_path = convert_to_pcm(audio_path)
+    audio_url = upload_to_s3_and_get_url(
+        pcm_path,
+        os.getenv("YANDEX_BUCKET_NAME"),
+        os.getenv("YANDEX_ACCESS_KEY_ID"),
+        os.getenv("YANDEX_SECRET_ACCESS_KEY"),
+    )
+    return recognize_long_audio(audio_url, os.getenv("YANDEX_API_KEY"))
+
+
+def generate_from_transcript(transcript_text, job_title="", doc_flags=None):
+    """Генерирует пакет HR-документов из расшифровки (можно выбрать состав)."""
+    flags = doc_flags or {
+        "profile": True,
+        "questionnaire": True,
+        "vacancy_text": True,
+        "keywords": True,
+    }
+    doc_parts = []
+    if flags.get("profile"):
+        doc_parts.append("профиль должности")
+    if flags.get("questionnaire"):
+        doc_parts.append("опросник для первичного собеседования")
+    if flags.get("vacancy_text"):
+        doc_parts.append("текст вакансии")
+    if flags.get("keywords"):
+        doc_parts.append("ключевые слова для поиска")
+    docs_list = ", ".join(doc_parts) if doc_parts else "профиль должности и опросник"
+
+    job_title_block = f'Поле "должность" в JSON: "{job_title}".' if job_title else ""
+    system_prompt = f"""
+    Ты — HR-директор с 15-летним опытом. На основе расшифровки создай ТОЛЬКО:
+    {docs_list}.
+
+    Образец профиля: {EXAMPLE_PROFILE}
+    Примеры заполнения: {EXAMPLE_FILLED_PROFILE}
+    Образец вакансии: {EXAMPLE_VACANCY}
+    Образец опросника: {EXAMPLE_QUESTIONNAIRE}
+    Пример опросника: {EXAMPLE_FILLED_QUESTIONNAIRE}
+    {QUESTIONNAIRE_GENERATION_RULES}
+    {job_title_block}
+
+    Верни строго JSON с полями только для запрошенных документов:
+    {{
+      "должность": "...",
+      "профиль": {{...}},
+      "текст_вакансии": "...",
+      "опросник": [{{"вопрос": "...", "уточняющие_вопросы": [], "проверяет_требование": "...", "категория": "...", "пример_ответа": "..."}}],
+      "ключевые_слова": ["..."]
+    }}
+    Не включай в JSON поля документов, которые не запрашивались.
+    """
+    response = client.chat.completions.create(
+        model=config["model"]["name"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Текст расшифровки:\n{transcript_text}"},
+        ],
+        temperature=config["model"]["temperature"],
+        max_tokens=config["model"]["max_tokens"],
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    result = normalize_docs(result)
+    if job_title:
+        result["должность"] = job_title
+    return result
+
+
+def build_vacancy_deps():
+    return {
+        "client": client,
+        "config": config,
+        "load_vacancies": load_vacancies,
+        "save_vacancies": save_vacancies,
+        "load_chats": load_chats,
+        "create_vacancy": create_vacancy,
+        "update_vacancy_docs": update_vacancy_docs,
+        "extract_text": extract_text,
+        "extract_text_from_pdf_url": extract_text_from_pdf_url,
+        "get_direct_yandex_link": get_direct_yandex_link,
+        "normalize_docs": normalize_docs,
+        "parse_ai_json_response": parse_ai_json_response,
+        "regenerate_questionnaire_with_ai": regenerate_questionnaire_with_ai,
+        "render_questionnaire_edit_panel": render_questionnaire_edit_panel,
+        "save_generation_to_history": save_generation_to_history,
+        "export_to_word": export_to_word,
+        "export_to_pdf": export_to_pdf,
+        "generate_from_transcript": generate_from_transcript,
+        "transcribe_whisper_local": transcribe_whisper_local,
+        "transcribe_speechkit_cloud": transcribe_speechkit_cloud,
+        "regenerate_profile_with_ai": regenerate_profile_with_ai,
+        "regenerate_vacancy_text_with_ai": regenerate_vacancy_text_with_ai,
+        "regenerate_keywords_with_ai": regenerate_keywords_with_ai,
+        "profile_to_text": profile_to_text,
+        "parse_questionnaire_input": parse_questionnaire_input,
+        "render_questionnaire_item": render_questionnaire_item,
+        "vacancy_has_profile": vacancy_has_profile,
+        "get_vacancy_profile_text": get_vacancy_profile_text,
+        "get_vacancy_questionnaire_text": get_vacancy_questionnaire_text,
+        "evaluate_candidate_with_ai_v2": evaluate_candidate_with_ai_v2,
+        "send_telegram_message": send_telegram_message,
+        "default_ignore_flags": default_ignore_flags,
+        "QUESTIONNAIRE_GENERATION_RULES": QUESTIONNAIRE_GENERATION_RULES,
+        "EXAMPLE_PROFILE": EXAMPLE_PROFILE,
+        "EXAMPLE_FILLED_PROFILE": EXAMPLE_FILLED_PROFILE,
+        "EXAMPLE_VACANCY": EXAMPLE_VACANCY,
+        "EXAMPLE_QUESTIONNAIRE": EXAMPLE_QUESTIONNAIRE,
+        "EXAMPLE_FILLED_QUESTIONNAIRE": EXAMPLE_FILLED_QUESTIONNAIRE,
+    }
+
+
+def evaluate_candidate_with_ai_v2(
+    resume_text,
+    transcript_text,
+    job_title,
+    vacancy_profile,
+    ignore_flags,
+    interview_questionnaire="",
+    hr_comment="",
+):
+    from resume_ai import format_hr_comment_block
+
+    questionnaire_block = ""
+    if interview_questionnaire and interview_questionnaire.strip():
+        questionnaire_block = f"""
+ОПРОСНИК ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ ДЛЯ ЭТОГО КАНДИДАТА (основные и уточняющие вопросы + примеры ответов):
+{interview_questionnaire}
+
+Сопоставь расшифровку интервью с КАЖДЫМ вопросом опросника: что кандидат раскрыл, что осталось неясным, насколько ответы соответствуют пример_ответа.
 """
+
+    user_prompt = f"""Оцени кандидата на позицию: {job_title}
+
+ПРОФИЛЬ ДОЛЖНОСТИ:
+{vacancy_profile}
+
+{questionnaire_block}
+
+{build_ignore_flags_prompt(ignore_flags)}
+
+РЕЗЮМЕ КАНДИДАТА:
+{resume_text or "Не предоставлено"}
+
+РАСШИФРОВКА ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ (разговорная речь, ответы могут быть неполными):
+{transcript_text if transcript_text else "Не предоставлена — опирайся на резюме, снижай уверенность оценки"}
+{format_hr_comment_block(hr_comment)}
+Алгоритм:
+1. Составь чек-лист требований профиля; для каждого отметь: подтверждено интервью / подтверждено резюме / частично / не раскрыто.
+2. Разбери соответствие по категориям hard_skills / soft_skills / experience (проценты 0–100).
+3. На основе процентов и стоп-факторов определи score 0–4.
+4. В comment: по каждой категории — что услышано на интервью, что видно в резюме, что не проверялось; если есть комментарий HR — как он повлиял на оценку.
+
+Верни JSON:
+{{
+  "score": 3,
+  "comment": "Hard skills: 75% — выполнено X, не хватает Y. Soft skills: 70% — ... Experience: 80% — ... Итоговый score 3/4, потому что ...",
+  "strengths": ["соответствует требованию X из профиля"],
+  "weaknesses": ["отсутствует требование Y из профиля"],
+  "profile_requirements_met": {{
+    "hard_skills": 75,
+    "soft_skills": 70,
+    "experience": 80
+  }},
+  "flags_applied": []
+}}
+
+ВАЖНО: profile_requirements_met — только целые проценты 0–100. Не используй 0.75 вместо 75 и не ставь 3–4 как процент при score 3."""
     try:
         response = client.chat.completions.create(
             model=config["model"]["name"],
             messages=[
-                {"role": "system", "content": "Ты HR-эксперт. Отвечай строго в JSON."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
-            max_tokens=config["model"]["max_tokens"]
+            max_tokens=config["model"]["max_tokens"],
         )
-        return json.loads(response.choices[0].message.content)
+        result = parse_ai_json_response(response.choices[0].message.content)
+        return normalize_evaluation_result(result)
     except Exception as e:
-        return {"score": 0, "comment": f"Ошибка: {e}", "strengths": [], "weaknesses": []}
+        return {
+            "score": 0,
+            "comment": f"Ошибка оценки: {e}",
+            "strengths": [],
+            "weaknesses": [],
+            "profile_requirements_met": {},
+            "flags_applied": [],
+        }
+
+
+def evaluate_candidate_with_ai(resume_text, transcript_text, job_title):
+    """Устаревшая оценка без профиля. Используйте evaluate_candidate_with_ai_v2."""
+    return evaluate_candidate_with_ai_v2(
+        resume_text, transcript_text, job_title, "Профиль не указан.", default_ignore_flags()
+    )
 
 # ============================================================
 # НОРМАЛИЗАЦИЯ JSON
@@ -856,9 +1472,15 @@ def normalize_docs(doc):
             if isinstance(q, str):
                 new_q.append({"вопрос": q, "пример_ответа": ""})
             elif isinstance(q, dict):
+                followups = q.get("уточняющие_вопросы", q.get("followups", []))
+                if isinstance(followups, str):
+                    followups = [followups] if followups.strip() else []
                 new_q.append({
-                    "вопрос": q.get('вопрос', q.get('question', str(q))),
-                    "пример_ответа": q.get('пример_ответа', q.get('example', ''))
+                    "вопрос": q.get("вопрос", q.get("question", str(q))),
+                    "уточняющие_вопросы": [str(f) for f in followups] if isinstance(followups, list) else [],
+                    "проверяет_требование": q.get("проверяет_требование", q.get("requirement", "")),
+                    "категория": q.get("категория", q.get("category", "")),
+                    "пример_ответа": q.get("пример_ответа", q.get("example", "")),
                 })
             else:
                 new_q.append({"вопрос": str(q), "пример_ответа": ""})
@@ -930,6 +1552,12 @@ def export_to_word(gen_data):
     doc.add_heading("ОПРОСНИК ДЛЯ ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ", level=1)
     for i, q in enumerate(gen_data.get("опросник", []), 1):
         doc.add_heading(f"{i}. {q.get('вопрос', '')}", level=2)
+        if q.get("проверяет_требование"):
+            doc.add_paragraph(f"Проверяет: {q.get('проверяет_требование')}")
+        if q.get("категория"):
+            doc.add_paragraph(f"Категория: {q.get('категория')}")
+        for j, followup in enumerate(q.get("уточняющие_вопросы", []), 1):
+            doc.add_paragraph(f"Уточняющий {j}: {followup}")
         doc.add_paragraph(f"Пример желательного ответа: {q.get('пример_ответа', '')}", style='Intense Quote')
     
     doc.add_heading("КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА", level=1)
@@ -1044,6 +1672,12 @@ def export_to_pdf(gen_data):
     draw_section_title("ОПРОСНИК ДЛЯ СОБЕСЕДОВАНИЯ")
     for i, q in enumerate(gen_data.get("опросник", []), 1):
         draw_text(f"{i}. {q.get('вопрос', '')}", font_size=11)
+        if q.get("проверяет_требование"):
+            draw_text(f"   Проверяет: {q.get('проверяет_требование')}", font_size=9)
+        if q.get("категория"):
+            draw_text(f"   Категория: {q.get('категория')}", font_size=9)
+        for j, followup in enumerate(q.get("уточняющие_вопросы", []), 1):
+            draw_text(f"   Уточняющий {j}: {followup}", font_size=9)
         draw_text(f"   Пример: {q.get('пример_ответа', '')}", font_size=10)
         y -= 5
 
@@ -1061,867 +1695,207 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide",
 )
+apply_corporate_ui()
 
 st.title(f"🧠 {config['app']['name']} v{config['app']['version']}")
 st.markdown("**Разработчик:** А.А. Крупин")
-st.caption("Загрузите любой файл с информацией о вакансии (аудио-, видео-, текст) и получите профессиональный профиль должности, текст вакансии, опросник и ключевые слова.")
+st.caption("HR-платформа: подготовка вакансий, воронка кандидатов, оценка ИИ и клиентская зона.")
 
 # Боковая панель
+departments = load_departments()
 with st.sidebar:
-    st.header("⚙️ Конфигурация")
-    st.write(f"**Модель:** `{config['model']['name']}`")
-    st.write(f"**Температура:** {config['model']['temperature']}")
+    st.markdown('<p class="sidebar-section-label">Клиентские зоны</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<a class="client-zone-btn" href="/master" target="_self">🏢 Мастер-зона (руководитель)</a>',
+        unsafe_allow_html=True,
+    )
+    client_zone_links = "".join(
+        f'<a class="client-zone-btn" href="/client?dept={quote(dept["name"])}" target="_self">{dept["name"]}</a>'
+        for dept in departments
+        if dept.get("slug") != "test" and dept.get("id") != 99
+    )
+    st.markdown(client_zone_links, unsafe_allow_html=True)
 
     st.divider()
-    if st.button("🔄 Перезагрузить конфиг"):
+    st.markdown('<p class="sidebar-section-label">Проверка баланса</p>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="sidebar-links-group">
+            <a class="sidebar-link-btn" href="https://console.yandex.cloud/folders/b1glrlal8l5f9uu25jjr/dashboard" target="_blank" rel="noopener noreferrer">Яндекс Облако</a>
+            <a class="sidebar-link-btn" href="https://routerai.ru/settings/billing" target="_blank" rel="noopener noreferrer">RouterAI</a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+    st.markdown(
+        f"""
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-title">{config['app']['name']}</div>
+            <div class="sidebar-brand-subtitle">v{config['app']['version']} · HR-платформа</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<p class="sidebar-section-label">Конфигурация</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="sidebar-config-card">
+            <div class="sidebar-config-row">
+                <span class="label">Модель</span>
+                <span class="value">{config['model']['name']}</span>
+            </div>
+            <div class="sidebar-config-row">
+                <span class="label">Температура</span>
+                <span class="value">{config['model']['temperature']}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Перезагрузить конфиг"):
         config = load_config()
         st.rerun()
 
-    # Динамическая навигация по подразделениям
-    st.sidebar.divider()
-st.sidebar.subheader("👥 Клиентские зоны")
-departments = load_departments()
-for dept in departments:
-    st.sidebar.link_button(f"🏢 {dept['name']}", f"/client?dept={dept['name']}")
 
 # Вкладки
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🎤 Расшифровка", "📝 Генерация", "📄 Результаты", "🎯 Воронка кандидатов", "📖 Инструкции", "📜 История"])
+tab_vacancies, tab5, tab6, tab_settings = st.tabs([
+    "🏢 Вакансии",
+    "📖 Инструкции",
+    "📜 История",
+    "⚙️ Настройки",
+])
 
-# ---------- ВКЛАДКА 1: РАСШИФРОВКА ----------
-with tab1:
-    st.header("📥 Получение текста")
-    source = st.radio("Выберите источник текста:", ("Аудио/видео", "Готовый файл"), horizontal=True, key="source_radio")
 
-    if source == "Аудио/видео":
-        method = st.radio("Метод расшифровки:", ("Локально (Whisper)", "Яндекс (SpeechKit)"), horizontal=True, key="method_radio")
-        uploaded_audio = st.file_uploader("Выберите аудио/видео", type=["mp3", "mp4", "wav", "webm", "mkv", "ogg"])
-        if uploaded_audio:
-            os.makedirs("data/tmp", exist_ok=True)
-            audio_path = os.path.join("data/tmp", uploaded_audio.name)
-            with open(audio_path, "wb") as f:
-                f.write(uploaded_audio.read())
-            if st.button("🎙️ Расшифровать"):
-                with st.spinner("Расшифровка..."):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    for i in range(100):
-                        time.sleep(0.05)
-                        progress_bar.progress(i + 1)
-                        status_text.text(f"Расшифровка... {i+1}%")
-                    if method == "Локально (Whisper)":
-                        model = whisper.load_model("medium")
-                        result = model.transcribe(audio_path, language="ru", task="transcribe", fp16=False)
-                        transcript_text = result["text"]
-                    else:
-                        transcript_text = ""  # Инициализируем заранее
-                        try:
-                            # Шаг 1: Проверяем переменные окружения
-                            st.info("🔍 Проверка настроек...")
-                            bucket = os.getenv("YANDEX_BUCKET_NAME")
-                            access_key = os.getenv("YANDEX_ACCESS_KEY_ID")
-                            secret_key = os.getenv("YANDEX_SECRET_ACCESS_KEY")
-                            api_key = os.getenv("YANDEX_API_KEY")
-                            
-                            if not all([bucket, access_key, secret_key, api_key]):
-                                st.error("❌ Не все переменные окружения Yandex Cloud настроены!")
-                                st.error("Проверьте файл .env:")
-                                st.code("YANDEX_BUCKET_NAME=ваш_бакет\nYANDEX_ACCESS_KEY_ID=ваш_ключ\nYANDEX_SECRET_ACCESS_KEY=ваш_секретный_ключ\nYANDEX_API_KEY=ваш_api_ключ")
-                                st.stop()
-                            
-                            # Шаг 2: Конвертация в PCM
-                            st.info("🔄 Конвертация аудио в формат PCM...")
-                            try:
-                                pcm_path = convert_to_pcm(audio_path)
-                                st.success("✅ Конвертация завершена")
-                            except FileNotFoundError:
-                                st.error("❌ Не найден ffmpeg. Установите его:")
-                                st.code("brew install ffmpeg  # для Mac\nsudo apt install ffmpeg  # для Linux")
-                                st.stop()
-                            except Exception as e:
-                                st.error(f"❌ Ошибка конвертации: {e}")
-                                st.stop()
-                            
-                            # Шаг 3: Загрузка в облако
-                            st.info("📤 Загрузка в Yandex Object Storage...")
-                            try:
-                                audio_url = upload_to_s3_and_get_url(pcm_path, bucket, access_key, secret_key)
-                                st.success(f"✅ Загружено: {audio_url}")
-                            except Exception as e:
-                                st.error(f"❌ Ошибка загрузки в облако: {e}")
-                                st.error("Проверьте правильность YANDEX_ACCESS_KEY_ID и YANDEX_SECRET_ACCESS_KEY")
-                                st.stop()
-                            
-                            # Шаг 4: Распознавание
-                            st.info("🎙️ Распознавание речи через Yandex SpeechKit...")
-                            try:
-                                transcript_text = recognize_long_audio(audio_url, api_key)
-                                if transcript_text and transcript_text.strip():
-                                    st.success("✅ Расшифровка завершена!")
-                                else:
-                                    st.warning("⚠️ SpeechKit вернул пустой результат")
-                                    transcript_text = ""
-                            except Exception as e:
-                                st.error(f"❌ Ошибка распознавания: {e}")
-                                st.error("Проверьте YANDEX_API_KEY и права доступа")
-                                st.stop()
-                                
-                        except Exception as e:
-                            st.error(f"❌ Неожиданная ошибка: {e}")
-                            import traceback
-                            st.code(traceback.format_exc())
-                    if transcript_text:
-                        st.session_state.transcript = transcript_text
-                        base = os.path.splitext(uploaded_audio.name)[0]
-                        output_path = os.path.join(config["paths"]["output_dir"], f"{base}_transcript.txt")
-                        os.makedirs(config["paths"]["output_dir"], exist_ok=True)
-                        with open(output_path, "w", encoding="utf-8") as f:
-                            f.write(transcript_text)
-                        st.success("Расшифровка завершена!")
-                        st.rerun()
-    else:
-        uploaded_text_file = st.file_uploader("Загрузите файл с текстом", type=["txt", "docx", "xlsx"], key="text_uploader")
-        if uploaded_text_file:
-            try:
-                text_content = extract_text(uploaded_text_file)
-                if text_content.strip():
-                    st.session_state.transcript = text_content
-                    st.success("Файл загружен! Теперь вы можете отредактировать текст ниже.")
-                else:
-                    st.warning("Файл пуст.")
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
 
-    if "transcript" in st.session_state and st.session_state.transcript:
-        edited_text = st.text_area("Текст для генерации (можно редактировать)", st.session_state.transcript, height=300)
-        if st.button("💾 Зафиксировать правки"):
-            st.session_state.transcript = edited_text
-            st.success("Текст обновлён!")
-    else:
-        if source == "Аудио/видео":
-            st.info("Загрузите аудио/видео и нажмите «Расшифровать».")
-        else:
-            st.info("Загрузите файл .txt, .docx или .xlsx.")
+with tab_vacancies:
+    render_vacancy_tab(build_vacancy_deps())
 
-# ---------- ВКЛАДКА 2: ГЕНЕРАЦИЯ ----------
-with tab2:
-    st.header("📝 Генерация документов по шаблонам")
-    if "transcript" not in st.session_state or not st.session_state.transcript.strip():
-        st.warning("Сначала получите текст в первой вкладке.")
-    else:
-        if st.button("✨ Сгенерировать всё"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            for i in range(100):
-                time.sleep(0.02)
-                progress_bar.progress(i + 1)
-                status_text.text(f"Генерация документов... {i+1}%")
-            progress_bar.empty()
-            status_text.empty()
-
-            with st.spinner("ИИ создаёт документы..."):
-                system_prompt = f"""
-Ты — HR-директор с 15-летним опытом работы в подборе кандидатов в e-commerce сфере. 
-На основе текстовой расшифровки разговора с заказчиком создай:
-- профиль должности,
-- текст вакансии,
-- вопросы для первичного собеседования (опросник),
-- ключевые слова для поиска кандидатов на hh.ru и в соцсетях.
-
-Ниже приведены образцы документов. Строго соблюдай стиль и структуру образцов.
-
-Образец профиля:
-{EXAMPLE_PROFILE}
-
-Образец текста вакансии:
-{EXAMPLE_VACANCY}
-
-Образец опросника:
-{EXAMPLE_QUESTIONNAIRE}
-
-**Требования к опроснику:**
-- Обязательно не менее 7 вопросов.
-- Первые два вопроса: "Почему ищете работу?" и "Что для вас важно в работе, и какие условия вы ищете?".
-- Для каждого вопроса дай реалистичный пример желательного ответа, как если бы его дал опытный кандидат.
-- Вопросы должны исходить из обязательных и желательных требований профиля должности.
-
-**Формат ответа:**
-Верни строго JSON без лишних пояснений, со следующей структурой:
-{{
-  "должность": "Название должности",
-  "профиль": {{
-    "подразделение": "...",
-    "непосредственный_руководитель": "...",
-    "задачи": ["...", "..."],
-    "анкетные_требования": {{"возраст": "...", "пол": "...", "стоп_факторы": ["..."]}},
-    "обязательные_требования": [{{"навык": "...", "описание": "..."}}],
-    "желательные_требования": [{{"навык": "...", "описание": "..."}}],
-    "психологические_черты": [{{"качество": "...", "проявление": "..."}}],
-    "условия_работы": {{"формат": "...", "режим": "...", "зарплата": "...", "испытательный_срок": "..."}}
-  }},
-  "текст_вакансии": "...",
-  "опросник": [{{"вопрос": "...", "пример_ответа": "..."}}],
-  "ключевые_слова": ["...", "..."]
-}}
-"""
-                user_message = f"Текст расшифровки:\n{st.session_state.transcript}"
-
-                try:
-                    response = client.chat.completions.create(
-                        model=config["model"]["name"],
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_message}
-                        ],
-                        temperature=config["model"]["temperature"],
-                        max_tokens=config["model"]["max_tokens"]
-                    )
-                    content = response.choices[0].message.content
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    elif "```" in content:
-                        content = content.split("```")[1].split("```")[0]
-                    result = json.loads(content.strip())
-                    result = normalize_docs(result)
-                    st.session_state.generated = result
-                    timestamp = str(int(time.time()))
-                    out_json = os.path.join(config["paths"]["output_dir"], f"generated_{timestamp}.json")
-                    os.makedirs(config["paths"]["output_dir"], exist_ok=True)
-                    with open(out_json, "w", encoding="utf-8") as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-                    save_generation_to_history(result, st.session_state.transcript)
-                    st.success("Документы созданы!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-
-        if "generated" in st.session_state:
-            st.divider()
-            st.subheader("✏️ Корректировка через ИИ")
-            correction = st.text_area("Дополнительные указания:", height=80)
-            if st.button("🔄 Доработать"):
-                if correction.strip():
-                    with st.spinner("Доработка..."):
-                        current_json = json.dumps(st.session_state.generated, ensure_ascii=False)
-                        refine_msg = f"Учти: {correction}\n\nТекущие документы:\n{current_json}\nВерни полный JSON."
-                        try:
-                            response = client.chat.completions.create(
-                                model=config["model"]["name"],
-                                messages=[
-                                    {"role": "system", "content": "Ты HR-директор. Обнови JSON по запросу."},
-                                    {"role": "user", "content": refine_msg}
-                                ],
-                                temperature=config["model"]["temperature"],
-                                max_tokens=config["model"]["max_tokens"]
-                            )
-                            content = response.choices[0].message.content
-                            if "```json" in content:
-                                content = content.split("```json")[1].split("```")[0]
-                            elif "```" in content:
-                                content = content.split("```")[1].split("```")[0]
-                            new_result = json.loads(content.strip())
-                            new_result = normalize_docs(new_result)
-                            st.session_state.generated = new_result
-                            st.success("Обновлено!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Ошибка: {e}")
-
-            st.divider()
-            st.subheader("💾 Сохранить в вакансию")
-            vacancies = load_vacancies()
-            if vacancies:
-                target = st.selectbox("Выберите существующую вакансию", [v["title"] for v in vacancies])
-                if st.button("Обновить документы в выбранной вакансии"):
-                    docs = st.session_state.generated
-                    profile_text = json.dumps(docs.get("профиль", {}), ensure_ascii=False, indent=2)
-                    vacancy_text = docs.get("текст_вакансии", "")
-                    questions_text = json.dumps(docs.get("опросник", []), ensure_ascii=False, indent=2)
-                    keywords_text = ", ".join(docs.get("ключевые_слова", []))
-                    if update_vacancy_docs(target, {
-                        "profile": profile_text,
-                        "vacancy_text": vacancy_text,
-                        "questions": questions_text,
-                        "keywords": keywords_text
-                    }):
-                        save_generation_to_history(st.session_state.generated, vacancy_title=target)
-                        st.success(f"Сохранено в «{target}»!")
-                        st.rerun()
-                    else:
-                        st.error("Вакансия не найдена")
-            else:
-                st.info("Нет вакансий. Создайте новую ниже.")
-
-            with st.expander("➕ Создать новую вакансию с этими документами"):
-                chats = load_chats()
-                if chats:
-                    chat_opts = {c["name"]: c["id"] for c in chats}
-                    selected_chat_name = st.selectbox("Чат Telegram", list(chat_opts.keys()))
-                    chat_id = chat_opts[selected_chat_name]
-                    selected_chat = next((c for c in chats if c["name"] == selected_chat_name), None)
-                    client_id = selected_chat.get("department_id", 0) if selected_chat else 0
-                    dept_name = selected_chat.get("department_name", "Админ") if selected_chat else "Админ"
-                    st.info(f"👥 Подразделение: {dept_name}")
-                else:
-                    chat_id = ""
-                    client_id = 0
-                    st.warning("Нет чатов. Добавьте в четвёртой вкладке.")
-                new_title = st.text_input("Название должности")
-                if st.button("Создать и сохранить"):
-                    if new_title.strip() and chat_id:
-                        success, _ = create_vacancy(new_title.strip(), chat_id, client_id)
-                        if success:
-                            docs = st.session_state.generated
-                            profile_text = json.dumps(docs.get("профиль", {}), ensure_ascii=False, indent=2)
-                            vacancy_text = docs.get("текст_вакансии", "")
-                            questions_text = json.dumps(docs.get("опросник", []), ensure_ascii=False, indent=2)
-                            keywords_text = ", ".join(docs.get("ключевые_слова", []))
-                            update_vacancy_docs(new_title.strip(), {
-                                "profile": profile_text,
-                                "vacancy_text": vacancy_text,
-                                "questions": questions_text,
-                                "keywords": keywords_text
-                            })
-                            save_generation_to_history(st.session_state.generated, vacancy_title=new_title.strip())
-                            st.success("Вакансия создана и документы сохранены!")
-                            st.rerun()
-                        else:
-                            st.error("Такое название уже существует.")
-                    else:
-                        st.warning("Заполните все поля.")
-
-# ---------- ВКЛАДКА 3: РЕЗУЛЬТАТЫ ----------
-with tab3:
-    st.header("📄 Готовые документы")
-    if "generated" in st.session_state:
-        gen = st.session_state.generated
-        subtab1, subtab2, subtab3, subtab4 = st.tabs(["📌 Профиль", "📝 Вакансия", "📋 Опросник", "🔑 Ключи"])
-        with subtab1:
-            profile = gen.get("профиль", {})
-            st.subheader(f"Должность: {gen.get('должность', '—')}")
-            st.markdown(f"**Подразделение:** {profile.get('подразделение', '—') if isinstance(profile, dict) else '—'}")
-            st.markdown(f"**Руководитель:** {profile.get('непосредственный_руководитель', '—') if isinstance(profile, dict) else '—'}")
-            st.markdown("**Задачи:**")
-            tasks = profile.get("задачи", []) if isinstance(profile, dict) else []
-            for task in tasks:
-                st.markdown(f"- {task}")
-            st.markdown("**Анкетные требования:**")
-            at = profile.get("анкетные_требования", {}) if isinstance(profile, dict) else {}
-            if isinstance(at, dict):
-                st.markdown(f"- Возраст: {at.get('возраст', '—')}")
-                st.markdown(f"- Пол: {at.get('пол', '—')}")
-            st.markdown("**Обязательные требования:**")
-            reqs = profile.get("обязательные_требования", []) if isinstance(profile, dict) else []
-            for req in reqs:
-                if isinstance(req, dict):
-                    st.markdown(f"- **{req.get('навык', '')}:** {req.get('описание', '')}")
-                else:
-                    st.markdown(f"- {req}")
-            st.markdown("**Желательные требования:**")
-            reqs = profile.get("желательные_требования", []) if isinstance(profile, dict) else []
-            for req in reqs:
-                if isinstance(req, dict):
-                    st.markdown(f"- **{req.get('навык', '')}:** {req.get('описание', '')}")
-                else:
-                    st.markdown(f"- {req}")
-            st.markdown("**Психологические черты:**")
-            traits = profile.get("психологические_черты", []) if isinstance(profile, dict) else []
-            for trait in traits:
-                if isinstance(trait, dict):
-                    st.markdown(f"- **{trait.get('качество', '')}:** {trait.get('проявление', '')}")
-                else:
-                    st.markdown(f"- {trait}")
-            st.markdown("**Условия работы:**")
-            cond = profile.get("условия_работы", {}) if isinstance(profile, dict) else {}
-            if isinstance(cond, dict):
-                st.markdown(f"- Формат: {cond.get('формат', '—')}")
-                st.markdown(f"- Режим: {cond.get('режим', '—')}")
-                st.markdown(f"- Зарплата: {cond.get('зарплата', '—')}")
-                st.markdown(f"- Испытательный срок: {cond.get('испытательный_срок', '—')}")
-        with subtab2:
-            st.text_area("Текст вакансии", gen.get("текст_вакансии", ""), height=300)
-        with subtab3:
-            questions = gen.get("опросник", [])
-            for i, q in enumerate(questions, 1):
-                if isinstance(q, dict):
-                    st.markdown(f"**{i}. {q.get('вопрос', '')}**")
-                    st.caption(f"Пример: {q.get('пример_ответа', '')}")
-                else:
-                    st.markdown(f"**{i}. {q}**")
-        with subtab4:
-            keywords = gen.get("ключевые_слова", [])
-            st.code(", ".join(keywords) if isinstance(keywords, list) else str(keywords))
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.download_button(
-                "📥 Скачать JSON",
-                data=json.dumps(gen, ensure_ascii=False, indent=2),
-                file_name="hr_package.json",
-                mime="application/json"
-            )
-        with col2:
-            try:
-                word_path = export_to_word(gen)
-                with open(word_path, "rb") as f:
-                    st.download_button(
-                        "📄 Скачать Word",
-                        data=f,
-                        file_name=f"hr_documents_{gen.get('должность', 'vacancy')}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                os.unlink(word_path)
-            except Exception as e:
-                st.error(f"Ошибка создания Word: {e}")
-        with col3:
-            try:
-                pdf_path = export_to_pdf(gen)
-                if pdf_path:
-                    with open(pdf_path, "rb") as f:
-                        st.download_button(
-                            "📑 Скачать PDF",
-                            data=f,
-                            file_name=f"hr_documents_{gen.get('должность', 'vacancy')}.pdf",
-                            mime="application/pdf"
-                        )
-                    os.unlink(pdf_path)
-            except Exception as e:
-                st.error(f"Ошибка создания PDF: {e}")
-    else:
-        st.info("Сгенерируйте документы во второй вкладке.")
-# ---------- ВКЛАДКА 4: ВОРОНКА КАНДИДАТОВ ----------
-with tab4:
-    st.header("🎯 Воронка кандидатов")
-    
-    # Управление чатами с возможностью создания подразделений
-    with st.expander("📂 Мои чаты Telegram"):
-        chats = load_chats()
-        departments = load_departments()
-        
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-        with col1:
-            new_chat_name = st.text_input("Название чата")
-        with col2:
-            new_chat_id = st.text_input("Chat ID")
-        with col3:
-            dept_options = [d["name"] for d in departments]
-            dept_choice = st.selectbox(
-                "Подразделение",
-                dept_options + ["➕ Создать новое..."],
-                help="Выберите подразделение или создайте новое"
-            )
-            new_dept_name = None
-            if dept_choice == "➕ Создать новое...":
-                new_dept_name = st.text_input("Название нового подразделения")
-        
-        if st.button("💾 Сохранить чат"):
-            if new_chat_name and new_chat_id:
-                if dept_choice == "➕ Создать новое...":
-                    if new_dept_name:
-                        dept_id = add_department(new_dept_name)
-                        dept_name = new_dept_name
-                    else:
-                        st.error("Введите название нового подразделения")
-                        st.stop()
-                else:
-                    dept = next(d for d in departments if d["name"] == dept_choice)
-                    dept_id = dept["id"]
-                    dept_name = dept["name"]
-                
-                if not any(c["name"] == new_chat_name for c in chats):
-                    chats.append({
-                        "name": new_chat_name,
-                        "id": new_chat_id,
-                        "department_name": dept_name,
-                        "department_id": dept_id
-                    })
-                    save_chats(chats)
-                    st.success("Сохранено!")
-                    st.rerun()
-                else:
-                    st.error("Чат с таким именем уже есть.")
-        
-        if chats:
-            st.write("Сохранённые чаты:")
-            for i, chat in enumerate(chats):
-                col_a, col_b, col_c, col_d = st.columns([2, 2, 2, 1])
-                col_a.write(f"**{chat['name']}**")
-                col_b.code(chat['id'])
-                col_c.write(f"_{chat.get('department_name', '—')}_")
-                if col_d.button("🗑️", key=f"del_chat_{i}"):
-                    chats.pop(i)
-                    save_chats(chats)
-                    st.rerun()
-
-    # Создание новой вакансии
-    with st.expander("➕ Новая вакансия"):
-        new_title = st.text_input("Название должности", key="new_vac4_title")
-        chats = load_chats()
-        if chats:
-            chat_options = {c["name"]: c["id"] for c in chats}
-            selected_chat_name = st.selectbox("Чат", list(chat_options.keys()), key="vac4_chat_select")
-            chat_id = chat_options[selected_chat_name]
-            
-            selected_chat_obj = None
-            for c in chats:
-                if c["name"] == selected_chat_name:
-                    selected_chat_obj = c
-                    break
-            
-            if selected_chat_obj:
-                client_id = selected_chat_obj.get("department_id", 0)
-                dept_name = selected_chat_obj.get("department_name", "Админ")
-            else:
-                client_id = 0
-                dept_name = "Админ"
-            
-            st.info(f"👥 Подразделение: {dept_name}")
-        else:
-            chat_id = ""
-            client_id = 0
-            st.warning("Добавьте чат выше.")
-        
-        if st.button("Создать вакансию", key="btn_create_vacancy"):
-            if new_title.strip() and chat_id:
-                success, _ = create_vacancy(new_title.strip(), chat_id, client_id)
-                if success:
-                    st.success(f"Создано: {new_title}")
-                    st.rerun()
-                else:
-                    st.error("Название уже существует.")
-            else:
-                st.warning("Заполните поля.")
-
-    vacancies = load_vacancies()
-    if not vacancies:
-        st.info("Нет вакансий. Создайте первую.")
-    else:
-        st.divider()
-        st.subheader("📋 Список вакансий")
-        for i, vac in enumerate(vacancies):
-            col_a, col_b, col_c = st.columns([4,2,1])
-            col_a.write(f"**{vac['title']}**")
-            col_b.caption(f"Chat ID: {vac.get('chat_id', '—')}")
-            if col_c.button("🗑️", key=f"del_vac_{i}"):
-                delete_vacancy(vac['title'])
-                st.rerun()
-        
-        st.divider()
-        active_vacancies = [v for v in vacancies if v.get("active", True)]
-        if not active_vacancies:
-            st.info("Нет активных вакансий. Создайте новую или восстановите из архива.")
-        else:
-            selected_title = st.selectbox("Выберите вакансию для работы", [v["title"] for v in active_vacancies])
-            selected_vacancy = next(v for v in active_vacancies if v["title"] == selected_title)
-
-            with st.expander("📄 Документы вакансии (редактирование)"):
-                docs = selected_vacancy.get("documents", {})
-                new_profile = st.text_area("Профиль", value=docs.get("profile", ""), height=200)
-                new_vac_text = st.text_area("Текст вакансии", value=docs.get("vacancy_text", ""), height=200)
-                new_questions = st.text_area("Вопросы", value=docs.get("questions", ""), height=200)
-                new_keywords = st.text_area("Ключевые слова", value=docs.get("keywords", ""), height=100)
-                if st.button("💾 Сохранить документы"):
-                    update_vacancy_docs(selected_title, {
-                        "profile": new_profile,
-                        "vacancy_text": new_vac_text,
-                        "questions": new_questions,
-                        "keywords": new_keywords
-                    })
-                    st.success("Сохранено!")
-                    st.rerun()
-
-            st.markdown(f"### 🔍 Кандидаты для «{selected_title}»")
-            if selected_vacancy["candidates"]:
-                for idx, cand in enumerate(selected_vacancy["candidates"]):
-                    with st.expander(f"👤 {cand.get('name', 'Без имени')}"):
-                        col1, col2 = st.columns([4, 1])
-                        with col1:
-                            st.markdown(f"**Резюме:** {cand.get('resume_link', '—')}")
-                            st.markdown(f"**Видео:** {cand.get('video_link', '—')}")
-                            
-                            transcript = st.text_area("Расшифровка собеседования", value=cand.get('transcript', ''), key=f"trans_{idx}", height=100)
-                            if transcript != cand.get('transcript', ''):
-                                selected_vacancy["candidates"][idx]['transcript'] = transcript
-                                save_vacancies(vacancies)
-                                st.success("Расшифровка сохранена!")
-                            
-                            hr_comment = st.text_area("Комментарий рекрутера", value=cand.get('hr_comment', ''), key=f"hr_{idx}", height=50)
-                            if hr_comment != cand.get('hr_comment', ''):
-                                selected_vacancy["candidates"][idx]['hr_comment'] = hr_comment
-                                save_vacancies(vacancies)
-                                st.success("Комментарий сохранён!")
-                            
-                            task_link = st.text_input("Ссылка на задание", value=cand.get('task_link', ''), key=f"task_{idx}")
-                            if task_link != cand.get('task_link', ''):
-                                selected_vacancy["candidates"][idx]['task_link'] = task_link
-                                save_vacancies(vacancies)
-                                st.success("Ссылка на задание сохранена!")
-                            
-                            if cand.get('task_link', '').strip():
-                                if st.button("📢 Отправить уведомление о задании", key=f"notify_task_{idx}"):
-                                    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-                                    chat_id = selected_vacancy.get("chat_id")
-                                    if bot_token and chat_id:
-                                        msg = f"✅ <b>Выполнено задание</b>\n👤 {cand.get('name', 'Кандидат')}\n🔗 <a href='{cand['task_link']}'>Ссылка на задание</a>"
-                                        send_telegram_message(bot_token, chat_id, msg)
-                                        st.success("Уведомление отправлено!")
-                                    else:
-                                        st.warning("Не настроен Telegram-бот или chat_id")
-                            
-                            final_verdict = st.text_area("Итог по кандидату", value=cand.get('client_final_verdict', ''), key=f"verdict_{idx}", height=100)
-                            if final_verdict != cand.get('client_final_verdict', ''):
-                                selected_vacancy["candidates"][idx]['client_final_verdict'] = final_verdict
-                                save_vacancies(vacancies)
-                                st.success("Итог сохранён!")
-                            
-                            if cand.get('ai_score') is not None:
-                                st.metric("Оценка ИИ", f"{cand['ai_score']}/10")
-                                if cand.get('ai_comment'):
-                                    st.info(cand['ai_comment'])
-                        
-                        with col2:
-                            if st.button("🤖 Оценить", key=f"eval_{idx}"):
-                                with st.spinner("Оценка..."):
-                                    # 1. Текст из резюме
-                                    resume_text = extract_text_from_pdf_url(cand.get('resume_link', '')) or ""
-                                    if not resume_text:
-                                        st.warning("Не удалось извлечь текст из резюме. Проверьте ссылку.")
-                                    
-                                    # 2. Расшифровка собеседования (если есть – используем, иначе пытаемся расшифровать видео)
-                                    transcript_text = cand.get('transcript', '')
-                                    if not transcript_text and cand.get('video_link'):
-                                        with st.spinner("Расшифровка видео (может занять время)..."):
-                                            transcript_text = transcribe_video_from_link(cand.get('video_link')) or ""
-                                            if transcript_text:
-                                                selected_vacancy["candidates"][idx]['transcript'] = transcript_text
-                                                save_vacancies(vacancies)
-                                                st.success("Видео расшифровано!")
-                                            else:
-                                                st.warning("Не удалось расшифровать видео.")
-                                    
-                                    # 3. Оценка ИИ
-                                    eval_result = evaluate_candidate_with_ai(resume_text, transcript_text, selected_title)
-                                    selected_vacancy["candidates"][idx]["ai_score"] = eval_result.get("score", 0)
-                                    selected_vacancy["candidates"][idx]["ai_comment"] = eval_result.get("comment", "")
-                                    selected_vacancy["candidates"][idx]["ai_strengths"] = eval_result.get("strengths", [])
-                                    selected_vacancy["candidates"][idx]["ai_weaknesses"] = eval_result.get("weaknesses", [])
-                                    save_vacancies(vacancies)
-                                    st.success("Оценка завершена!")
-                                    st.rerun()
-                            
-                            if st.button("🗑️ Удалить", key=f"del_cand_{idx}"):
-                                selected_vacancy["candidates"].pop(idx)
-                                save_vacancies(vacancies)
-                                st.success("Кандидат удалён!")
-                                st.rerun()
-            else:
-                st.info("Нет кандидатов.")
-
-            st.markdown("### ➕ Добавить кандидата")
-            with st.form("add_candidate", clear_on_submit=True):
-                name = st.text_input("ФИО")
-                resume_link = st.text_input("Ссылка на резюме")
-                video_link = st.text_input("Ссылка на видео")
-                task_link = st.text_input("Ссылка на тестовое задание (или статус)")
-                hr_comment = st.text_area("Комментарий")
-                send_notification = st.checkbox("📢 Отправить уведомление в Telegram", value=False)
-                submitted = st.form_submit_button("Добавить кандидата")
-                
-                if submitted:
-                    if name.strip():
-                        new_cand = {
-                            "vacancy_id": selected_vacancy["id"],
-                            "name": name.strip(),
-                            "resume_link": resume_link.strip(),
-                            "video_link": video_link.strip(),
-                            "task_link": task_link.strip(),
-                            "transcript": "",
-                            "hr_comment": hr_comment.strip(),
-                            "client_status": "wait",
-                            "client_comment": "",
-                            "office_interview_date": "",
-                            "office_interview_time": "",
-                            "client_final_verdict": "",
-                            "ai_score": None,
-                            "ai_comment": "",
-                            "ai_strengths": [],
-                            "ai_weaknesses": []
-                        }
-                        selected_vacancy["candidates"].append(new_cand)
-                        save_vacancies(vacancies)
-                        
-                        if send_notification:
-                            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-                            chat_id = selected_vacancy.get("chat_id")
-                            if bot_token and chat_id:
-                                msg = f"🆕 <b>Новый кандидат</b>\n🏢 {selected_title}\n👤 {name.strip()}"
-                                if resume_link.strip():
-                                    msg += f"\n📄 <a href='{resume_link.strip()}'>Резюме</a>"
-                                if video_link.strip():
-                                    msg += f"\n🎥 <a href='{video_link.strip()}'>Видео</a>"
-                                if task_link.strip():
-                                    msg += f"\n✅ <a href='{task_link.strip()}'>Задание</a>"
-                                if hr_comment.strip():
-                                    msg += f"\n\n💬 <i>Комментарий рекрутера:</i>\n<i>{hr_comment.strip()}</i>"
-                                send_telegram_message(bot_token, chat_id, msg)
-                        st.success("Кандидат добавлен в базу!" + (" Уведомление отправлено." if send_notification else ""))
-                        st.rerun()
-                    else:
-                        st.error("Введите ФИО")
-
-            # --- Архивные вакансии ---
-            st.divider()
-            with st.expander("📦 Архивные вакансии"):
-                archived = [v for v in vacancies if not v.get("active", True)]
-                if not archived:
-                    st.info("Нет архивированных вакансий.")
-                else:
-                    for vac in archived:
-                        created = vac.get("created_at", "неизвестно")[:10]
-                        closed = vac.get("closed_at", "неизвестно")[:10] if vac.get("closed_at") else "неизвестно"
-                        period = f"с {created} по {closed}" if closed != "неизвестно" else "активна"
-                        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
-                        col1.write(f"**{vac['title']}**")
-                        col2.caption(f"Период: {period}")
-                        col3.caption(f"Кандидатов: {len(vac.get('candidates', []))}")
-                        col4.caption(f"Итог: {vac.get('vacancy_summary', '—')[:50]}")
-                        if st.button("🔄 Восстановить", key=f"restore_{vac['id']}"):
-                            vac["active"] = True
-                            vac["closed_at"] = None
-                            save_vacancies(vacancies)
-                            st.success(f"Вакансия «{vac['title']}» восстановлена!")
-                            st.rerun()
-                        with st.expander(f"✏️ Редактировать итог вакансии «{vac['title']}»"):
-                            new_summary = st.text_area("Общий итог по вакансии", value=vac.get("vacancy_summary", ""), key=f"summary_{vac['id']}")
-                            if st.button("Сохранить итог", key=f"save_summary_{vac['id']}"):
-                                vac["vacancy_summary"] = new_summary
-                                save_vacancies(vacancies)
-                                st.success("Итог сохранён!")
-                                st.rerun()
-
-            # --- Статистика закрытых вакансий ---
-            with st.expander("📊 Статистика закрытых вакансий"):
-                closed_vacs = [v for v in vacancies if not v.get("active", True) and v.get("closed_at")]
-                if not closed_vacs:
-                    st.info("Нет закрытых вакансий.")
-                else:
-                    stats_data = []
-                    for vac in closed_vacs:
-                        created = datetime.fromisoformat(vac["created_at"]) if vac.get("created_at") else None
-                        closed = datetime.fromisoformat(vac["closed_at"]) if vac.get("closed_at") else None
-                        days_open = (closed - created).days if created and closed else None
-                        candidates = vac.get("candidates", [])
-                        total = len(candidates)
-                        ready = sum(1 for c in candidates if c.get("client_status") == "ready")
-                        reject = sum(1 for c in candidates if c.get("client_status") == "reject")
-                        wait = sum(1 for c in candidates if c.get("client_status") == "wait")
-                        stats_data.append({
-                            "Вакансия": vac["title"],
-                            "Создана": vac.get("created_at", "-")[:10],
-                            "Закрыта": vac.get("closed_at", "-")[:10],
-                            "Дней открыта": days_open,
-                            "Всего кандидатов": total,
-                            "Принято (ready)": ready,
-                            "Отказов (reject)": reject,
-                            "В работе (wait)": wait,
-                            "Итог": vac.get("vacancy_summary", "-")[:100]
-                        })
-                    st.dataframe(stats_data, use_container_width=True)
-
-            # --- Кнопка деактивации текущей вакансии ---
-            st.divider()
-            st.subheader("🔒 Закрыть вакансию")
-            if selected_vacancy.get("active", True):
-                with st.form("close_vacancy_form"):
-                    st.warning("Закрытие вакансии переместит её в архив. Вы сможете её восстановить позже.")
-                    closing_summary = st.text_area("Общий итог по вакансии (обязательно для закрытия)", value=selected_vacancy.get("vacancy_summary", ""))
-                    submit_close = st.form_submit_button("Закрыть вакансию")
-                    if submit_close:
-                        if not closing_summary.strip():
-                            st.error("Пожалуйста, заполните итог по вакансии перед закрытием.")
-                        else:
-                            selected_vacancy["active"] = False
-                            selected_vacancy["closed_at"] = datetime.now().isoformat()
-                            selected_vacancy["vacancy_summary"] = closing_summary
-                            save_vacancies(vacancies)
-                            st.success(f"Вакансия «{selected_title}» закрыта и перемещена в архив.")
-                            st.rerun()
-            else:
-                st.info("Эта вакансия уже закрыта. Чтобы изменить итог, воспользуйтесь редактированием в архиве.")
-
-# ---------- ВКЛАДКА 5: ИНСТРУКЦИИ ----------
 with tab5:
     st.header("📖 Инструкции по работе с HR-помогатором")
     st.markdown("""
-    Добро пожаловать! Это приложение помогает HR-специалистам создавать документы для вакансий на основе расшифровки разговора с заказчиком, управлять воронкой кандидатов и отправлять уведомления в Telegram.
-    
+    Добро пожаловать! Приложение помогает HR-специалистам создавать документы для вакансий на основе расшифровки разговора с заказчиком, управлять воронкой кандидатов и отправлять уведомления в Telegram.
+
+    **Структура приложения (4 вкладки):**
+    - **Вакансии** — «Вакансии в работе» (документы, кандидаты, статистика) и «Создание новой вакансии» (генерация пакета).
+    - **Инструкции** — справка по работе с приложением.
+    - **История** — архив ранее созданных пакетов документов.
+    - **Настройки** — Telegram-чаты, список вакансий.
+
+    **Боковая панель:**
+    - **Клиентские зоны** — переход в зону заказчика по подразделению.
+    - **Проверка баланса** — быстрые ссылки на Яндекс Облако и RouterAI.
+    - Внизу — информация о модели ИИ и кнопка перезагрузки конфигурации.
+
     **Основные возможности:**
-    - Загрузка аудио/видео или текстового файла с описанием вакансии → автоматическое создание профиля должности, текста вакансии, опросника с примерами ответов и ключевых слов для поиска.
-    - Редактирование сгенерированных документов и доработка через ИИ.
-    - Сохранение документов в вакансии, создание новых вакансий с привязкой к Telegram-группе.
-    - Воронка кандидатов: добавление кандидатов, оценка ИИ, уведомления заказчика в Telegram.
-    - Экспорт готового пакета документов в Word и PDF.
-    - История генераций: все ранее созданные пакеты сохраняются и доступны для повторной загрузки.
+    - Загрузка аудио/видео или текста → профиль должности, текст вакансии, опросник с уточняющими вопросами, ключевые слова.
+    - Перегенерация и ручная правка опросника по коррективам HR.
+    - Оценка кандидатов ИИ по профилю должности, резюме и расшифровке первичного интервью.
+    - Уведомления заказчика в Telegram при добавлении кандидатов и заданий.
+    - Экспорт пакета документов в JSON, Word и PDF.
     """)
-    with st.expander("🎤 1. Расшифровка файлов и генерация документов"):
+    with st.expander("🏢 1. Вкладка «Вакансии» — в работе"):
         st.markdown("""
-        **1. Загрузите файл**
-        - Перейдите на вкладку **«Расшифровка»**.
-        - Выберите источник: **«Аудио/видео»** или **«Готовый файл»**.
-        - Нажмите **«Расшифровать»** или просто загрузите файл.
-
-        **2. Отредактируйте текст (при необходимости)**
-        - После загрузки появится текстовое поле. Вы можете исправить ошибки.
-        - Нажмите **«Зафиксировать правки»**.
-
-        **3. Сгенерируйте документы**
-        - Перейдите на вкладку **«Генерация»**.
-        - Нажмите **«✨ Сгенерировать всё»**.
-        - Результат появится во вкладке **«Результаты»**.
-
-        **4. Доработка через ИИ**
-        - Введите дополнительные указания и нажмите **«🔄 Доработать»**.
+        **Вакансии в работе:**
+        1. Нажмите на кнопку вакансии — откроется рабочее пространство.
+        2. Подзоны: **Документы по вакансии** (свёрнутые разделы с перегенерацией), **Кандидаты**, **Статистика**.
+        3. Сохраните правки документов кнопкой **«Сохранить все документы»**.
         """)
-    with st.expander("💾 2. Сохранение и обновление документов в вакансии"):
+    with st.expander("➕ 2. Создание новой вакансии"):
         st.markdown("""
-        **Для сохранения в существующую вакансию:**
-        - Во вкладке **«Генерация»** выберите вакансию и нажмите **«Обновить документы»**.
-
-        **Для создания новой вакансии:**
-        - Разверните **«➕ Создать новую вакансию»**, заполните поля и нажмите **«Создать и сохранить»**.
+        1. Зарегистрируйте вакансию (название + чат Telegram).
+        2. Выберите вакансию в списке (без значения по умолчанию).
+        3. Отметьте создаваемые документы: профиль и опросник обязательны; текст вакансии и ключевые слова — по желанию.
+        4. Способы подготовки: **Из расшифровки** (аудио/видео Whisper или SpeechKit, файл или текст), **Импорт**, **Анкета HR**.
         """)
-    with st.expander("🤖 3. Telegram: создание чатов и получение chat_id"):
+    with st.expander("👥 3. Вкладка «Вакансии» — кандидаты"):
         st.markdown("""
+        Подзона **«Кандидаты»**:
+        - **Список** — карточки с этапами HR-воронки.
+        - **Автозагрузка** — ссылки/PDF → автоизвлечение полей из резюме.
+        - **Ручное заполнение** — одиночное добавление.
+
+        **ИИ:** **«Оценить по резюме»** и **«Оценить по интервью»**.
+        """)
+    with st.expander("⚙️ 4. Настройки — чаты Telegram и список вакансий"):
+        st.markdown("""
+        Вкладка **«Настройки»** содержит административные блоки:
+
+        **📂 Мои чаты Telegram**
+        - Добавьте чат: название, Chat ID, подразделение (или создайте новое).
+        - Чаты используются при создании вакансий и отправке уведомлений заказчику.
+
+        **📋 Список вакансий**
+        - Обзор всех вакансий с Chat ID.
+        - Удаление вакансий, которые больше не нужны.
+
+        Перед первой работой настройте хотя бы один Telegram-чат.
+        """)
+    with st.expander("🤖 4. Telegram: бот и chat_id"):
+        st.markdown("""
+        **Запуск бота** (команды и напоминания):
+        ```bash
+        ./venv/bin/python bot.py
+        ```
+
         **Как получить chat_id:**
-        - После создания группы добавьте бота и отправьте любое сообщение.
-        - Откройте: `https://api.telegram.org/bot<ВАШ_ТОКЕН>/getUpdates`
-        - Найдите в ответе `"chat":{"id":-1001234567890,...}` и скопируйте число.
-        """)
-    with st.expander("👥 4. Работа с кандидатами в воронке"):
-        st.markdown("""
-        **Добавление кандидата:**
-        - Выберите вакансию, заполните форму и нажмите **«Добавить и уведомить»**.
+        - Создайте группу, добавьте бота.
+        - Напишите в группе `/chatid` или `/id`.
+        - Сохраните чат: **«Настройки»** → **«📂 Мои чаты Telegram»** → **«💾 Сохранить чат»**.
 
-        **Оценка кандидата ИИ:**
-        - После добавления кандидата нажмите **«🤖 Оценить»**.
+        **Свой user_id** (для напоминаний в `.env`): напишите боту в личку `/id`.
         """)
-    with st.expander("📎 5. Экспорт в Word и PDF"):
+    with st.expander("📊 5. Итоги и клиентская зона"):
         st.markdown("""
-        Во вкладке **«Результаты»** есть три кнопки для скачивания документов в форматах JSON, Word и PDF.
+        Подзона **«Итоги»** — воронка HR, статусы заказчика, текстовый итог по вакансии.
+
+        **Клиентские зоны:**
+        - **Мастер-зона** (`/master`) — сводная статистика по всем вакансиям для руководителя.
+        - **Зона подразделения** (`/client?dept=Название`) — кандидаты одного отдела.
+        Закрепите нужную ссылку в чате подразделения; навигация между зонами не отображается у заказчика.
         """)
     with st.expander("📜 6. История генераций"):
         st.markdown("""
-        Вкладка **«История»** сохраняет все когда‑либо созданные пакеты документов. Вы можете загрузить любой из них.
+        Вкладка **«История»** — архив пакетов документов. Загруженный пакет можно применить через подзону **«Документы»** → **«Импорт»** или **«Из расшифровки»**.
         """)
-    st.info("💡 **Подсказка:** Для работы с аудио нужен установленный `ffmpeg`.")
+    st.info("💡 **Подсказка:** для работы с аудио нужен установленный `ffmpeg`. Токен Telegram-бота — в файле `.env` (`TELEGRAM_BOT_TOKEN`).")
 
 # ---------- ВКЛАДКА 6: ИСТОРИЯ ГЕНЕРАЦИЙ ----------
 with tab6:
     st.header("📜 История генераций")
     st.caption("Все ранее созданные пакеты документов. Вы можете загрузить любой из них для просмотра, доработки или экспорта.")
-    
+
+    if "generated" in st.session_state:
+        gen = st.session_state.generated
+        active_v = [v for v in load_vacancies() if v.get("active", True)]
+        if active_v:
+            from ui_helpers import selectbox_no_default
+            apply_target = selectbox_no_default(
+                "Применить загруженный пакет к вакансии",
+                [v["title"] for v in active_v],
+                key="hist_apply_vacancy",
+            )
+            if st.button("📥 Применить пакет к вакансии", key="hist_apply_btn"):
+                if not apply_target:
+                    st.warning("Выберите вакансию из списка.")
+                else:
+                    update_vacancy_docs(apply_target, {
+                        "profile": json.dumps(gen.get("профиль", {}), ensure_ascii=False, indent=2),
+                        "vacancy_text": gen.get("текст_вакансии", ""),
+                        "questions": json.dumps(gen.get("опросник", []), ensure_ascii=False, indent=2),
+                        "keywords": ", ".join(gen.get("ключевые_слова", [])),
+                    })
+                    applied = next(v for v in active_v if v["title"] == apply_target)
+                    st.session_state.opened_vacancy_id = applied["id"]
+                    st.success(f"Пакет применён к «{apply_target}». Откройте вкладку «Вакансии».")
+                    st.rerun()
+
     index = get_history_index()
     if not index:
-        st.info("История пуста. Сгенерируйте документы во вкладке «Генерация», чтобы они появились здесь.")
+        st.info("История пуста. Сгенерируйте документы во вкладке «Вакансии» → «Создание новой вакансии», чтобы они появились здесь.")
     else:
         for i, rec in enumerate(index):
             with st.expander(f"📄 {rec['datetime']} – {rec['title'] or 'Без названия'}"):
@@ -1938,7 +1912,7 @@ with tab6:
                         data = load_generation_from_history(rec['filename'])
                         if data:
                             st.session_state.generated = data
-                            st.success(f"Загружен пакет от {rec['datetime']}! Перейдите во вкладку «Результаты» или «Генерация».")
+                            st.success(f"Загружен пакет от {rec['datetime']}! Примените его во вкладке «Вакансии» → «Документы».")
                             st.rerun()
                         else:
                             st.error("Ошибка загрузки файла.")
@@ -1957,3 +1931,199 @@ with tab6:
                             st.rerun()
                         else:
                             st.error("Ошибка удаления.")
+
+# ---------- ВКЛАДКА 7: НАСТРОЙКИ ----------
+with tab_settings:
+    st.header("⚙️ Настройки")
+    st.caption("Telegram-чаты, список вакансий и служебная информация.")
+
+    with st.expander("📂 Мои чаты Telegram", expanded=True):
+        chats = load_chats()
+        departments = load_departments()
+
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+        with col1:
+            new_chat_name = st.text_input("Название чата", key="settings_chat_name")
+        with col2:
+            new_chat_id = st.text_input("Chat ID", key="settings_chat_id")
+        with col3:
+            dept_options = [d["name"] for d in departments]
+            dept_choice = st.selectbox(
+                "Подразделение",
+                dept_options + ["➕ Создать новое..."],
+                help="Выберите подразделение или создайте новое",
+                key="settings_dept_choice",
+            )
+            new_dept_name = None
+            if dept_choice == "➕ Создать новое...":
+                new_dept_name = st.text_input("Название нового подразделения", key="settings_new_dept")
+        with col4:
+            st.write("")
+
+        if st.button("💾 Сохранить чат", key="settings_save_chat"):
+            if new_chat_name and new_chat_id:
+                if dept_choice == "➕ Создать новое...":
+                    if new_dept_name:
+                        dept_id = add_department(new_dept_name)
+                        dept_name = new_dept_name
+                    else:
+                        st.error("Введите название нового подразделения")
+                        st.stop()
+                else:
+                    dept = next(d for d in departments if d["name"] == dept_choice)
+                    dept_id = dept["id"]
+                    dept_name = dept["name"]
+
+                if not any(c["name"] == new_chat_name for c in chats):
+                    from telegram_notify import normalize_chat_id
+                    normalized_id = normalize_chat_id(new_chat_id)
+                    if normalized_id is None:
+                        st.error("Некорректный Chat ID")
+                        st.stop()
+                    chats.append({
+                        "name": new_chat_name,
+                        "id": normalized_id,
+                        "department_name": dept_name,
+                        "department_id": dept_id,
+                    })
+                    save_chats(chats)
+                    st.success("Сохранено!")
+                    st.rerun()
+                else:
+                    st.error("Чат с таким именем уже есть.")
+            else:
+                st.warning("Заполните название чата и Chat ID.")
+
+        if chats:
+            st.write("Сохранённые чаты:")
+            for i, chat in enumerate(chats):
+                col_a, col_b, col_c, col_d = st.columns([2, 2, 2, 1])
+                col_a.write(f"**{chat['name']}**")
+                col_b.code(chat["id"])
+                col_c.write(f"_{chat.get('department_name', '—')}_")
+                if col_d.button("🗑️", key=f"settings_del_chat_{i}"):
+                    chats.pop(i)
+                    save_chats(chats)
+                    st.rerun()
+        else:
+            st.info("Чаты не добавлены. Сохраните первый чат выше.")
+
+    with st.expander("🤖 Telegram-бот", expanded=True):
+        from telegram_notify import get_bot_status, get_hr_user_id, send_telegram_html
+
+        ok, status_msg, bot_info = get_bot_status()
+        if ok:
+            st.success(status_msg)
+            st.caption(f"Имя: {bot_info.get('first_name', '—')}")
+        else:
+            st.error(status_msg)
+
+        hr_id = get_hr_user_id()
+        if hr_id:
+            st.caption(f"HR user_id для напоминаний: `{hr_id}`")
+        else:
+            st.warning("Добавьте в `.env`: `TELEGRAM_HR_USER_ID=ваш_id` (узнайте через /id в личке с ботом)")
+
+        st.markdown(
+            """
+**Чтобы бот отвечал на команды** (`/id`, `/start`, `/chatid`) **и слал напоминания о собеседованиях**, запустите его в отдельном терминале:
+
+```bash
+./venv/bin/python bot.py
+```
+
+Процесс должен работать постоянно (рядом со Streamlit).
+
+**Как узнать Chat ID группы:** добавьте бота в группу → напишите `/chatid` или `/id`.
+
+**Как узнать свой user_id:** напишите боту в личку `/id`.
+
+**Отправка кандидатов из приложения** работает через API (бот может быть выключен), но бот должен быть **добавлен в группу** вакансии.
+            """
+        )
+
+        test_chats = load_chats()
+        if ok and test_chats:
+            test_chat_names = [c["name"] for c in test_chats]
+            test_pick = st.selectbox(
+                "Проверить отправку в чат",
+                [""] + test_chat_names,
+                key="settings_tg_test_chat",
+            )
+            if test_pick and st.button("📨 Отправить тестовое сообщение", key="settings_tg_test_btn"):
+                chat = next(c for c in test_chats if c["name"] == test_pick)
+                t_ok, t_msg = send_telegram_html(
+                    chat["id"],
+                    "<b>✅ Тест</b>\n\nHR-помогатор успешно отправляет сообщения в этот чат.",
+                )
+                if t_ok:
+                    st.success(t_msg)
+                else:
+                    st.error(t_msg)
+
+    with st.expander("📅 Google Calendar", expanded=False):
+        try:
+            from google_calendar import (
+                get_calendar_status,
+                get_credentials_path,
+                get_calendar_id,
+                credentials_file_exists,
+            )
+        except ImportError:
+            st.warning(
+                "Установите зависимости: `pip install google-api-python-client google-auth-oauthlib google-auth-httplib2`"
+            )
+        else:
+            status, status_msg = get_calendar_status()
+            if status == "ready":
+                st.success(status_msg)
+            elif status == "needs_auth":
+                st.info(status_msg)
+            else:
+                st.warning(status_msg)
+
+            st.markdown(
+                """
+**Настройка (один раз):**
+1. [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → **Enable Google Calendar API**
+2. Credentials → **OAuth client ID** → тип **Desktop app** → скачайте JSON
+3. Сохраните файл как `data/google_calendar_credentials.json`
+4. Нажмите **Подключить Google Calendar** — откроется браузер для входа
+5. В `.env` при необходимости: `GOOGLE_CALENDAR_ID=primary` (или ID календаря), `GOOGLE_CALENDAR_EVENT_MINUTES=45`
+                """
+            )
+            st.caption(f"Credentials: `{get_credentials_path()}` · Календарь: `{get_calendar_id()}`")
+
+            if credentials_file_exists():
+                if st.button("🔗 Подключить Google Calendar", key="settings_gcal_auth"):
+                    from google_calendar import run_oauth_authorization
+
+                    with st.spinner("Откроется браузер для авторизации…"):
+                        ok, msg = run_oauth_authorization()
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+            st.caption(
+                "При статусе «Собеседование назначено» с датой и временем создаётся событие "
+                "(например: «Иванов Иван, графический дизайнер») с напоминаниями за 30 и 10 минут."
+            )
+
+    st.divider()
+    st.subheader("📋 Список вакансий")
+    vacancies = load_vacancies()
+    if not vacancies:
+        st.info("Нет вакансий. Создайте первую на вкладке «Вакансии».")
+    else:
+        for i, vac in enumerate(vacancies):
+            status = "активна" if vac.get("active", True) else "в архиве"
+            col_a, col_b, col_c, col_d = st.columns([4, 2, 1, 1])
+            col_a.write(f"**{vac['title']}**")
+            col_b.caption(f"Chat ID: {vac.get('chat_id', '—')}")
+            col_c.caption(status)
+            if col_d.button("🗑️", key=f"settings_del_vac_{i}"):
+                delete_vacancy(vac["title"])
+                st.rerun()
+

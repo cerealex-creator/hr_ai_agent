@@ -2,17 +2,23 @@ import asyncio
 import json
 import os
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, F, types
+from interview_schedule import process_interview_reminders
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from dotenv import load_dotenv
+from telegram_notify import get_hr_user_id, normalize_chat_id
+
 load_dotenv()
 
 # ---------- Конфигурация ----------
-ADMIN_USER_ID = 814639854  # <--- ЗАМЕНИТЕ НА ВАШ user_id (число)
-SECRET_GROUP_TOKEN = "your_secret_token_here"  # для глубоких ссылок (опционально)
+def _admin_user_id():
+    return get_hr_user_id() or 814639854
+
+
+SECRET_GROUP_TOKEN = os.getenv("TELEGRAM_GROUP_LINK_TOKEN", "your_secret_token_here")
 
 # ---------- Работа с данными ----------
 VACANCIES_FILE = "data/vacancies_db.json"
@@ -51,20 +57,33 @@ def get_vacancies_for_department(dept_id, only_active=True):
     return result
 
 # ---------- Бот ----------
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
 if not TOKEN:
     raise ValueError("Не задан TELEGRAM_BOT_TOKEN в окружении")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+logger = logging.getLogger(__name__)
 
 # Временное хранилище для привязки пользователя к отделу (после глубокой ссылки)
 user_dept = {}
 
-# ---------- Команда /id (только для лички, чтобы узнать свой user_id) ----------
+# ---------- Команды /id и /chatid ----------
 @dp.message(Command("id"))
 async def cmd_id(message: types.Message):
-    await message.answer(f"Ваш user_id: {message.from_user.id}")
+    lines = [f"Ваш user_id: <code>{message.from_user.id}</code>"]
+    if message.chat.type != "private":
+        lines.append(f"ID этого чата: <code>{message.chat.id}</code>")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@dp.message(Command("chatid"))
+async def cmd_chatid(message: types.Message):
+    await message.answer(
+        f"ID чата: <code>{message.chat.id}</code>\n"
+        f"Тип: {message.chat.type}",
+        parse_mode="HTML",
+    )
 
 # ---------- Команда /start (в личке или группе) ----------
 @dp.message(Command("start"))
@@ -234,7 +253,7 @@ async def send_candidates_page(message: types.Message, user_id: int, vacancy_id,
     builder.add(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_vacancies"))
 
     # Если пользователь – админ, добавляем кнопки управления вакансией
-    if user_id == ADMIN_USER_ID:
+    if user_id == _admin_user_id():
         if vacancy.get("active", True):
             builder.add(InlineKeyboardButton(text="❌ Сделать неактивной", callback_data=f"deactivate_{vacancy_id}"))
         else:
@@ -267,10 +286,9 @@ async def ask_search(callback: types.CallbackQuery):
     await callback.message.answer("Введите ключевое слово для поиска:")
     await callback.answer()
 
-@dp.message()
+@dp.message(F.text, ~F.text.startswith("/"))
 async def handle_search_query(message: types.Message):
     user_id = message.from_user.id
-    # Проверяем, ожидаем ли поиск
     if hasattr(ask_search, "search_state") and user_id in ask_search.search_state:
         state = ask_search.search_state[user_id]
         if state.get("waiting"):
@@ -278,10 +296,11 @@ async def handle_search_query(message: types.Message):
             vacancy_id = state["vacancy_id"]
             del ask_search.search_state[user_id]
             await send_candidates_page(message, user_id, vacancy_id, page=0, keyword=keyword)
-            await message.delete()
+            try:
+                await message.delete()
+            except Exception:
+                pass
             return
-    # Игнорируем другие сообщения
-    pass
 
 # ---------- Статистика ----------
 @dp.callback_query(lambda c: c.data.startswith("stats_"))
@@ -310,7 +329,7 @@ async def show_stats(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("deactivate_"))
 async def deactivate_vacancy(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    if user_id != ADMIN_USER_ID:
+    if user_id != _admin_user_id():
         await callback.answer("У вас нет прав на это действие", show_alert=True)
         return
     vacancy_id = int(callback.data.split("_")[1])
@@ -328,7 +347,7 @@ async def deactivate_vacancy(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("activate_"))
 async def activate_vacancy(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    if user_id != ADMIN_USER_ID:
+    if user_id != _admin_user_id():
         await callback.answer("У вас нет прав на это действие", show_alert=True)
         return
     vacancy_id = int(callback.data.split("_")[1])
@@ -342,10 +361,25 @@ async def activate_vacancy(callback: types.CallbackQuery):
             return
     await callback.answer("Ошибка")
 
+# ---------- Напоминания о собеседованиях ----------
+async def interview_reminder_loop():
+    while True:
+        try:
+            results = await asyncio.to_thread(process_interview_reminders)
+            for line in results:
+                logging.info("interview_reminder: %s", line)
+        except Exception as e:
+            logging.exception("interview_reminder_loop: %s", e)
+        await asyncio.sleep(60)
+
+
 # ---------- Запуск ----------
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
+    await bot.delete_webhook(drop_pending_updates=False)
+    logger.info("Webhook сброшен, запуск polling для @%s", (await bot.get_me()).username)
+    asyncio.create_task(interview_reminder_loop())
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
     asyncio.run(main())
