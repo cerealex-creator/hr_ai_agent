@@ -198,6 +198,9 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 value=cand.get("video_link", ""),
                 key=k("video"),
             )
+            cand["hr_comment"] = st.text_area(
+                "Комментарий HR", value=cand.get("hr_comment", ""), key=k("hr_comment"), height=80
+            )
             tcol1, tcol2 = st.columns([3, 1])
             with tcol1:
                 cand["task_link"] = st.text_input(
@@ -235,10 +238,6 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         st.success("Кандидат отправлен в общий чат Telegram!")
                     else:
                         st.error(tg_msg)
-
-            cand["hr_comment"] = st.text_area(
-                "Комментарий HR", value=cand.get("hr_comment", ""), key=k("hr_comment"), height=80
-            )
 
             client_label = CLIENT_STATUS_LABELS.get(cand.get("client_status", "wait"), "—")
             st.caption(f"Статус заказчика: **{client_label}**")

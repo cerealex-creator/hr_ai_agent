@@ -136,6 +136,9 @@ def build_primary_candidate_message(cand, vacancy_title):
     task = (cand.get("task_link") or "").strip()
     if task:
         lines.extend(["", f"✅ {_link(task, 'Выполненное задание')}"])
+    hr_comment = (cand.get("hr_comment") or "").strip()
+    if hr_comment:
+        lines.extend(["", "<b>Комментарий HR:</b>", _esc(hr_comment)])
     return "\n".join(lines)
 
 
@@ -160,11 +163,13 @@ def get_telegram_credentials():
 
 
 def send_to_vacancy_chat(vacancy, message, send_fn=None):
-    """Отправка в чат вакансии."""
-    send = send_fn or send_telegram_html
+    """Отправка в чат вакансии. send_fn: (bot_token, chat_id, text) → (ok, msg)."""
     chat_id = vacancy.get("chat_id")
-    if not get_bot_token():
+    token = get_bot_token()
+    if not token:
         return False, "Не задан TELEGRAM_BOT_TOKEN в .env"
     if not chat_id:
         return False, "У вакансии не указан Chat ID (настройте чат в «Настройках»)"
-    return send(chat_id, message)
+    if send_fn:
+        return send_fn(token, chat_id, message)
+    return send_telegram_html(chat_id, message, bot_token=token)
