@@ -115,6 +115,8 @@ def _compute_visible_metrics(visible):
             if (wait_status(c) and _status_unchanged_for(c, three_days))
             or (_has_interview_scheduled(c) and _interview_passed_for(c, three_days))
         ),
+        "offer": sum(1 for c in visible if c.get("client_status") == "offer"),
+        "started": sum(1 for c in visible if c.get("client_status") == "started"),
     }
 
 
@@ -125,6 +127,8 @@ VACANCY_METRIC_LABELS = (
     ("pending_interview_decision", "ждут решения по итогам собеседования"),
     ("pending_interview_over_24h", "ждут решения по собеседованию > суток"),
     ("pending_over_3_days", "ждут решений > 3 дней"),
+    ("offer", "Сделан оффер"),
+    ("started", "Выход на работу"),
 )
 
 

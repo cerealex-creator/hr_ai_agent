@@ -5,7 +5,9 @@ from datetime import timedelta
 
 from dotenv import load_dotenv
 
-load_dotenv()
+_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+_ENV_PATH = os.path.join(_ROOT_DIR, ".env")
+load_dotenv(_ENV_PATH, override=True)
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 DEFAULT_CREDENTIALS_PATH = "data/google_calendar_credentials.json"
@@ -25,10 +27,12 @@ def get_calendar_id():
 
 
 def get_event_duration_minutes():
+    """Читает длительность из .env при каждом создании/обновлении события."""
+    load_dotenv(_ENV_PATH, override=True)
     try:
-        return int(os.getenv("GOOGLE_CALENDAR_EVENT_MINUTES", "45"))
+        return int(os.getenv("GOOGLE_CALENDAR_EVENT_MINUTES", "30"))
     except ValueError:
-        return 45
+        return 30
 
 
 def credentials_file_exists():

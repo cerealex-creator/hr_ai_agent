@@ -90,7 +90,7 @@ def get_department_by_id(dept_id):
 # ============================================================
 # ЗАГРУЗКА КОНФИГУРАЦИИ И КЛЮЧЕЙ
 # ============================================================
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 
 def load_config(config_path="hri_full_v1_config.yaml"):
     with open(config_path, "r", encoding="utf-8") as f:
@@ -2115,6 +2115,7 @@ with tab_settings:
                 get_calendar_status,
                 get_credentials_path,
                 get_calendar_id,
+                get_event_duration_minutes,
                 credentials_file_exists,
             )
         except ImportError:
@@ -2137,10 +2138,13 @@ with tab_settings:
 2. Credentials → **OAuth client ID** → тип **Desktop app** → скачайте JSON
 3. Сохраните файл как `data/google_calendar_credentials.json`
 4. Нажмите **Подключить Google Calendar** — откроется браузер для входа
-5. В `.env` при необходимости: `GOOGLE_CALENDAR_ID=primary` (или ID календаря), `GOOGLE_CALENDAR_EVENT_MINUTES=45`
+5. В `.env` при необходимости: `GOOGLE_CALENDAR_ID=primary` (или ID календаря), `GOOGLE_CALENDAR_EVENT_MINUTES=30`
                 """
             )
-            st.caption(f"Credentials: `{get_credentials_path()}` · Календарь: `{get_calendar_id()}`")
+            st.caption(
+                f"Credentials: `{get_credentials_path()}` · Календарь: `{get_calendar_id()}` · "
+                f"Длительность события: **{get_event_duration_minutes()} мин**"
+            )
 
             if credentials_file_exists():
                 if st.button("🔗 Подключить Google Calendar", key="settings_gcal_auth"):
