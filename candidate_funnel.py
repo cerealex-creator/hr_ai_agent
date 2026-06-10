@@ -398,88 +398,185 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     _persist_vacancy_candidates(vacancy, deps)
                     st.rerun()
 
+            eval_ok_key = f"eval_ok_{vacancy['id']}_{cand.get('id', idx)}"
+            if st.session_state.get(eval_ok_key):
+                st.success(st.session_state.pop(eval_ok_key))
+
+            if (cand.get("resume_text") or "").strip():
+                st.caption("Резюме: текст сохранён в карточке кандидата.")
+            elif (cand.get("resume_link") or "").strip():
+                st.caption("Резюме: будет загружено по ссылке при оценке.")
+            else:
+                st.caption("Резюме: нет текста и ссылки — оценка недоступна.")
+
+            if not deps["vacancy_has_profile"](vacancy):
+                st.caption("Профиль вакансии не заполнен — оценка будет менее точной.")
+
             if st.button("🤖 Оценить по резюме", key=k("eval_res")):
                 resume_text = cand.get("resume_text") or ""
                 if not resume_text and cand.get("resume_link"):
-                    resume_text, err = fetch_resume_text_from_url(
-                        cand["resume_link"], deps["extract_text_from_pdf_url"]
-                    )
+                    with st.spinner("Загрузка резюме по ссылке…"):
+                        resume_text, err = fetch_resume_text_from_url(
+                            cand["resume_link"], deps["extract_text_from_pdf_url"]
+                        )
                     if err:
                         st.error(err)
-                    else:
+                    elif resume_text:
                         cand["resume_text"] = resume_text
                 if resume_text:
                     profile = deps["get_vacancy_profile_text"](vacancy)
-                    with st.spinner("Оценка резюме и формирование опросника…"):
-                        ev = evaluate_resume_with_ai(
-                            resume_text,
-                            profile,
-                            vacancy["title"],
-                            deps["client"],
-                            deps["config"],
-                            hr_comment=cand.get("hr_comment", ""),
-                        )
-                        cand.update(ev)
-                        base_q = deps["parse_questionnaire_input"](
-                            vacancy.get("documents", {}).get("questions", "")
-                        )
-                        questionnaire_ok = True
-                        try:
-                            cand["interview_questionnaire"] = generate_candidate_interview_questionnaire(
+                    questionnaire_ok = True
+                    try:
+                        with st.spinner("Оценка резюме и формирование опросника… (1–3 мин)"):
+                            ev = evaluate_resume_with_ai(
                                 resume_text,
                                 profile,
                                 vacancy["title"],
-                                base_q,
-                                cand.get("hr_comment", ""),
-                                ev.get("ai_comment", ""),
-                                ev.get("ai_strengths", []),
-                                ev.get("ai_weaknesses", []),
                                 deps["client"],
                                 deps["config"],
+                                hr_comment=cand.get("hr_comment", ""),
                             )
-                        except Exception as e:
-                            questionnaire_ok = False
-                            st.warning(f"Оценка сохранена, но опросник не сформирован: {e}")
-                    _persist_vacancy_candidates(vacancy, deps)
-                    if questionnaire_ok:
-                        st.success("Оценка и опросник сохранены!")
-                    else:
-                        st.success("Оценка сохранена!")
-                    st.rerun()
+                            cand.update(ev)
+                            base_q = deps["parse_questionnaire_input"](
+                                vacancy.get("documents", {}).get("questions", "")
+                            )
+                            try:
+                                cand["interview_questionnaire"] = generate_candidate_interview_questionnaire(
+                                    resume_text,
+                                    profile,
+                                    vacancy["title"],
+                                    base_q,
+                                    cand.get("hr_comment", ""),
+                                    ev.get("ai_comment", ""),
+                                    ev.get("ai_strengths", []),
+                                    ev.get("ai_weaknesses", []),
+                                    deps["client"],
+                                    deps["config"],
+                                    questionnaire_rules=deps.get("QUESTIONNAIRE_GENERATION_RULES", ""),
+                                )
+                            except Exception as e:
+                                questionnaire_ok = False
+                                st.session_state[f"eval_warn_{vacancy['id']}_{cand.get('id', idx)}"] = (
+                                    f"Оценка сохранена, но опросник не сформирован: {e}"
+                                )
+                        _persist_vacancy_candidates(vacancy, deps)
+                        score = ev.get("ai_score", "—")
+                        if questionnaire_ok:
+                            msg = f"Оценка {score}/4 и опросник сохранены для «{cand.get('name', 'кандидат')}»."
+                        else:
+                            msg = f"Оценка {score}/4 сохранена для «{cand.get('name', 'кандидат')}»."
+                        st.session_state[eval_ok_key] = msg
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка оценки по резюме: {e}")
                 else:
-                    st.warning("Нет текста резюме")
+                    st.warning("Нет текста резюме. Добавьте PDF/ссылку или загрузите кандидата через автозагрузку.")
+
+            warn_key = f"eval_warn_{vacancy['id']}_{cand.get('id', idx)}"
+            if st.session_state.get(warn_key):
+                st.warning(st.session_state.pop(warn_key))
 
             has_profile = deps["vacancy_has_profile"](vacancy)
+            eval_int_ok_key = f"eval_int_ok_{vacancy['id']}_{cand.get('id', idx)}"
+            if st.session_state.get(eval_int_ok_key):
+                st.success(st.session_state.pop(eval_int_ok_key))
+
+            transcript_len = len((cand.get("transcript") or "").strip())
+            video_url = (cand.get("video_link") or "").strip()
+            if transcript_len:
+                st.caption(f"Расшифровка интервью: {transcript_len} символов — можно оценивать.")
+            elif video_url:
+                st.caption(
+                    "Расшифровка пуста — при нажатии «Оценить по интервью» "
+                    "запись будет расшифрована и оценена автоматически (несколько минут)."
+                )
+            else:
+                st.caption(
+                    "Нет расшифровки и ссылки на запись. "
+                    "Укажите «Запись собеседования» или вставьте текст в «Расшифровка интервью»."
+                )
+
             if st.button(
                 "🤖 Оценить по интервью",
                 key=k("eval_int"),
                 disabled=not has_profile,
             ):
-                resume_text = cand.get("resume_text") or ""
-                if not resume_text and cand.get("resume_link"):
-                    resume_text = deps["extract_text_from_pdf_url"](cand.get("resume_link", "")) or ""
-                interview_q_text = questionnaire_to_prompt_text(
-                    cand.get("interview_questionnaire")
-                ) or deps["get_vacancy_questionnaire_text"](vacancy)
-                ev = deps["evaluate_candidate_with_ai_v2"](
-                    resume_text,
-                    cand.get("transcript", ""),
-                    vacancy["title"],
-                    deps["get_vacancy_profile_text"](vacancy),
-                    cand.get("ignore_flags") or deps["default_ignore_flags"](),
-                    interview_q_text,
-                    hr_comment=cand.get("hr_comment", ""),
-                )
-                cand["ai_score"] = ev.get("score", 0)
-                cand["ai_score_source"] = "interview"
-                cand["ai_comment"] = ev.get("comment", "")
-                cand["ai_strengths"] = ev.get("strengths", [])
-                cand["ai_weaknesses"] = ev.get("weaknesses", [])
-                cand["ai_profile_requirements_met"] = ev.get("profile_requirements_met", {})
-                cand["profile_checked"] = True
-                _persist_vacancy_candidates(vacancy, deps)
-                st.success("Переоценка по интервью выполнена!")
-                st.rerun()
+                transcript_text = (cand.get("transcript") or "").strip()
+                if not transcript_text and not video_url:
+                    st.warning(
+                        "Укажите ссылку в «Запись собеседования» "
+                        "или вставьте текст в «Расшифровка интервью»."
+                    )
+                else:
+                    transcribed_now = False
+                    try:
+                        if not transcript_text and video_url:
+                            with st.spinner("Расшифровка записи…"):
+                                transcript_text = deps["transcribe_video_from_link"](video_url) or ""
+                            if not transcript_text:
+                                st.error(
+                                    "Не удалось расшифровать запись по ссылке. "
+                                    "Проверьте ссылку (Яндекс.Диск) или вставьте текст вручную."
+                                )
+                            else:
+                                cand["transcript"] = transcript_text
+                                transcribed_now = True
+
+                        if transcript_text:
+                            resume_text = cand.get("resume_text") or ""
+                            if not resume_text and cand.get("resume_link"):
+                                with st.spinner("Загрузка резюме по ссылке…"):
+                                    resume_text = deps["extract_text_from_pdf_url"](
+                                        cand.get("resume_link", "")
+                                    ) or ""
+                                if resume_text:
+                                    cand["resume_text"] = resume_text
+                            interview_q_text = questionnaire_to_prompt_text(
+                                cand.get("interview_questionnaire")
+                            ) or deps["get_vacancy_questionnaire_text"](vacancy)
+                            with st.spinner("Оценка по интервью… (1–2 мин)"):
+                                ev = deps["evaluate_candidate_with_ai_v2"](
+                                    resume_text,
+                                    transcript_text,
+                                    vacancy["title"],
+                                    deps["get_vacancy_profile_text"](vacancy),
+                                    cand.get("ignore_flags") or deps["default_ignore_flags"](),
+                                    interview_q_text,
+                                    hr_comment=cand.get("hr_comment", ""),
+                                )
+                            if not ev.get("ok", True):
+                                st.error(
+                                    f"Ошибка оценки по интервью: {ev.get('error') or ev.get('comment')}"
+                                )
+                            elif ev.get("score") is None:
+                                st.error("ИИ не вернул оценку. Попробуйте ещё раз.")
+                            else:
+                                cand["ai_score"] = ev.get("score", 0)
+                                cand["ai_score_source"] = "interview"
+                                cand["ai_comment"] = ev.get("comment", "")
+                                cand["ai_strengths"] = ev.get("strengths", [])
+                                cand["ai_weaknesses"] = ev.get("weaknesses", [])
+                                cand["ai_profile_requirements_met"] = ev.get(
+                                    "profile_requirements_met", {}
+                                )
+                                cand["ai_flags_applied"] = ev.get("flags_applied", [])
+                                cand["profile_checked"] = True
+                                _persist_vacancy_candidates(vacancy, deps)
+                                met = ev.get("profile_requirements_met") or {}
+                                parts = [
+                                    f"Оценка по интервью сохранена: {ev.get('score')}/4",
+                                    f"hard {met.get('hard_skills', '—')}%",
+                                    f"soft {met.get('soft_skills', '—')}%",
+                                    f"опыт {met.get('experience', '—')}%",
+                                ]
+                                if transcribed_now:
+                                    parts.append(
+                                        f"расшифровка сохранена ({len(transcript_text)} симв.)"
+                                    )
+                                st.session_state[eval_int_ok_key] = ". ".join(parts) + "."
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка оценки по интервью: {e}")
 
             if st.button("🗑️ Удалить", key=k("del")):
                 return "delete"
