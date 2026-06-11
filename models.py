@@ -213,6 +213,9 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if "task_link" not in candidate:
         candidate["task_link"] = ""
         migrated = True
+    if "hh_resume_link" not in candidate:
+        candidate["hh_resume_link"] = ""
+        migrated = True
     if "office_interview_date" not in candidate:
         candidate["office_interview_date"] = ""
         migrated = True

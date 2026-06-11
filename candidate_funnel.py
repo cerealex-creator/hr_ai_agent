@@ -48,6 +48,7 @@ def new_candidate_template(vacancy_id):
         "vacancy_id": vacancy_id,
         "name": "",
         "resume_link": "",
+        "hh_resume_link": "",
         "video_link": "",
         "task_link": "",
         "transcript": "",
@@ -191,6 +192,24 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     resume_url or "about:blank",
                     disabled=not resume_url,
                     key=k("resume_open"),
+                    use_container_width=True,
+                )
+            hhcol1, hhcol2 = st.columns([3, 1])
+            with hhcol1:
+                cand["hh_resume_link"] = st.text_input(
+                    "Ссылка на резюме HH.ru",
+                    value=cand.get("hh_resume_link", ""),
+                    key=k("hh_resume"),
+                )
+            with hhcol2:
+                st.write("")
+                st.write("")
+                hh_url = (cand.get("hh_resume_link") or "").strip()
+                st.link_button(
+                    "Открыть на HH.ru",
+                    hh_url or "about:blank",
+                    disabled=not hh_url,
+                    key=k("hh_resume_open"),
                     use_container_width=True,
                 )
             cand["video_link"] = st.text_input(
@@ -652,6 +671,7 @@ def render_add_candidate(vacancy, deps):
     with st.form(f"add_cand_{vacancy['id']}"):
         name = st.text_input("ФИО")
         resume_link = st.text_input("Ссылка на резюме")
+        hh_resume_link = st.text_input("Ссылка на резюме HH.ru")
         pdf = st.file_uploader("Или PDF резюме", type=["pdf"])
         video_link = st.text_input("Запись собеседования")
         hr_comment = st.text_area("Комментарий")
@@ -661,6 +681,7 @@ def render_add_candidate(vacancy, deps):
             cand = new_candidate_template(vacancy["id"])
             cand["name"] = name.strip()
             cand["resume_link"] = resume_link.strip()
+            cand["hh_resume_link"] = hh_resume_link.strip()
             cand["video_link"] = video_link.strip()
             cand["hr_comment"] = hr_comment.strip()
             cand["ignore_flags"] = deps["default_ignore_flags"]()
