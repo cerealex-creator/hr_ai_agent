@@ -711,9 +711,8 @@ def load_vacancies():
     if not os.path.exists(VACANCIES_FILE):
         return []
     try:
-        with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            vacancies = data.get("vacancies", [])
+        from vacancy_store import load_vacancies as _load_vacancies_store
+        vacancies = _load_vacancies_store().get("vacancies", [])
     except json.JSONDecodeError as e:
         st.error(f"Ошибка чтения файла vacancies_db.json: {e}. Данные повреждены.")
         # Создаем бэкап повреждённого файла
@@ -792,9 +791,8 @@ def load_vacancies():
     return vacancies
 
 def save_vacancies(vacancies_list):
-    os.makedirs("data", exist_ok=True)
-    with open(VACANCIES_FILE, "w", encoding="utf-8") as f:
-        json.dump({"vacancies": vacancies_list}, f, ensure_ascii=False, indent=2)
+    from vacancy_store import save_vacancies_list
+    save_vacancies_list(vacancies_list)
 
 def create_vacancy(title, chat_id, client_id=0):
     from telegram_notify import normalize_chat_id
@@ -849,7 +847,8 @@ def delete_vacancy(vacancy_title):
 # ============================================================
 def send_telegram_message(bot_token, chat_id, text):
     from telegram_notify import send_telegram_html
-    return send_telegram_html(chat_id, text, bot_token=bot_token)
+    ok, msg, _ = send_telegram_html(chat_id, text, bot_token=bot_token)
+    return ok, msg
 
 # ============================================================
 # ОЦЕНКА КАНДИДАТА ИИ
@@ -1758,9 +1757,9 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     client_zone_links = "".join(
-        f'<a class="client-zone-btn" href="/client?dept={quote(dept["name"])}" target="_self">{dept["name"]}</a>'
+        f'<a class="client-zone-btn" href="/client?dept={quote(dept["name"])}" target="_self">'
+        f'{"🧪 " if dept.get("id") == 99 or dept.get("slug") == "test" else ""}{dept["name"]}</a>'
         for dept in departments
-        if dept.get("slug") != "test" and dept.get("id") != 99
     )
     st.markdown(client_zone_links, unsafe_allow_html=True)
 
@@ -2100,7 +2099,7 @@ with tab_settings:
             )
             if test_pick and st.button("📨 Отправить тестовое сообщение", key="settings_tg_test_btn"):
                 chat = next(c for c in test_chats if c["name"] == test_pick)
-                t_ok, t_msg = send_telegram_html(
+                t_ok, t_msg, _ = send_telegram_html(
                     chat["id"],
                     "<b>✅ Тест</b>\n\nHR-помогатор успешно отправляет сообщения в этот чат.",
                 )

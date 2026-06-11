@@ -160,20 +160,20 @@ def get_hr_telegram_chat_id():
 
 def send_telegram_html(chat_id, text):
     from telegram_notify import send_telegram_html as _send
-    ok, msg = _send(chat_id, text)
+    ok, msg, _ = _send(chat_id, text)
     if ok:
         return True, "ok"
     return False, msg
 
 
 def load_vacancies():
-    with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
-        return json.load(f).get("vacancies", [])
+    from vacancy_store import load_vacancies_list
+    return load_vacancies_list()
 
 
 def save_vacancies(vacancies):
-    with open(VACANCIES_FILE, "w", encoding="utf-8") as f:
-        json.dump({"vacancies": vacancies}, f, ensure_ascii=False, indent=2)
+    from vacancy_store import save_vacancies_list
+    save_vacancies_list(vacancies)
 
 
 def process_interview_reminders(now=None, dry_run=False):

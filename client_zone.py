@@ -1,31 +1,25 @@
 """Общая логика клиентских зон (подразделение и мастер-зона)."""
 
-import json
 from datetime import datetime, time
 
 import streamlit as st
 
 from eval_ui import has_ai_evaluation, render_ai_score_badge, render_ai_evaluation_block
-from models import (
-    CLIENT_ZONE_ENTRY_STAGE,
-    OFFER_STAGE,
-    STARTED_WORK_STAGE,
-    is_visible_in_client_zone,
-    set_hr_stage,
+from models import is_visible_in_client_zone
+
+from vacancy_store import (
+    STATUS_CONFIG,
+    STATUS_LABEL_TO_KEY,
+    STATUS_OPTIONS,
+    STATUS_ORDER,
+    get_status_meta,
+    load_departments,
+    load_vacancies,
+    migrate_candidate,
+    migrate_vacancies_data,
+    resolve_status_on_save,
+    save_vacancies,
 )
-
-STATUS_CONFIG = {
-    "wait": {"label": "Ждёт оценки", "icon": "⚪", "badge_class": "status-badge-wait"},
-    "ready": {"label": "Рассматриваем", "icon": "🟢", "badge_class": "status-badge-ready"},
-    "reject": {"label": "Отказ", "icon": "🔴", "badge_class": "status-badge-reject"},
-    "think": {"label": "Надо подумать", "icon": "🟡", "badge_class": "status-badge-think"},
-    "offer": {"label": "Оффер", "icon": "🟢", "badge_class": "status-badge-offer"},
-    "started": {"label": "Вышел на работу", "icon": "👑", "badge_class": "status-badge-started"},
-}
-
-STATUS_ORDER = {"wait": 0, "ready": 1, "think": 2, "offer": 3, "started": 4, "reject": 5}
-STATUS_OPTIONS = [cfg["label"] for cfg in STATUS_CONFIG.values()]
-STATUS_LABEL_TO_KEY = {cfg["label"]: key for key, cfg in STATUS_CONFIG.items()}
 
 TEST_DEPARTMENT_IDS = {99}
 
@@ -34,64 +28,6 @@ def is_test_department(dept):
     if not dept:
         return False
     return dept.get("id") in TEST_DEPARTMENT_IDS or dept.get("slug") == "test"
-
-
-def load_departments():
-    with open("data/departments.json", "r", encoding="utf-8") as f:
-        return json.load(f).get("departments", [])
-
-
-def load_vacancies():
-    with open("data/vacancies_db.json", "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_vacancies(data):
-    with open("data/vacancies_db.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def migrate_candidate(cand):
-    now = datetime.now().isoformat()
-    if "created_at" not in cand:
-        cand["created_at"] = now
-    if "viewed" not in cand:
-        cand["viewed"] = True
-    if "status_updated_at" not in cand:
-        cand["status_updated_at"] = cand.get("created_at", now)
-    if "remote_interview" not in cand:
-        cand["remote_interview"] = False
-    if "office_interview" not in cand:
-        cand["office_interview"] = bool(cand.get("office_interview_date"))
-    status = cand.get("client_status", "wait")
-    if status == "new" or status not in STATUS_CONFIG:
-        cand["client_status"] = "wait"
-    if is_visible_in_client_zone(cand) and not (cand.get("status_updated_at") or "").strip():
-        for entry in reversed(cand.get("hr_stage_history", [])):
-            if entry.get("stage") == CLIENT_ZONE_ENTRY_STAGE:
-                cand["status_updated_at"] = entry.get("at") or now
-                break
-        else:
-            cand["status_updated_at"] = now
-    return cand
-
-
-def migrate_vacancies_data(data):
-    changed = False
-    for vacancy in data.get("vacancies", []):
-        for cand in vacancy.get("candidates", []):
-            before = json.dumps(cand, sort_keys=True, ensure_ascii=False)
-            migrate_candidate(cand)
-            after = json.dumps(cand, sort_keys=True, ensure_ascii=False)
-            if before != after:
-                changed = True
-    if changed:
-        save_vacancies(data)
-    return data
-
-
-def get_status_meta(status_key):
-    return STATUS_CONFIG.get(status_key, STATUS_CONFIG["wait"])
 
 
 def sort_candidates(candidates):
@@ -215,13 +151,6 @@ def format_client_status_date(cand):
         return dt.strftime("%d.%m.%Y")
     except ValueError:
         return raw[:10]
-
-
-def resolve_status_on_save(cand, selected_label):
-    selected_key = STATUS_LABEL_TO_KEY[selected_label]
-    if selected_key != cand.get("client_status"):
-        cand["status_updated_at"] = datetime.now().isoformat()
-    return selected_key
 
 
 def vacancy_picker_label(vacancy, dept_names):
@@ -361,26 +290,28 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
             )
 
             if st.button("💾 Сохранить изменения", key=f"save_{key_prefix}_{vacancy_id}_{idx}"):
-                saved_status = resolve_status_on_save(cand, new_status_label)
+                from client_actions import apply_client_update_from_web_form
 
-                cand["client_status"] = saved_status
-                cand["client_comment"] = new_comment
-                cand["client_final_verdict"] = final_verdict
+                from vacancy_store import merge_vacancy_candidates_from_disk
 
-                if saved_status == "reject":
-                    set_hr_stage(cand, "rejected_client", "отказ в клиентской зоне")
-                elif saved_status == "offer":
-                    set_hr_stage(cand, OFFER_STAGE, "оффер в клиентской зоне")
-                elif saved_status == "started":
-                    set_hr_stage(cand, STARTED_WORK_STAGE, "вышел на работу (клиентская зона)")
-
-                if show_interview_fields:
-                    cand["office_interview_date"] = new_date.strftime("%Y-%m-%d") if new_date else ""
-                    cand["office_interview_time"] = new_time
-                    cand["remote_interview"] = remote_interview
-                    cand["office_interview"] = office_interview
-
-                save_vacancies(data)
+                fresh = load_vacancies()
+                merge_vacancy_candidates_from_disk(selected_vacancy, fresh.get("vacancies", []))
+                apply_client_update_from_web_form(
+                    cand,
+                    new_status_label=new_status_label,
+                    new_comment=new_comment,
+                    final_verdict=final_verdict,
+                    show_interview_fields=show_interview_fields,
+                    new_date=new_date,
+                    new_time=new_time,
+                    remote_interview=remote_interview,
+                    office_interview=office_interview,
+                )
+                for v in fresh.get("vacancies", []):
+                    if v.get("id") == selected_vacancy.get("id"):
+                        v["candidates"] = selected_vacancy.get("candidates", [])
+                        break
+                save_vacancies(fresh)
                 st.success(f"Изменения для {cand.get('name', 'кандидата')} сохранены!")
                 st.rerun()
 

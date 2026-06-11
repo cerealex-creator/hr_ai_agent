@@ -1,0 +1,204 @@
+"""Хранение вакансий и статусы клиентской зоны (без Streamlit)."""
+
+import json
+import os
+import time
+import uuid
+from datetime import datetime
+
+from models import CLIENT_ZONE_ENTRY_STAGE, is_visible_in_client_zone
+
+VACANCIES_FILE = "data/vacancies_db.json"
+
+STATUS_CONFIG = {
+    "wait": {"label": "Ждёт оценки", "icon": "⚪", "badge_class": "status-badge-wait"},
+    "ready": {"label": "Рассматриваем", "icon": "🟢", "badge_class": "status-badge-ready"},
+    "reject": {"label": "Отказ", "icon": "🔴", "badge_class": "status-badge-reject"},
+    "think": {"label": "Подумать", "icon": "🟡", "badge_class": "status-badge-think"},
+    "offer": {"label": "Оффер", "icon": "🟢", "badge_class": "status-badge-offer"},
+    "started": {"label": "Вышел на работу", "icon": "👑", "badge_class": "status-badge-started"},
+}
+
+STATUS_ORDER = {"wait": 0, "ready": 1, "think": 2, "offer": 3, "started": 4, "reject": 5}
+STATUS_OPTIONS = [cfg["label"] for cfg in STATUS_CONFIG.values()]
+STATUS_LABEL_TO_KEY = {cfg["label"]: key for key, cfg in STATUS_CONFIG.items()}
+
+# Поля, которые обновляет Telegram-бот — не затирать при сохранении из Streamlit
+TELEGRAM_MERGE_FIELDS = (
+    "client_comment",
+    "client_status",
+    "status_updated_at",
+    "hr_stage",
+    "hr_stage_history",
+    "telegram_posts",
+    "client_final_verdict",
+    "tg_callback_id",
+)
+
+
+def _try_import_fcntl():
+    try:
+        import fcntl
+        return fcntl
+    except ImportError:
+        return None
+
+
+def _lock_file(f, exclusive=False):
+    fcntl = _try_import_fcntl()
+    if not fcntl:
+        return
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+
+
+def _unlock_file(f):
+    fcntl = _try_import_fcntl()
+    if not fcntl:
+        return
+    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _normalize_payload(data):
+    if isinstance(data, list):
+        return {"vacancies": data}
+    return data
+
+
+def _read_vacancies_file():
+    os.makedirs(os.path.dirname(VACANCIES_FILE) or ".", exist_ok=True)
+    if not os.path.exists(VACANCIES_FILE):
+        return {"vacancies": []}
+    last_error = None
+    for attempt in range(5):
+        try:
+            with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
+                _lock_file(f, exclusive=False)
+                try:
+                    return json.load(f)
+                finally:
+                    _unlock_file(f)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            time.sleep(0.05 * (attempt + 1))
+    raise last_error
+
+
+def _atomic_write_json(path, payload):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        _lock_file(f, exclusive=True)
+        try:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            _unlock_file(f)
+    os.replace(tmp_path, path)
+
+
+def load_departments():
+    with open("data/departments.json", "r", encoding="utf-8") as f:
+        return json.load(f).get("departments", [])
+
+
+def load_vacancies():
+    return _read_vacancies_file()
+
+
+def load_vacancies_list():
+    return load_vacancies().get("vacancies", [])
+
+
+def save_vacancies(data):
+    _atomic_write_json(VACANCIES_FILE, _normalize_payload(data))
+
+
+def save_vacancies_list(vacancies_list):
+    save_vacancies({"vacancies": vacancies_list})
+
+
+def merge_candidate_from_disk(memory_cand, disk_cand):
+    """Подмешивает в память поля, обновлённые ботом/Telegram."""
+    if not memory_cand.get("id") or memory_cand.get("id") != disk_cand.get("id"):
+        return memory_cand
+    for field in TELEGRAM_MERGE_FIELDS:
+        if field in disk_cand:
+            memory_cand[field] = disk_cand[field]
+    return memory_cand
+
+
+def merge_vacancy_candidates_from_disk(memory_vacancy, vacancies_list):
+    """Перед сохранением из UI подтягивает свежие данные кандидатов с диска."""
+    mem_id = memory_vacancy.get("id")
+    for vacancy in vacancies_list:
+        if vacancy.get("id") != mem_id:
+            continue
+        disk_map = {
+            c["id"]: c
+            for c in vacancy.get("candidates", [])
+            if c.get("id")
+        }
+        for mc in memory_vacancy.get("candidates", []):
+            dc = disk_map.get(mc.get("id"))
+            if dc:
+                merge_candidate_from_disk(mc, dc)
+        vacancy["candidates"] = memory_vacancy.get("candidates", [])
+        break
+    return vacancies_list
+
+
+def get_status_meta(status_key):
+    return STATUS_CONFIG.get(status_key, STATUS_CONFIG["wait"])
+
+
+def migrate_candidate(cand):
+    now = datetime.now().isoformat()
+    if "created_at" not in cand:
+        cand["created_at"] = now
+    if "viewed" not in cand:
+        cand["viewed"] = True
+    if "status_updated_at" not in cand:
+        cand["status_updated_at"] = cand.get("created_at", now)
+    if "remote_interview" not in cand:
+        cand["remote_interview"] = False
+    if "office_interview" not in cand:
+        cand["office_interview"] = bool(cand.get("office_interview_date"))
+    if "telegram_posts" not in cand or not isinstance(cand.get("telegram_posts"), list):
+        cand["telegram_posts"] = []
+    if not cand.get("id"):
+        cand["id"] = str(uuid.uuid4())
+    if not cand.get("tg_callback_id"):
+        cand["tg_callback_id"] = cand["id"].replace("-", "")[:8]
+    status = cand.get("client_status", "wait")
+    if status == "new" or status not in STATUS_CONFIG:
+        cand["client_status"] = "wait"
+    if is_visible_in_client_zone(cand) and not (cand.get("status_updated_at") or "").strip():
+        for entry in reversed(cand.get("hr_stage_history", [])):
+            if entry.get("stage") == CLIENT_ZONE_ENTRY_STAGE:
+                cand["status_updated_at"] = entry.get("at") or now
+                break
+        else:
+            cand["status_updated_at"] = now
+    return cand
+
+
+def migrate_vacancies_data(data):
+    changed = False
+    for vacancy in data.get("vacancies", []):
+        for cand in vacancy.get("candidates", []):
+            before = json.dumps(cand, sort_keys=True, ensure_ascii=False)
+            migrate_candidate(cand)
+            after = json.dumps(cand, sort_keys=True, ensure_ascii=False)
+            if before != after:
+                changed = True
+    if changed:
+        save_vacancies(data)
+    return data
+
+
+def resolve_status_on_save(cand, selected_label):
+    selected_key = STATUS_LABEL_TO_KEY[selected_label]
+    if selected_key != cand.get("client_status"):
+        cand["status_updated_at"] = datetime.now().isoformat()
+    return selected_key

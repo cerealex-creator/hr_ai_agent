@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from dotenv import load_dotenv
 from telegram_notify import get_hr_user_id, normalize_chat_id
+from telegram_bot_handlers import register_client_zone_handlers, try_handle_pending_comment
 
 load_dotenv()
 
@@ -25,13 +26,12 @@ VACANCIES_FILE = "data/vacancies_db.json"
 CHATS_FILE = "data/chats_db.json"
 
 def load_vacancies():
-    with open(VACANCIES_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        return data.get("vacancies", [])
+    from vacancy_store import load_vacancies_list
+    return load_vacancies_list()
 
 def save_vacancies(vacancies):
-    with open(VACANCIES_FILE, "w", encoding="utf-8") as f:
-        json.dump({"vacancies": vacancies}, f, ensure_ascii=False, indent=2)
+    from vacancy_store import save_vacancies_list
+    save_vacancies_list(vacancies)
 
 def load_chats():
     if not os.path.exists(CHATS_FILE):
@@ -64,6 +64,8 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 logger = logging.getLogger(__name__)
+
+register_client_zone_handlers(dp)
 
 # Временное хранилище для привязки пользователя к отделу (после глубокой ссылки)
 user_dept = {}
@@ -176,8 +178,10 @@ async def menu_help(callback: types.CallbackQuery):
     text = (
         "📖 <b>Справка</b>\n\n"
         "• /start — начать работу в группе\n"
-        "• в личном чате с ботом можно просматривать вакансии и кандидатов\n"
-        "• кнопки управления вакансиями (деактивация/активация) доступны только администратору"
+        "• под сообщением о кандидате — кнопки статуса и комментария\n"
+        "• комментарий: кнопка 💬 или ответ (reply) на карточку кандидата\n"
+        "• в личном чате — просмотр вакансий и кандидатов\n"
+        "• деактивация вакансий — только администратору"
     )
     await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
@@ -288,6 +292,8 @@ async def ask_search(callback: types.CallbackQuery):
 
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_search_query(message: types.Message):
+    if await try_handle_pending_comment(message):
+        return
     user_id = message.from_user.id
     if hasattr(ask_search, "search_state") and user_id in ask_search.search_state:
         state = ask_search.search_state[user_id]

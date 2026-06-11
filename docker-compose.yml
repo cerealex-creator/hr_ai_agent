@@ -1,0 +1,23 @@
+services:
+  hr-app:
+    build: .
+    container_name: hr-ai-agent
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped
+
+  hr-bot:
+    build: .
+    container_name: hr-ai-bot
+    command: ["python", "bot.py"]
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped

@@ -10,3 +10,6 @@ showSidebarNavigation = false
 
 [server]
 headless = true
+fileWatcherType = "none"
+enableCORS = false
+maxUploadSize = 200

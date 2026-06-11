@@ -10,6 +10,7 @@ HR_STAGES = {
     "interview_done": "Собеседование проведено",
     "test_task": "Тестовое задание",
     "client_review": "На оценке у заказчика",
+    "client_pause": "Пауза",
     "client_meeting": "Встреча с заказчиком",
     "offer": "Оффер",
     "started_work": "Вышел на работу",
@@ -39,13 +40,16 @@ YELLOW_STAGES = frozenset({
     "primary_contact",
     "test_task",
     "client_review",
+    "client_pause",
 })
 
 OFFER_STAGE = "offer"
 STARTED_WORK_STAGE = "started_work"
 CLIENT_ZONE_ENTRY_STAGE = "client_review"
+CLIENT_PAUSE_STAGE = "client_pause"
 
 HR_STAGE_TO_CLIENT_STATUS = {
+    CLIENT_PAUSE_STAGE: "think",
     OFFER_STAGE: "offer",
     STARTED_WORK_STAGE: "started",
     "rejected_client": "reject",
@@ -53,6 +57,7 @@ HR_STAGE_TO_CLIENT_STATUS = {
 
 CLIENT_STATUS_TO_HR_STAGE = {
     "ready": "client_meeting",
+    "think": CLIENT_PAUSE_STAGE,
     "reject": "rejected_client",
     "offer": OFFER_STAGE,
     "started": STARTED_WORK_STAGE,
@@ -92,6 +97,7 @@ LIST_DISPLAY_STAGE_ORDER = [
     "offer",
     "client_meeting",
     "client_review",
+    "client_pause",
     "test_task",
     "interview_done",
     "interview_scheduled",
@@ -174,7 +180,7 @@ CLIENT_STATUS_LABELS = {
     "wait": "Ждёт оценки",
     "ready": "Рассматриваем",
     "reject": "Отказ",
-    "think": "Надо подумать",
+    "think": "Подумать",
     "offer": "Оффер",
     "started": "Вышел на работу",
 }

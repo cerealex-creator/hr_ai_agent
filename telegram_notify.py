@@ -66,15 +66,15 @@ def get_bot_status():
         return False, f"Сетевая ошибка: {e}", {}
 
 
-def send_telegram_html(chat_id, text, bot_token=None):
-    """Отправка HTML-сообщения. Возвращает (ok, message)."""
+def send_telegram_html(chat_id, text, bot_token=None, reply_markup=None):
+    """Отправка HTML-сообщения. Возвращает (ok, message, message_id)."""
     token = (bot_token or get_bot_token()).strip()
     if not token:
-        return False, "Не задан TELEGRAM_BOT_TOKEN в .env"
+        return False, "Не задан TELEGRAM_BOT_TOKEN в .env", None
 
     normalized = normalize_chat_id(chat_id)
     if normalized is None:
-        return False, "Не указан chat_id"
+        return False, "Не указан chat_id", None
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -83,19 +83,22 @@ def send_telegram_html(chat_id, text, bot_token=None):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         response = requests.post(url, json=payload, timeout=30)
         data = response.json()
         if data.get("ok"):
-            return True, "Уведомление доставлено в Telegram"
+            message_id = data.get("result", {}).get("message_id")
+            return True, "Уведомление доставлено в Telegram", message_id
         desc = data.get("description", "неизвестно")
         if "chat not found" in desc.lower():
             desc += ". Проверьте Chat ID и что бот добавлен в чат."
         if "bot was blocked" in desc.lower():
             desc += ". Напишите боту /start в личке."
-        return False, f"Ошибка Telegram: {desc}"
+        return False, f"Ошибка Telegram: {desc}", None
     except Exception as e:
-        return False, f"Сетевая ошибка: {e}"
+        return False, f"Сетевая ошибка: {e}", None
 
 
 def validate_primary_fields(cand):

@@ -5,6 +5,9 @@ import streamlit as st
 import importlib
 
 import candidate_funnel
+import telegram_client
+
+importlib.reload(telegram_client)
 importlib.reload(candidate_funnel)
 
 from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form

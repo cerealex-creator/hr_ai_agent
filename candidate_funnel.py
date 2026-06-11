@@ -8,6 +8,7 @@ import streamlit as st
 from models import (
     HR_STAGES,
     HR_STAGE_ORDER_UI,
+    CLIENT_ZONE_ENTRY_STAGE,
     set_hr_stage,
     CLIENT_STATUS_LABELS,
     sync_hr_stage_from_client_status,
@@ -30,10 +31,9 @@ from eval_ui import render_ai_score_badge, render_ai_evaluation_block
 from telegram_notify import (
     validate_primary_fields,
     validate_task_message_fields,
-    build_primary_candidate_message,
-    build_task_completed_message,
-    send_to_vacancy_chat,
 )
+import importlib
+import telegram_client as telegram_client_module
 from interview_schedule import (
     build_time_options,
     validate_interview_schedule,
@@ -121,13 +121,22 @@ def _card_key(vacancy, cand, field):
     return f"c_{vacancy['id']}_{cid}_{field}"
 
 
+def _send_primary_candidate_to_chat(vacancy, cand):
+    importlib.reload(telegram_client_module)
+    return telegram_client_module.send_primary_candidate_to_chat(vacancy, cand)
+
+
+def _send_task_completed_to_chat(vacancy, cand):
+    importlib.reload(telegram_client_module)
+    return telegram_client_module.send_task_completed_to_chat(vacancy, cand)
+
+
 def _persist_vacancy_candidates(vacancy, deps):
-    """Сохраняет кандидатов вакансии в БД."""
+    """Сохраняет кандидатов вакансии в БД (с подтягиванием правок из Telegram)."""
+    from vacancy_store import merge_vacancy_candidates_from_disk
+
     vacancies = deps["load_vacancies"]()
-    for v in vacancies:
-        if v["id"] == vacancy["id"]:
-            v["candidates"] = vacancy["candidates"]
-            break
+    merge_vacancy_candidates_from_disk(vacancy, vacancies)
     deps["save_vacancies"](vacancies)
 
 
@@ -273,10 +282,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     if missing:
                         st.warning("Заполните поле: " + ", ".join(missing))
                     else:
-                        msg = build_task_completed_message(cand, vacancy["title"])
-                        ok, tg_msg = send_to_vacancy_chat(
-                            vacancy, msg, deps["send_telegram_message"]
-                        )
+                        ok, tg_msg = _send_task_completed_to_chat(vacancy, cand)
                         if ok:
                             st.success("Сообщение о задании отправлено в чат!")
                         else:
@@ -287,12 +293,14 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 if missing:
                     st.warning("Заполните поле: " + ", ".join(missing))
                 else:
-                    msg = build_primary_candidate_message(cand, vacancy["title"])
-                    ok, tg_msg = send_to_vacancy_chat(
-                        vacancy, msg, deps["send_telegram_message"]
-                    )
+                    ok, tg_msg = _send_primary_candidate_to_chat(vacancy, cand)
                     if ok:
-                        st.success("Кандидат отправлен в общий чат Telegram!")
+                        set_hr_stage(cand, CLIENT_ZONE_ENTRY_STAGE, "отправка в Telegram")
+                        _persist_vacancy_candidates(vacancy, deps)
+                        if "кнопками" in tg_msg:
+                            st.success(f"{tg_msg} Статус HR: «На оценке у заказчика».")
+                        else:
+                            st.warning(f"{tg_msg} Статус HR обновлён: «На оценке у заказчика».")
                     else:
                         st.error(tg_msg)
 
