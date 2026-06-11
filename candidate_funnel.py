@@ -16,6 +16,8 @@ from models import (
     format_stage_title_label,
     stage_for_selectbox,
     sort_candidates_for_list,
+    migrate_candidate,
+    is_rejection_stage,
 )
 from resume_ai import (
     extract_data_from_resume,
@@ -129,6 +131,75 @@ def _persist_vacancy_candidates(vacancy, deps):
     deps["save_vacancies"](vacancies)
 
 
+def _render_candidate_resume_links(cand, k, vacancy, deps):
+    """Ссылки на резюме: компактный вид с кнопками или режим редактирования."""
+    edit_key = k("edit_resume_links")
+    resume_url = (cand.get("resume_link") or "").strip()
+    hh_url = (cand.get("hh_resume_link") or "").strip()
+    has_links = bool(resume_url or hh_url)
+
+    if edit_key not in st.session_state:
+        st.session_state[edit_key] = not has_links
+
+    if st.session_state[edit_key]:
+        rcol1, rcol2 = st.columns([3, 1])
+        with rcol1:
+            cand["resume_link"] = st.text_input(
+                "Ссылка на резюме", value=cand.get("resume_link", ""), key=k("resume")
+            )
+        with rcol2:
+            st.write("")
+            st.write("")
+            resume_open = (cand.get("resume_link") or "").strip()
+            st.link_button(
+                "Открыть PDF резюме",
+                resume_open or "about:blank",
+                disabled=not resume_open,
+                key=k("resume_open"),
+                use_container_width=True,
+            )
+        hhcol1, hhcol2 = st.columns([3, 1])
+        with hhcol1:
+            cand["hh_resume_link"] = st.text_input(
+                "Ссылка на резюме HH.ru",
+                value=cand.get("hh_resume_link", ""),
+                key=k("hh_resume"),
+            )
+        with hhcol2:
+            st.write("")
+            st.write("")
+            hh_open = (cand.get("hh_resume_link") or "").strip()
+            st.link_button(
+                "Открыть резюме на HH.ru",
+                hh_open or "about:blank",
+                disabled=not hh_open,
+                key=k("hh_resume_open"),
+                use_container_width=True,
+            )
+        if st.button("Готово", key=k("links_done")):
+            st.session_state[edit_key] = False
+            _persist_vacancy_candidates(vacancy, deps)
+            st.rerun()
+        return
+
+    buttons = []
+    if resume_url:
+        buttons.append(("resume", "Открыть PDF резюме", resume_url))
+    if hh_url:
+        buttons.append(("hh", "Открыть резюме на HH.ru", hh_url))
+    buttons.append(("edit", "Редактировать ссылки", None))
+
+    cols = st.columns(len(buttons))
+    for col, (kind, label, url) in zip(cols, buttons):
+        with col:
+            if kind == "edit":
+                if st.button(label, key=k("links_edit"), use_container_width=True):
+                    st.session_state[edit_key] = True
+                    st.rerun()
+            else:
+                st.link_button(label, url, key=k(f"{kind}_open_compact"), use_container_width=True)
+
+
 def render_stage_badge(stage):
     label = HR_STAGES.get(stage, stage)
     return (
@@ -178,40 +249,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 cand["salary_expected"] = st.text_input(
                     "Желаемая з/п", value=cand.get("salary_expected", ""), key=k("salary")
                 )
-            rcol1, rcol2 = st.columns([3, 1])
-            with rcol1:
-                cand["resume_link"] = st.text_input(
-                    "Ссылка на резюме", value=cand.get("resume_link", ""), key=k("resume")
-                )
-            with rcol2:
-                st.write("")
-                st.write("")
-                resume_url = (cand.get("resume_link") or "").strip()
-                st.link_button(
-                    "Открыть резюме",
-                    resume_url or "about:blank",
-                    disabled=not resume_url,
-                    key=k("resume_open"),
-                    use_container_width=True,
-                )
-            hhcol1, hhcol2 = st.columns([3, 1])
-            with hhcol1:
-                cand["hh_resume_link"] = st.text_input(
-                    "Ссылка на резюме HH.ru",
-                    value=cand.get("hh_resume_link", ""),
-                    key=k("hh_resume"),
-                )
-            with hhcol2:
-                st.write("")
-                st.write("")
-                hh_url = (cand.get("hh_resume_link") or "").strip()
-                st.link_button(
-                    "Открыть на HH.ru",
-                    hh_url or "about:blank",
-                    disabled=not hh_url,
-                    key=k("hh_resume_open"),
-                    use_container_width=True,
-                )
+            _render_candidate_resume_links(cand, k, vacancy, deps)
             cand["video_link"] = st.text_input(
                 "Запись собеседования",
                 value=cand.get("video_link", ""),
@@ -603,16 +641,40 @@ def render_candidate_card(vacancy, cand, idx, deps):
     return None
 
 
+def _is_rejected_candidate(cand):
+    stage = cand.get("hr_stage", "resume_screening")
+    return stage == "rejected" or is_rejection_stage(stage)
+
+
+def _parse_bulk_link_lines(text):
+    return [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+
+def _append_bulk_candidate(vacancy, deps, resume_link="", hh_resume_link="", resume_text=None):
+    """Создаёт кандидата при автозагрузке и заполняет карточку через ИИ при наличии текста."""
+    cand = new_candidate_template(vacancy["id"])
+    cand["resume_link"] = (resume_link or "").strip()
+    cand["hh_resume_link"] = (hh_resume_link or "").strip()
+    cand["ignore_flags"] = deps["default_ignore_flags"]()
+    text = (resume_text or "").strip()
+    if text:
+        populate_from_resume(cand, text, deps["client"], deps["config"])
+    cand["cold_screening"] = True
+    cand["hr_stage"] = "resume_screening"
+    vacancy["candidates"].append(cand)
+    return cand
+
+
 def render_bulk_intake(vacancy, deps):
     st.markdown("##### Автозагрузка")
     vid = vacancy["id"]
     success_key = f"bulk_success_{vid}"
-    pdf_ver_key = f"bulk_pdf_v_{vid}"
     links_ver_key = f"bulk_links_v_{vid}"
-    if pdf_ver_key not in st.session_state:
-        st.session_state[pdf_ver_key] = 0
+    hh_links_ver_key = f"bulk_hh_links_v_{vid}"
     if links_ver_key not in st.session_state:
         st.session_state[links_ver_key] = 0
+    if hh_links_ver_key not in st.session_state:
+        st.session_state[hh_links_ver_key] = 0
 
     if st.session_state.get(success_key):
         st.markdown(
@@ -622,44 +684,81 @@ def render_bulk_intake(vacancy, deps):
         st.session_state[success_key] = False
 
     links_key = f"bulk_links_{vid}_{st.session_state[links_ver_key]}"
-    pdf_key = f"bulk_pdf_{vid}_{st.session_state[pdf_ver_key]}"
-    links = st.text_area("Ссылки на резюме (по строке)", height=80, key=links_key)
-    pdfs = st.file_uploader("PDF резюме", type=["pdf"], accept_multiple_files=True, key=pdf_key)
+    hh_links_key = f"bulk_hh_links_{vid}_{st.session_state[hh_links_ver_key]}"
+    links = st.text_area(
+        "Ссылки на PDF резюме / Яндекс.Диск (по строке)",
+        height=80,
+        key=links_key,
+    )
+    hh_links = st.text_area(
+        "Ссылки на резюме HH.ru (по строке)",
+        height=80,
+        key=hh_links_key,
+        help="Строка 1 объединяется со строкой 1 из PDF, строка 2 — со строкой 2 и т.д.",
+    )
+    st.caption(
+        "Одна строка в каждом поле = один кандидат. PDF заполняет карточку через ИИ, "
+        "ссылка HH.ru сохраняется для кнопки «Открыть резюме на HH.ru»."
+    )
 
     if st.button("🤖 Извлечь и добавить", key=f"bulk_btn_{vid}"):
         added = 0
-        for line in (links or "").splitlines():
-            line = line.strip()
-            if not line:
+        pdf_lines = _parse_bulk_link_lines(links)
+        hh_lines = _parse_bulk_link_lines(hh_links)
+        row_count = max(len(pdf_lines), len(hh_lines))
+
+        for i in range(row_count):
+            pdf_link = pdf_lines[i] if i < len(pdf_lines) else ""
+            hh_link = hh_lines[i] if i < len(hh_lines) else ""
+            if not pdf_link and not hh_link:
                 continue
-            text, err = fetch_resume_text_from_url(line, deps["extract_text_from_pdf_url"])
-            if err or not text:
-                st.warning(f"{line}: {err or 'пусто'}")
-                continue
-            cand = new_candidate_template(vacancy["id"])
-            cand["resume_link"] = line
-            cand["ignore_flags"] = deps["default_ignore_flags"]()
-            populate_from_resume(cand, text, deps["client"], deps["config"])
-            cand["cold_screening"] = True
-            cand["hr_stage"] = "resume_screening"
-            vacancy["candidates"].append(cand)
-            added += 1
-        if pdfs:
-            for pdf in pdfs:
-                text = deps["extract_text"](pdf)
-                if len(text.strip()) < 30:
+
+            resume_text = ""
+            notes = []
+
+            if pdf_link:
+                text, err = fetch_resume_text_from_url(
+                    pdf_link, deps["extract_text_from_pdf_url"]
+                )
+                if text:
+                    resume_text = text
+                elif err:
+                    notes.append(f"PDF: {err}")
+
+            if not resume_text and hh_link:
+                text, err = fetch_resume_text_from_url(
+                    hh_link, deps["extract_text_from_pdf_url"]
+                )
+                if text:
+                    resume_text = text
+                elif err:
+                    notes.append(f"HH.ru: {err}")
+
+            if pdf_link and not resume_text:
+                st.warning(
+                    f"Строка {i + 1}: не удалось извлечь текст по PDF ({pdf_link})"
+                )
+                if not hh_link:
                     continue
-                cand = new_candidate_template(vacancy["id"])
-                cand["resume_link"] = f"file://{pdf.name}"
-                cand["ignore_flags"] = deps["default_ignore_flags"]()
-                populate_from_resume(cand, text, deps["client"], deps["config"])
-                cand["cold_screening"] = True
-                vacancy["candidates"].append(cand)
-                added += 1
+
+            _append_bulk_candidate(
+                vacancy,
+                deps,
+                resume_link=pdf_link,
+                hh_resume_link=hh_link,
+                resume_text=resume_text or None,
+            )
+            added += 1
+            if hh_link and notes:
+                st.caption(
+                    f"Строка {i + 1}: ссылка HH.ru сохранена в карточке "
+                    f"({'; '.join(notes)})"
+                )
+
         if added:
             _persist_vacancy_candidates(vacancy, deps)
             st.session_state[links_ver_key] = st.session_state[links_ver_key] + 1
-            st.session_state[pdf_ver_key] = st.session_state[pdf_ver_key] + 1
+            st.session_state[hh_links_ver_key] = st.session_state[hh_links_ver_key] + 1
             st.session_state[success_key] = True
             st.rerun()
         else:
@@ -720,28 +819,55 @@ def render_candidates_zone(vacancy, deps):
     with tab_list:
         vacancies = deps["load_vacancies"]()
         vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
-        candidates = sort_candidates_for_list(vacancy.get("candidates", []))
-        if not candidates:
+        all_candidates = sort_candidates_for_list(vacancy.get("candidates", []))
+        if not all_candidates:
             st.info("Нет кандидатов.")
             return
 
-        to_delete_id = None
-        for idx, cand in enumerate(candidates):
-            if cand.get("ignore_flags") is None:
-                cand["ignore_flags"] = deps["default_ignore_flags"]()
-            action = render_candidate_card(vacancy, cand, idx, deps)
-            if action == "delete":
-                to_delete_id = cand.get("id")
+        rejected = [c for c in all_candidates if _is_rejected_candidate(c)]
+        active = [c for c in all_candidates if not _is_rejected_candidate(c)]
+        rejected_count = len(rejected)
+        show_rejected_key = f"show_rejected_{vacancy['id']}"
+        show_rejected = st.session_state.get(show_rejected_key, False)
+        visible = active + (rejected if show_rejected else [])
 
-        if to_delete_id:
-            vacancy["candidates"] = [
-                c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
-            ]
-            for v in vacancies:
-                if v["id"] == vacancy["id"]:
-                    v["candidates"] = vacancy["candidates"]
-            deps["save_vacancies"](vacancies)
-            st.rerun()
-        elif st.button("💾 Сохранить изменения по кандидатам", key=f"save_cands_{vacancy['id']}"):
+        if not visible:
+            st.info("Нет кандидатов в работе.")
+        else:
+            to_delete_id = None
+            for idx, cand in enumerate(visible):
+                migrate_candidate(cand, deps["default_ignore_flags"])
+                action = render_candidate_card(vacancy, cand, idx, deps)
+                if action == "delete":
+                    to_delete_id = cand.get("id")
+
+            if to_delete_id:
+                vacancy["candidates"] = [
+                    c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
+                ]
+                for v in vacancies:
+                    if v["id"] == vacancy["id"]:
+                        v["candidates"] = vacancy["candidates"]
+                deps["save_vacancies"](vacancies)
+                st.rerun()
+
+        save_col, reject_col = st.columns([1, 1])
+        with save_col:
+            save_clicked = st.button(
+                "💾 Сохранить изменения по кандидатам",
+                key=f"save_cands_{vacancy['id']}",
+            )
+        with reject_col:
+            if rejected_count:
+                reject_label = (
+                    "Скрыть кандидатов с отказом"
+                    if show_rejected
+                    else f"Показать {rejected_count} кандидатов с отказом"
+                )
+                if st.button(reject_label, key=f"toggle_rejected_{vacancy['id']}"):
+                    st.session_state[show_rejected_key] = not show_rejected
+                    st.rerun()
+
+        if save_clicked:
             _persist_vacancy_candidates(vacancy, deps)
             st.success("Сохранено!")

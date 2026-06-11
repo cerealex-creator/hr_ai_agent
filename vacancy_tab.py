@@ -2,6 +2,11 @@
 
 import streamlit as st
 
+import importlib
+
+import candidate_funnel
+importlib.reload(candidate_funnel)
+
 from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form
 from candidate_funnel import render_candidates_zone
 from vacancy_stats import render_vacancy_stats
