@@ -1,5 +1,6 @@
 """Подзона «Кандидаты» — воронка и автоматизация."""
 
+import json
 import uuid
 from datetime import datetime
 
@@ -19,6 +20,7 @@ from models import (
     sort_candidates_for_list,
     migrate_candidate,
     is_rejection_stage,
+    is_visible_in_client_zone,
 )
 from resume_ai import (
     extract_data_from_resume,
@@ -32,7 +34,6 @@ from telegram_notify import (
     validate_primary_fields,
     validate_task_message_fields,
 )
-import importlib
 import telegram_client as telegram_client_module
 from interview_schedule import (
     build_time_options,
@@ -89,6 +90,9 @@ def new_candidate_template(vacancy_id):
         "interview_schedule_key": "",
         "interview_reminder_30_sent": False,
         "interview_reminder_10_sent": False,
+        "interview_reminder_60_sent": False,
+        "feedback_reminder_last_sent_at": "",
+        "think_long_reminder_sent": False,
         "calendar_event_id": "",
     }
 
@@ -122,22 +126,53 @@ def _card_key(vacancy, cand, field):
 
 
 def _send_primary_candidate_to_chat(vacancy, cand):
-    importlib.reload(telegram_client_module)
     return telegram_client_module.send_primary_candidate_to_chat(vacancy, cand)
 
 
 def _send_task_completed_to_chat(vacancy, cand):
-    importlib.reload(telegram_client_module)
     return telegram_client_module.send_task_completed_to_chat(vacancy, cand)
 
 
-def _persist_vacancy_candidates(vacancy, deps):
+def _candidates_snapshot_key(vacancy_id):
+    return f"_cands_saved_snapshot_{vacancy_id}"
+
+
+def _candidates_snapshot(candidates):
+    items = []
+    for cand in sorted(candidates, key=lambda c: c.get("id") or ""):
+        items.append({k: cand.get(k) for k in sorted(cand.keys())})
+    return json.dumps(items, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _ensure_candidates_snapshot(vacancy_id, candidates):
+    key = _candidates_snapshot_key(vacancy_id)
+    if key not in st.session_state:
+        st.session_state[key] = _candidates_snapshot(candidates)
+
+
+def _mark_candidates_snapshot(vacancy_id, candidates):
+    st.session_state[_candidates_snapshot_key(vacancy_id)] = _candidates_snapshot(
+        candidates
+    )
+
+
+def _has_unsaved_candidate_changes(vacancy_id, candidates):
+    key = _candidates_snapshot_key(vacancy_id)
+    saved = st.session_state.get(key)
+    if saved is None:
+        return False
+    return saved != _candidates_snapshot(candidates)
+
+
+def _persist_vacancy_candidates(vacancy, deps, *, candidates=None):
     """Сохраняет кандидатов вакансии в БД (с подтягиванием правок из Telegram)."""
     from vacancy_store import merge_vacancy_candidates_from_disk
 
     vacancies = deps["load_vacancies"]()
     merge_vacancy_candidates_from_disk(vacancy, vacancies)
     deps["save_vacancies"](vacancies)
+    snapshot_source = candidates if candidates is not None else vacancy.get("candidates", [])
+    _mark_candidates_snapshot(vacancy["id"], snapshot_source)
 
 
 def _render_candidate_resume_links(cand, k, vacancy, deps):
@@ -246,7 +281,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
 
     collapse_key = k("collapse_after_stage")
     stage_info_key = k("stage_info")
-    expanded = not st.session_state.pop(collapse_key, False)
+    expanded = not st.session_state.pop(collapse_key, True)
     if st.session_state.get(stage_info_key):
         st.info(st.session_state.pop(stage_info_key))
 
@@ -290,7 +325,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     else:
                         ok, tg_msg = _send_task_completed_to_chat(vacancy, cand)
                         if ok:
-                            st.success("Сообщение о задании отправлено в чат!")
+                            st.success(tg_msg)
                         else:
                             st.error(tg_msg)
 
@@ -314,6 +349,30 @@ def render_candidate_card(vacancy, cand, idx, deps):
             st.caption(f"Статус заказчика: **{client_label}**")
             if cand.get("client_comment"):
                 st.caption(f"Комментарий заказчика: {cand['client_comment']}")
+
+            client_status = cand.get("client_status", "wait")
+            if is_visible_in_client_zone(cand) and client_status == "wait":
+                if st.button("🔔 Напомнить о кандидате", key=k("tg_remind_eval"), use_container_width=True):
+                    ok, tg_msg = telegram_client_module.send_candidate_reminder_to_chat(
+                        vacancy, cand, kind="evaluate"
+                    )
+                    if ok:
+                        st.success("Напоминание отправлено в чат!")
+                    else:
+                        st.error(tg_msg)
+            if client_status == "think":
+                if st.button(
+                    "🔔 Напомнить принять решение",
+                    key=k("tg_remind_decide"),
+                    use_container_width=True,
+                ):
+                    ok, tg_msg = telegram_client_module.send_candidate_reminder_to_chat(
+                        vacancy, cand, kind="decide"
+                    )
+                    if ok:
+                        st.success("Напоминание отправлено в чат!")
+                    else:
+                        st.error(tg_msg)
 
             if cand.get("ai_score") is not None:
                 st.markdown(render_ai_score_badge(cand["ai_score"]), unsafe_allow_html=True)
@@ -893,6 +952,9 @@ def render_candidates_zone(vacancy, deps):
         show_rejected = st.session_state.get(show_rejected_key, False)
         visible = active + (rejected if show_rejected else [])
 
+        _ensure_candidates_snapshot(vacancy["id"], all_candidates)
+        pending_banner = st.empty()
+
         if not visible:
             st.info("Нет кандидатов в работе.")
         else:
@@ -911,7 +973,15 @@ def render_candidates_zone(vacancy, deps):
                     if v["id"] == vacancy["id"]:
                         v["candidates"] = vacancy["candidates"]
                 deps["save_vacancies"](vacancies)
+                _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
                 st.rerun()
+
+            if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
+                from corporate_ui import render_pending_changes_banner
+
+                with pending_banner.container():
+                    if render_pending_changes_banner(vacancy["id"]):
+                        st.rerun()
 
         save_col, reject_col = st.columns([1, 1])
         with save_col:
@@ -931,5 +1001,6 @@ def render_candidates_zone(vacancy, deps):
                     st.rerun()
 
         if save_clicked:
-            _persist_vacancy_candidates(vacancy, deps)
+            _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
+            pending_banner.empty()
             st.success("Сохранено!")

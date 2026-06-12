@@ -17,6 +17,7 @@ from telegram_notify import (
     build_primary_candidate_message,
     build_task_completed_message,
     get_bot_token,
+    chat_ids_equal,
     normalize_chat_id,
     send_telegram_html,
 )
@@ -46,13 +47,14 @@ def get_telegram_callback_id(candidate):
 
 
 def get_post_kind(candidate, chat_id, message_id):
-    norm_chat = normalize_chat_id(chat_id)
+    from client_actions import post_kind as _post_kind
+
     for post in candidate.get("telegram_posts", []):
         if (
             post.get("message_id") == message_id
-            and normalize_chat_id(post.get("chat_id")) == norm_chat
+            and chat_ids_equal(post.get("chat_id"), chat_id)
         ):
-            return post.get("kind", "primary")
+            return _post_kind(post)
     return "primary"
 
 
@@ -304,20 +306,69 @@ def edit_message_keyboard(chat_id, message_id, reply_markup, bot_token=None):
         return False, str(e)
 
 
-def register_telegram_post(candidate, chat_id, message_id, kind="primary"):
+def register_telegram_post(candidate, chat_id, message_id, kind="primary", vacancy_id=None):
+    from client_actions import post_belongs_to_vacancy, post_kind as _post_kind
+
     migrate_candidate(candidate)
     posts = candidate.setdefault("telegram_posts", [])
     norm_chat = normalize_chat_id(chat_id)
+
+    def _same_vacancy(post):
+        return vacancy_id is None or post_belongs_to_vacancy(post, vacancy_id)
+
     for post in posts:
-        if post.get("message_id") == message_id and normalize_chat_id(post.get("chat_id")) == norm_chat:
+        if post.get("message_id") == message_id and chat_ids_equal(post.get("chat_id"), chat_id):
             post["kind"] = kind
+            if vacancy_id is not None:
+                post["vacancy_id"] = vacancy_id
             return
-    posts.append({
+
+    if kind == "primary":
+        posts[:] = [
+            p
+            for p in posts
+            if not (_same_vacancy(p) and _post_kind(p) == "primary")
+        ]
+
+    entry = {
         "chat_id": norm_chat,
         "message_id": message_id,
         "sent_at": datetime.now().isoformat(),
         "kind": kind,
-    })
+    }
+    if vacancy_id is not None:
+        entry["vacancy_id"] = vacancy_id
+    posts.append(entry)
+
+
+def anchor_candidate_card_message(
+    vacancy, candidate, chat_id, message_id, *, kind="primary"
+):
+    """Синхронизирует telegram_posts с реальным message_id карточки в чате."""
+    if not vacancy or not candidate or message_id is None:
+        return False
+    data = load_vacancies()
+    vac_id = vacancy.get("id")
+    changed = False
+    for v in data.get("vacancies", []):
+        if v.get("id") != vac_id:
+            continue
+        for c in v.get("candidates", []):
+            if c.get("id") != candidate.get("id"):
+                continue
+            migrate_candidate(c)
+            register_telegram_post(
+                c, chat_id, int(message_id), kind=kind, vacancy_id=vac_id
+            )
+            register_telegram_post(
+                candidate, chat_id, int(message_id), kind=kind, vacancy_id=vac_id
+            )
+            changed = True
+            break
+        break
+    if changed:
+        save_vacancies(data)
+    return changed
 
 
 def _persist_telegram_post(
@@ -337,8 +388,13 @@ def _persist_telegram_post(
             if c.get("id") == candidate.get("id"):
                 migrate_candidate(c)
                 migrate_candidate(candidate)
-                register_telegram_post(c, chat_id, message_id, kind=kind)
-                register_telegram_post(candidate, chat_id, message_id, kind=kind)
+                vac_id = vacancy.get("id")
+                register_telegram_post(
+                    c, chat_id, message_id, kind=kind, vacancy_id=vac_id
+                )
+                register_telegram_post(
+                    candidate, chat_id, message_id, kind=kind, vacancy_id=vac_id
+                )
                 if with_client_actions:
                     set_hr_stage(c, CLIENT_ZONE_ENTRY_STAGE, "отправка в Telegram")
                     set_hr_stage(candidate, CLIENT_ZONE_ENTRY_STAGE, "отправка в Telegram")
@@ -355,7 +411,9 @@ def send_candidate_card_to_chat(
     message_builder=None,
     kind="primary",
 ):
-    chat_id = vacancy.get("chat_id")
+    from telegram_chat_id import resolve_vacancy_chat_id
+
+    chat_id = resolve_vacancy_chat_id(vacancy)
     if not chat_id:
         return False, "У вакансии не указан Chat ID"
 
@@ -366,14 +424,24 @@ def send_candidate_card_to_chat(
     if message_builder is not None:
         kind = "task"
 
+    status = candidate.get("client_status", "wait")
+    locked = with_actions and status not in (None, "", "wait")
     text = build_candidate_card_html(
         candidate,
         vacancy["title"],
-        locked=False,
+        status_key=status if locked else None,
+        locked=locked,
         kind=kind,
     )
 
-    keyboard = build_initial_status_keyboard(candidate) if with_actions else None
+    if with_actions:
+        keyboard = (
+            build_locked_keyboard(candidate)
+            if locked
+            else build_initial_status_keyboard(candidate)
+        )
+    else:
+        keyboard = None
 
     ok, msg, message_id = send_telegram_html(chat_id, text, reply_markup=keyboard)
     buttons_ok = bool(ok and keyboard)
@@ -413,14 +481,123 @@ def send_primary_candidate_to_chat(vacancy, candidate):
     return send_candidate_card_to_chat(vacancy, candidate, with_actions=True, kind="primary")
 
 
+def _keyboard_for_candidate_card(candidate):
+    status = candidate.get("client_status", "wait")
+    locked = status not in (None, "", "wait")
+    if locked:
+        return build_locked_keyboard(candidate), True
+    return build_initial_status_keyboard(candidate), False
+
+
+def refresh_primary_candidate_card_in_chat(vacancy, candidate):
+    """Добавляет в primary-карточку актуальные данные (например, ссылку на задание)."""
+    from client_actions import get_primary_telegram_post
+    from telegram_chat_id import resolve_vacancy_chat_id
+
+    chat_id = resolve_vacancy_chat_id(vacancy)
+    if not chat_id:
+        return False, "У вакансии не указан Chat ID"
+
+    migrate_candidate(candidate)
+    post = get_primary_telegram_post(
+        candidate, chat_id, kind="primary", vacancy_id=vacancy.get("id")
+    )
+    if not post or not post.get("message_id"):
+        return False, "Нет основной карточки кандидата в чате"
+
+    keyboard, locked = _keyboard_for_candidate_card(candidate)
+    status = candidate.get("client_status", "wait")
+    text = build_candidate_card_html(
+        candidate,
+        vacancy["title"],
+        status_key=status if locked else None,
+        locked=locked,
+        kind="primary",
+    )
+    message_id = post["message_id"]
+    ok, msg = edit_telegram_message(chat_id, message_id, text, reply_markup=keyboard)
+    if not ok and keyboard:
+        plain_text = build_candidate_card_html(
+            candidate, vacancy["title"], locked=False, kind="primary"
+        )
+        ok, msg = edit_telegram_message(chat_id, message_id, plain_text)
+        if ok:
+            k_ok, k_msg = edit_message_keyboard(chat_id, message_id, keyboard)
+            if not k_ok:
+                return True, f"Карточка обновлена, но кнопки не восстановлены: {k_msg}"
+    if ok:
+        return True, "основная карточка обновлена"
+    return False, msg or "Не удалось обновить карточку"
+
+
 def send_task_completed_to_chat(vacancy, candidate):
-    return send_candidate_card_to_chat(
+    ok, msg = send_candidate_card_to_chat(
         vacancy,
         candidate,
         with_actions=True,
         message_builder=build_task_completed_message,
         kind="task",
     )
+    if not ok:
+        return ok, msg
+
+    card_ok, card_msg = refresh_primary_candidate_card_in_chat(vacancy, candidate)
+    if card_ok:
+        return True, "Сообщение о задании отправлено, основная карточка обновлена"
+    if card_msg == "Нет основной карточки кандидата в чате":
+        return True, "Сообщение о задании отправлено (основная карточка в чате не найдена)"
+    return True, f"Сообщение о задании отправлено, но карточка не обновлена: {card_msg}"
+
+
+def send_vacancy_digest_to_chat(vacancy):
+    """Ручная отправка сводки по одной вакансии в её Telegram-чат."""
+    from telegram_chat_stats import format_vacancy_digest_html
+
+    from telegram_chat_id import resolve_vacancy_chat_id
+
+    chat_id = resolve_vacancy_chat_id(vacancy)
+    if not chat_id:
+        return False, "У вакансии не указан Chat ID"
+    text = format_vacancy_digest_html(vacancy, title_prefix="📊 Сводка по вакансии")
+    ok, msg, _ = send_telegram_html(chat_id, text)
+    return ok, msg
+
+
+def build_candidate_reminder_html(candidate, kind="evaluate"):
+    from telegram_notify import _esc
+
+    name = _esc(candidate.get("name", "кандидатом"))
+    if kind == "decide":
+        return (
+            f"🟡 <b>{name}</b>\n"
+            f"Кандидат в статусе «Подумать» — пожалуйста, примите решение "
+            f"по карточке выше 👇"
+        )
+    return (
+        f"⏳ <b>{name}</b>\n"
+        f"Пожалуйста, изучите информацию о кандидате выше и выберите статус 👇"
+    )
+
+
+def send_candidate_reminder_to_chat(vacancy, candidate, kind="evaluate"):
+    """Напоминание в чат ответом на карточку кандидата."""
+    from client_actions import get_primary_telegram_post
+    from telegram_chat_id import resolve_vacancy_chat_id
+
+    migrate_candidate(candidate)
+    chat_id = resolve_vacancy_chat_id(vacancy)
+    if not chat_id:
+        return False, "У вакансии не указан Chat ID"
+    post = get_primary_telegram_post(candidate, chat_id, vacancy_id=vacancy.get("id"))
+    if not post or not post.get("message_id"):
+        return False, "Нет карточки кандидата в чате — сначала отправьте кандидата"
+    text = build_candidate_reminder_html(candidate, kind=kind)
+    ok, msg, _ = send_telegram_html(
+        chat_id,
+        text,
+        reply_to_message_id=post["message_id"],
+    )
+    return ok, msg
 
 
 def refresh_keyboard_for_message(chat_id, message_id, candidate_or_callback_id, bot_token=None):

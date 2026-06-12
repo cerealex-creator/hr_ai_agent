@@ -23,7 +23,7 @@ def get_bot_token():
 
 
 def normalize_chat_id(chat_id):
-    """Приводит chat_id к int (если число) и убирает пробелы."""
+    """Приводит chat_id к int (без смены формата — для отправки в API)."""
     if chat_id is None:
         return None
     s = str(chat_id).strip()
@@ -33,6 +33,27 @@ def normalize_chat_id(chat_id):
         return int(s)
     except ValueError:
         return s
+
+
+def chat_id_variants(chat_id):
+    """Варианты одного чата: legacy-группа и супергруппа (-100…)."""
+    cid = normalize_chat_id(chat_id)
+    if cid is None or not isinstance(cid, int):
+        return set()
+    variants = {cid}
+    text = str(cid)
+    if text.startswith("-100"):
+        variants.add(int("-" + text[4:]))
+    elif cid < 0:
+        variants.add(int("-100" + text[1:]))
+    return variants
+
+
+def chat_ids_equal(a, b):
+    """Сравнение chat_id с учётом legacy и супергруппы."""
+    if a is None or b is None:
+        return False
+    return bool(chat_id_variants(a) & chat_id_variants(b))
 
 
 def get_hr_user_id():
@@ -66,7 +87,13 @@ def get_bot_status():
         return False, f"Сетевая ошибка: {e}", {}
 
 
-def send_telegram_html(chat_id, text, bot_token=None, reply_markup=None):
+def send_telegram_html(
+    chat_id,
+    text,
+    bot_token=None,
+    reply_markup=None,
+    reply_to_message_id=None,
+):
     """Отправка HTML-сообщения. Возвращает (ok, message, message_id)."""
     token = (bot_token or get_bot_token()).strip()
     if not token:
@@ -85,6 +112,8 @@ def send_telegram_html(chat_id, text, bot_token=None, reply_markup=None):
     }
     if reply_markup:
         payload["reply_markup"] = reply_markup
+    if reply_to_message_id is not None:
+        payload["reply_to_message_id"] = reply_to_message_id
     try:
         response = requests.post(url, json=payload, timeout=30)
         data = response.json()
@@ -146,15 +175,20 @@ def build_primary_candidate_message(cand, vacancy_title):
 
 
 def build_task_completed_message(cand, vacancy_title):
-    name = _esc(cand.get("name", ""))
+    name = (cand.get("name") or "").strip()
     vac = _esc(vacancy_title)
     task = cand.get("task_link", "")
+    resume = (cand.get("resume_link") or "").strip()
+    if resume:
+        name_line = f"👤 {_link(resume, _esc(name))}"
+    else:
+        name_line = f"<b>👤 {_esc(name)}</b>"
     lines = [
         "<b>✅ Выполнено тестовое задание</b>",
         "",
         f"{_link(task, 'Выполненное задание')}",
         "",
-        f"<b>👤 {name}</b>",
+        name_line,
         "",
         f"<b>🏢 Вакансия:</b> {vac}",
     ]
@@ -167,7 +201,9 @@ def get_telegram_credentials():
 
 def send_to_vacancy_chat(vacancy, message, send_fn=None):
     """Отправка в чат вакансии. send_fn: (bot_token, chat_id, text) → (ok, msg)."""
-    chat_id = vacancy.get("chat_id")
+    from telegram_chat_id import resolve_vacancy_chat_id
+
+    chat_id = resolve_vacancy_chat_id(vacancy)
     token = get_bot_token()
     if not token:
         return False, "Не задан TELEGRAM_BOT_TOKEN в .env"

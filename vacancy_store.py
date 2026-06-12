@@ -8,7 +8,11 @@ from datetime import datetime
 
 from models import CLIENT_ZONE_ENTRY_STAGE, is_visible_in_client_zone
 
-VACANCIES_FILE = "data/vacancies_db.json"
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
+VACANCIES_FILE = os.path.join(DATA_DIR, "vacancies_db.json")
+DEPARTMENTS_FILE = os.path.join(DATA_DIR, "departments.json")
+CHATS_FILE = os.path.join(DATA_DIR, "chats_db.json")
 
 STATUS_CONFIG = {
     "wait": {"label": "Ждёт оценки", "icon": "⚪", "badge_class": "status-badge-wait"},
@@ -33,6 +37,9 @@ TELEGRAM_MERGE_FIELDS = (
     "telegram_posts",
     "client_final_verdict",
     "tg_callback_id",
+    "interview_reminder_60_sent",
+    "feedback_reminder_last_sent_at",
+    "think_long_reminder_sent",
 )
 
 
@@ -97,8 +104,109 @@ def _atomic_write_json(path, payload):
     os.replace(tmp_path, path)
 
 
+def load_chats():
+    if not os.path.exists(CHATS_FILE):
+        return []
+    with open(CHATS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def sync_vacancy_chat_ids_from_chats():
+    """
+    Выравнивает vacancy.chat_id по chats_db (отдел → чат).
+    Источник истины — настройки Telegram в приложении.
+    """
+    from telegram_notify import chat_ids_equal, normalize_chat_id
+
+    by_dept = {}
+    for chat in load_chats():
+        dept_id = chat.get("department_id")
+        if dept_id is None:
+            continue
+        by_dept[dept_id] = normalize_chat_id(chat.get("id"))
+
+    data = load_vacancies()
+    changed = False
+    for vacancy in data.get("vacancies", []):
+        canonical = by_dept.get(vacancy.get("client_id"))
+        if canonical is None:
+            continue
+        if not chat_ids_equal(vacancy.get("chat_id"), canonical):
+            vacancy["chat_id"] = canonical
+            changed = True
+    if changed:
+        save_vacancies(data)
+    return changed
+
+
+def prune_stale_telegram_posts(data=None):
+    """
+    Удаляет telegram_posts из устаревших чатов.
+    В актуальном чате оставляет последний primary и все task-сообщения.
+    """
+    from client_actions import post_belongs_to_vacancy, post_kind
+    from telegram_chat_id import resolve_vacancy_chat_id
+    from telegram_notify import chat_ids_equal
+
+    if data is None:
+        data = load_vacancies()
+    changed = False
+    for vacancy in data.get("vacancies", []):
+        active_chat = resolve_vacancy_chat_id(vacancy)
+        if active_chat is None:
+            continue
+        vac_id = vacancy.get("id")
+        for cand in vacancy.get("candidates", []):
+            migrate_candidate(cand)
+            posts = cand.get("telegram_posts") or []
+            if not posts:
+                continue
+
+            in_active = [
+                p for p in posts if chat_ids_equal(p.get("chat_id"), active_chat)
+            ]
+            if not in_active:
+                if any(not chat_ids_equal(p.get("chat_id"), active_chat) for p in posts):
+                    cand["telegram_posts"] = []
+                    changed = True
+                continue
+
+            primaries = [
+                p
+                for p in in_active
+                if post_kind(p) == "primary"
+                and post_belongs_to_vacancy(p, vac_id)
+            ]
+            tasks = [p for p in in_active if post_kind(p) == "task"]
+            other = [
+                p
+                for p in in_active
+                if post_kind(p) not in ("primary", "task")
+            ]
+
+            compacted = []
+            if primaries:
+                compacted.append(
+                    max(primaries, key=lambda p: p.get("sent_at") or "")
+                )
+            compacted.extend(tasks)
+            compacted.extend(other)
+
+            if len(compacted) != len(posts) or any(
+                not chat_ids_equal(p.get("chat_id"), active_chat) for p in posts
+            ):
+                cand["telegram_posts"] = compacted
+                changed = True
+
+    if changed:
+        save_vacancies(data)
+    return changed
+
+
 def load_departments():
-    with open("data/departments.json", "r", encoding="utf-8") as f:
+    if not os.path.exists(DEPARTMENTS_FILE):
+        return []
+    with open(DEPARTMENTS_FILE, "r", encoding="utf-8") as f:
         return json.load(f).get("departments", [])
 
 

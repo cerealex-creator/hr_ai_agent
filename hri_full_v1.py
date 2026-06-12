@@ -2005,6 +2005,13 @@ with tab_settings:
                         "department_id": dept_id,
                     })
                     save_chats(chats)
+                    from vacancy_store import (
+                        prune_stale_telegram_posts,
+                        sync_vacancy_chat_ids_from_chats,
+                    )
+                    if sync_vacancy_chat_ids_from_chats():
+                        st.caption("Chat ID вакансий отдела обновлён.")
+                    prune_stale_telegram_posts()
                     st.success("Сохранено!")
                     st.rerun()
                 else:
@@ -2022,6 +2029,8 @@ with tab_settings:
                 if col_d.button("🗑️", key=f"settings_del_chat_{i}"):
                     chats.pop(i)
                     save_chats(chats)
+                    from vacancy_store import sync_vacancy_chat_ids_from_chats
+                    sync_vacancy_chat_ids_from_chats()
                     st.rerun()
         else:
             st.info("Чаты не добавлены. Сохраните первый чат выше.")

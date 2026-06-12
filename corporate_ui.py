@@ -18,6 +18,28 @@ CORPORATE = {
 }
 
 
+def render_pending_changes_banner(key_suffix):
+    """Плашка «есть изменения» с кнопкой Rerun, как в Streamlit."""
+    c = CORPORATE
+    st.markdown(
+        f"""
+        <div class="pending-changes-banner">
+            <span class="pending-changes-dot"></span>
+            <span>Есть несохранённые изменения — нажмите <b>Rerun</b> или сохраните кандидатов</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _, btn_col = st.columns([5, 1])
+    with btn_col:
+        return st.button(
+            "Rerun",
+            key=f"pending_rerun_{key_suffix}",
+            type="primary",
+            use_container_width=True,
+        )
+
+
 def apply_corporate_ui():
     c = CORPORATE
     st.markdown(
@@ -317,6 +339,29 @@ def apply_corporate_ui():
                 border: 1px solid #6ee7b7;
                 font-weight: 600;
                 margin-bottom: 1rem;
+            }}
+
+            .pending-changes-banner {{
+                display: flex;
+                align-items: center;
+                gap: 0.6rem;
+                background: linear-gradient(90deg, #fff7ed 0%, #ffedd5 100%);
+                border: 1px solid #fdba74;
+                border-radius: 8px;
+                padding: 0.65rem 1rem;
+                margin-bottom: 0.75rem;
+                color: {c["text_dark"]};
+                font-size: 0.92rem;
+                font-weight: 500;
+            }}
+
+            .pending-changes-dot {{
+                width: 0.55rem;
+                height: 0.55rem;
+                border-radius: 50%;
+                background: #f97316;
+                flex-shrink: 0;
+                box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.25);
             }}
 
             .main .cand-stage-marker.cand-stage-rejected ~ div [data-testid="stExpander"] [data-testid="stExpanderDetails"],

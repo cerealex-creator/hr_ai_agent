@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from telegram_chat_id import resolve_vacancy_chat_id
 from vacancy_store import (
     STATUS_LABEL_TO_KEY,
     get_status_meta,
@@ -21,7 +22,7 @@ from models import (
     set_hr_stage,
     sync_hr_stage_from_client_status,
 )
-from telegram_notify import normalize_chat_id
+from telegram_notify import chat_ids_equal, normalize_chat_id
 
 STATUSES_THAT_CANCEL_MEETING = frozenset({"reject", "think"})
 
@@ -68,7 +69,7 @@ def _meeting_format_label(candidate):
     return ", ".join(parts)
 
 
-def build_meeting_confirmation_html(candidate, *, confirmed=False, confirmer_username=None):
+def build_meeting_confirmation_html(candidate, *, confirmed=False, confirmer_label=None):
     from interview_schedule import format_interview_display
     from telegram_notify import _esc
 
@@ -80,10 +81,10 @@ def build_meeting_confirmation_html(candidate, *, confirmed=False, confirmer_use
     fmt = _meeting_format_label(candidate)
     fmt_part = f" ({fmt})" if fmt else ""
     if confirmed:
-        who = _esc(confirmer_username or HR_MEETING_CONFIRM_USERNAME)
+        who = _esc(confirmer_label or f"@{HR_MEETING_CONFIRM_USERNAME}")
         return (
             f"✅ Встреча с кандидатом <b>{name}</b> на <b>{when}</b>{fmt_part} "
-            f"подтверждена HR (@{who})."
+            f"подтверждена HR ({who})."
         )
     return (
         f"📅 Предлагается встреча с кандидатом <b>{name}</b> "
@@ -116,7 +117,7 @@ def maybe_request_hr_meeting_confirmation(candidate, vacancy):
         candidate.get("office_interview_time"),
     ):
         return False
-    chat_id = vacancy.get("chat_id")
+    chat_id = resolve_vacancy_chat_id(vacancy)
     if not chat_id:
         return False
 
@@ -151,13 +152,12 @@ def remove_telegram_post(candidate_id, chat_id, message_id):
     if not candidate:
         return False
 
-    norm_chat = normalize_chat_id(chat_id)
     posts = candidate.get("telegram_posts", [])
     filtered = [
         p for p in posts
         if not (
             p.get("message_id") == message_id
-            and normalize_chat_id(p.get("chat_id")) == norm_chat
+            and chat_ids_equal(p.get("chat_id"), chat_id)
         )
     ]
     if len(filtered) == len(posts):
@@ -179,24 +179,104 @@ def find_candidate_by_tg_callback_id(callback_id):
 
 def find_candidate_by_telegram_message(chat_id, message_id):
     data = load_vacancies()
-    norm_chat = normalize_chat_id(chat_id)
     for vacancy in data.get("vacancies", []):
         for cand in vacancy.get("candidates", []):
             for post in cand.get("telegram_posts", []):
-                post_chat = normalize_chat_id(post.get("chat_id"))
-                if post.get("message_id") == message_id and post_chat == norm_chat:
+                if post.get("message_id") == message_id and chat_ids_equal(
+                    post.get("chat_id"), chat_id
+                ):
                     return vacancy, cand, data
     return None, None, data
 
 
+def _department_id_for_chat(chat_id):
+    from vacancy_store import load_chats
+
+    for chat in load_chats():
+        if chat_ids_equal(chat.get("id"), chat_id):
+            return chat.get("department_id")
+    return None
+
+
+def _vacancy_has_posts_in_chat(vacancy, chat_id):
+    vac_id = vacancy.get("id")
+    for cand in vacancy.get("candidates", []):
+        migrate_candidate(cand)
+        for post in cand.get("telegram_posts", []):
+            if not chat_ids_equal(post.get("chat_id"), chat_id):
+                continue
+            if post_belongs_to_vacancy(post, vac_id):
+                return True
+    return False
+
+
 def vacancy_chat_matches(vacancy, chat_id):
-    return normalize_chat_id(vacancy.get("chat_id")) == normalize_chat_id(chat_id)
+    if chat_ids_equal(resolve_vacancy_chat_id(vacancy, chat_id), chat_id):
+        return True
+    return _vacancy_has_posts_in_chat(vacancy, chat_id)
+
+
+def find_vacancy_by_id(vacancy_id):
+    for vacancy in load_vacancies().get("vacancies", []):
+        if vacancy.get("id") == vacancy_id:
+            return vacancy
+    return None
+
+
+def find_vacancies_by_chat_id(chat_id, *, only_active=True):
+    """Вакансии чата: актуальный chat_id из chats_db или карточки в этом чате."""
+    vacancies = load_vacancies().get("vacancies", [])
+    seen = set()
+    result = []
+
+    def _take(vacancy):
+        vid = vacancy.get("id")
+        if vid in seen:
+            return
+        if only_active and not vacancy.get("active", True):
+            return
+        seen.add(vid)
+        result.append(vacancy)
+
+    for vacancy in vacancies:
+        if chat_ids_equal(resolve_vacancy_chat_id(vacancy, chat_id), chat_id):
+            _take(vacancy)
+        elif _vacancy_has_posts_in_chat(vacancy, chat_id):
+            _take(vacancy)
+
+    return result
+
+
+def post_belongs_to_vacancy(post, vacancy_id):
+    """Карточка в telegram_posts относится к вакансии (или legacy без метки)."""
+    post_vid = post.get("vacancy_id")
+    if post_vid is None:
+        return True
+    return post_vid == vacancy_id
+
+
+def post_kind(post, default="primary"):
+    """kind в telegram_posts: None и отсутствие ключа — legacy primary."""
+    return post.get("kind") or default
+
+
+def get_primary_telegram_post(candidate, chat_id, *, kind="primary", vacancy_id=None):
+    """Последнее primary-сообщение кандидата в указанном чате (опционально по vacancy_id)."""
+    posts = [
+        p
+        for p in candidate.get("telegram_posts", [])
+        if chat_ids_equal(p.get("chat_id"), chat_id)
+        and post_kind(p) == kind
+        and (vacancy_id is None or post_belongs_to_vacancy(p, vacancy_id))
+    ]
+    if not posts:
+        return None
+    return max(posts, key=lambda p: p.get("sent_at") or "")
 
 
 def has_telegram_post_in_chat(candidate, chat_id):
-    norm_chat = normalize_chat_id(chat_id)
     for post in candidate.get("telegram_posts", []):
-        if normalize_chat_id(post.get("chat_id")) == norm_chat:
+        if chat_ids_equal(post.get("chat_id"), chat_id):
             return True
     return False
 
@@ -222,7 +302,9 @@ def _format_comment_author(author_note):
         return ""
     if note.isdigit():
         return f"id:{note}"
-    return note if note.startswith("@") else f"@{note}"
+    if note.startswith("@"):
+        return note
+    return note
 
 
 def format_telegram_comment_entry(text, at=None, author=None):
@@ -268,8 +350,13 @@ def apply_client_update(
         status_key = STATUS_LABEL_TO_KEY[status_label]
 
     if status_key is not None:
-        if status_key != candidate.get("client_status"):
+        old_status = candidate.get("client_status")
+        if status_key != old_status:
             candidate["status_updated_at"] = datetime.now().isoformat()
+            if status_key == "think" and old_status != "think":
+                candidate["think_long_reminder_sent"] = False
+            if old_status == "wait" and status_key != "wait":
+                candidate["feedback_reminder_last_sent_at"] = ""
         candidate["client_status"] = status_key
 
         if status_key == "reject":
@@ -467,7 +554,7 @@ def apply_and_save_cancel_meeting(
     return True, f"❌ {name}: встреча отменена", candidate, vacancy
 
 
-def apply_and_save_confirm_hr_meeting(candidate_id, *, confirmer_username):
+def apply_and_save_confirm_hr_meeting(candidate_id, *, confirmer_label=None):
     if len(str(candidate_id)) <= 8:
         vacancy, candidate, data = find_candidate_by_tg_callback_id(candidate_id)
     else:

@@ -8,10 +8,19 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from dotenv import load_dotenv
-from telegram_notify import get_hr_user_id, normalize_chat_id
-from telegram_bot_handlers import register_client_zone_handlers, try_handle_pending_comment
 
-load_dotenv()
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+os.chdir(_ROOT)
+load_dotenv(os.path.join(_ROOT, ".env"))
+
+from telegram_notify import get_hr_user_id, normalize_chat_id
+from telegram_bot_handlers import (
+    register_client_zone_handlers,
+    register_group_chat_handlers,
+    try_handle_pending_comment,
+)
+from telegram_reminders import run_reminder_tick
+from telegram_bot_commands import HELP_TEXT_HTML, register_bot_commands
 
 # ---------- Конфигурация ----------
 def _admin_user_id():
@@ -21,8 +30,7 @@ def _admin_user_id():
 SECRET_GROUP_TOKEN = os.getenv("TELEGRAM_GROUP_LINK_TOKEN", "your_secret_token_here")
 
 # ---------- Работа с данными ----------
-VACANCIES_FILE = "data/vacancies_db.json"
-CHATS_FILE = "data/chats_db.json"
+from vacancy_store import CHATS_FILE, VACANCIES_FILE
 
 def load_vacancies():
     from vacancy_store import load_vacancies_list
@@ -33,10 +41,8 @@ def save_vacancies(vacancies):
     save_vacancies_list(vacancies)
 
 def load_chats():
-    if not os.path.exists(CHATS_FILE):
-        return []
-    with open(CHATS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    from vacancy_store import load_chats as _load_chats
+    return _load_chats()
 
 def get_department_id_by_chat_id(chat_id):
     chats = load_chats()
@@ -65,6 +71,9 @@ dp = Dispatcher()
 logger = logging.getLogger(__name__)
 
 register_client_zone_handlers(dp)
+register_group_chat_handlers(dp)
+
+REMINDER_INTERVAL_SEC = int(os.getenv("TELEGRAM_REMINDER_INTERVAL_SEC", "900"))
 
 # Временное хранилище для привязки пользователя к отделу (после глубокой ссылки)
 user_dept = {}
@@ -85,6 +94,17 @@ async def cmd_chatid(message: types.Message):
         f"Тип: {message.chat.type}",
         parse_mode="HTML",
     )
+
+# ---------- /menu и /help (личка) ----------
+@dp.message(Command("menu"), F.chat.type == "private")
+async def cmd_menu(message: types.Message):
+    await cmd_start(message)
+
+
+@dp.message(Command("help"), F.chat.type == "private")
+async def cmd_help_private(message: types.Message):
+    await message.answer(HELP_TEXT_HTML, parse_mode="HTML")
+
 
 # ---------- Команда /start (в личке или группе) ----------
 @dp.message(Command("start"))
@@ -174,15 +194,7 @@ async def menu_archive(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "menu_help")
 async def menu_help(callback: types.CallbackQuery):
-    text = (
-        "📖 <b>Справка</b>\n\n"
-        "• /start — начать работу в группе\n"
-        "• под сообщением о кандидате — кнопки статуса и комментария\n"
-        "• комментарий: кнопка 💬 или ответ (reply) на карточку кандидата\n"
-        "• в личном чате — просмотр вакансий и кандидатов\n"
-        "• деактивация вакансий — только администратору"
-    )
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.edit_text(HELP_TEXT_HTML, parse_mode="HTML")
     await callback.answer()
 
 # ---------- Показать кандидатов по вакансии ----------
@@ -307,27 +319,40 @@ async def handle_search_query(message: types.Message):
                 pass
             return
 
-# ---------- Статистика ----------
+# ---------- Статистика (личный чат, кнопка под списком кандидатов) ----------
 @dp.callback_query(lambda c: c.data.startswith("stats_"))
 async def show_stats(callback: types.CallbackQuery):
+    from telegram_chat_stats import format_vacancy_stats_html
+
     vacancy_id = int(callback.data.split("_")[1])
     vacancies = load_vacancies()
     vacancy = next((v for v in vacancies if v["id"] == vacancy_id), None)
     if not vacancy:
-        await callback.message.answer("Ошибка")
+        await callback.message.answer("Вакансия не найдена")
         await callback.answer()
         return
-    candidates = vacancy.get("candidates", [])
-    total = len(candidates)
-    with_video = sum(1 for c in candidates if c.get("video_link"))
-    with_task = sum(1 for c in candidates if c.get("task_link"))
-    with_comment = sum(1 for c in candidates if c.get("hr_comment"))
-    text = f"📊 <b>Статистика по вакансии «{vacancy['title']}»</b>\n\n"
-    text += f"👥 Всего кандидатов: {total}\n"
-    text += f"🎥 С видео: {with_video}\n"
-    text += f"✅ С выполненным заданием: {with_task}\n"
-    text += f"💬 С комментарием рекрутера: {with_comment}\n"
-    await callback.message.edit_text(text, parse_mode="HTML")
+
+    text = format_vacancy_stats_html(vacancy)
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="◀ К списку кандидатов",
+            callback_data=f"vacancy_{vacancy_id}",
+        )
+    )
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu_vacancies"))
+    try:
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=builder.as_markup(),
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=builder.as_markup(),
+        )
     await callback.answer()
 
 # ---------- Деактивация / активация (только для админа) ----------
@@ -366,11 +391,33 @@ async def activate_vacancy(callback: types.CallbackQuery):
             return
     await callback.answer("Ошибка")
 
+# ---------- Напоминания ----------
+async def reminder_loop():
+    await asyncio.sleep(30)
+    while True:
+        try:
+            sent = await run_reminder_tick(bot)
+            if sent:
+                logger.info("Отправлено напоминаний: %s", sent)
+        except Exception as exc:
+            logger.exception("Ошибка цикла напоминаний: %s", exc)
+        await asyncio.sleep(REMINDER_INTERVAL_SEC)
+
+
 # ---------- Запуск ----------
 async def main():
     logging.basicConfig(level=logging.INFO)
+    from vacancy_store import prune_stale_telegram_posts, sync_vacancy_chat_ids_from_chats
+
+    if sync_vacancy_chat_ids_from_chats():
+        logger.info("vacancy.chat_id выровнены по chats_db")
+    if prune_stale_telegram_posts():
+        logger.info("Устаревшие telegram_posts удалены из базы")
     await bot.delete_webhook(drop_pending_updates=False)
-    logger.info("Webhook сброшен, запуск polling для @%s", (await bot.get_me()).username)
+    me = await bot.get_me()
+    await register_bot_commands(bot)
+    logger.info("Webhook сброшен, запуск polling для @%s", me.username)
+    asyncio.create_task(reminder_loop())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":

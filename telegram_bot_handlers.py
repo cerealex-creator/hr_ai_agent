@@ -1,5 +1,6 @@
 """Обработчики Telegram-клиентской зоны (статусы и комментарии)."""
 
+import asyncio
 import importlib
 import logging
 from datetime import datetime
@@ -10,6 +11,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from aiogram.filters import Command
+
 from client_actions import (
     HR_MEETING_CONFIRM_USERNAME,
     apply_and_save_cancel_meeting,
@@ -17,14 +20,26 @@ from client_actions import (
     apply_and_save_confirm_hr_meeting,
     build_meeting_confirmation_html,
     can_confirm_hr_meeting,
+    ensure_client_zone_for_telegram,
     find_candidate_by_telegram_message,
     find_candidate_by_tg_callback_id,
+    find_vacancies_by_chat_id,
+    find_vacancy_by_id,
+    vacancy_chat_matches,
 )
 from telegram_notify import _esc
+from telegram_workflow import (
+    apply_status_change,
+    get_pending_action,
+    status_requires_comment,
+    store_pending_comment,
+    store_pending_status,
+    telegram_actor_label,
+    try_handle_pending_action,
+)
+from vacancy_store import get_status_meta
 
 logger = logging.getLogger(__name__)
-
-pending_comment = {}
 
 
 def _reload_telegram_client():
@@ -36,10 +51,19 @@ def _reload_telegram_client():
 def _keyboard_from_dict(markup_dict):
     builder = InlineKeyboardBuilder()
     for row in markup_dict.get("inline_keyboard", []):
-        buttons = [
-            InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"])
-            for btn in row
-        ]
+        buttons = []
+        for btn in row:
+            if btn.get("url"):
+                buttons.append(
+                    InlineKeyboardButton(text=btn["text"], url=btn["url"])
+                )
+            else:
+                buttons.append(
+                    InlineKeyboardButton(
+                        text=btn["text"],
+                        callback_data=btn["callback_data"],
+                    )
+                )
         builder.row(*buttons)
     return builder.as_markup()
 
@@ -277,10 +301,7 @@ async def _finalize_comment(
         comment=comment_text,
         append_comment=True,
         actor="telegram",
-        actor_note=(
-            (user_message.from_user.username or str(user_message.from_user.id))
-            if user_message else "telegram"
-        ),
+        actor_note=telegram_actor_label(user_message.from_user) if user_message else "telegram",
         comment_at=comment_at,
     )
     if not ok or not candidate:
@@ -288,8 +309,14 @@ async def _finalize_comment(
             await user_message.reply("⚠️ Не удалось сохранить комментарий")
         return False
 
+    if vacancy and card_message_id:
+        from telegram_client import anchor_candidate_card_message
+
+        anchor_candidate_card_message(
+            vacancy, candidate, chat_id, int(card_message_id)
+        )
+
     name = candidate.get("name", "Кандидат")
-    safe_comment = _esc(comment_text)
 
     if prompt_message_id:
         try:
@@ -308,7 +335,7 @@ async def _finalize_comment(
 
     await bot.send_message(
         chat_id,
-        f"💬 <b>Комментарий к {_esc(name)} сохранён:</b>\n<i>{safe_comment}</i>",
+        f"💬 <b>Комментарий к {_esc(name)} сохранён.</b>",
         parse_mode="HTML",
     )
 
@@ -351,43 +378,59 @@ def register_client_zone_handlers(dp):
             await callback.answer("Этот статус недоступен в чате", show_alert=True)
             return
 
-        user = callback.from_user
-        actor_note = user.username or str(user.id)
-        ok, msg, candidate, vacancy = apply_and_save_client_action(
-            callback_id,
-            chat_id=callback.message.chat.id,
-            status_key=status_key,
-            actor="telegram",
-            actor_note=actor_note,
-        )
-        if not ok:
-            await callback.answer(msg, show_alert=True)
+        vacancy, candidate, _ = find_candidate_by_tg_callback_id(callback_id)
+        if not candidate or not vacancy:
+            await callback.answer("Кандидат не найден", show_alert=True)
+            return
+        if not vacancy_chat_matches(vacancy, callback.message.chat.id):
+            await callback.answer("Этот чат не привязан к вакансии кандидата", show_alert=True)
+            return
+        if not ensure_client_zone_for_telegram(candidate, callback.message.chat.id):
+            await callback.answer("Кандидат ещё не на этапе оценки заказчика", show_alert=True)
+            return
+        if candidate.get("client_status") == status_key:
+            await callback.answer("Статус уже выбран", show_alert=True)
             return
 
-        from vacancy_store import get_status_meta
-        meta = get_status_meta(candidate.get("client_status", "wait"))
-        await callback.answer(meta["label"], show_alert=False)
+        from telegram_client import anchor_candidate_card_message
 
-        try:
-            tc = _reload_telegram_client()
-            if status_key == "ready" and tc.needs_interview_schedule(candidate):
-                await _edit_card_interview_dates(callback, candidate, vacancy)
-            else:
-                await _edit_card_locked(callback, candidate, vacancy)
-        except Exception as exc:
-            logger.exception("Ошибка обновления карточки после статуса: %s", exc)
-            try:
-                if status_key == "ready":
-                    await _send_interview_date_fallback(
-                        callback, candidate, vacancy, meta["label"]
-                    )
-                else:
-                    await callback.message.reply(
-                        f"✅ Статус «{meta['label']}» сохранён, но карточка не обновилась.",
-                        parse_mode=ParseMode.HTML,
-                    )
-            except Exception as fallback_exc:
-                logger.exception("Ошибка резервного сообщения: %s", fallback_exc)
+        anchor_candidate_card_message(
+            vacancy,
+            candidate,
+            callback.message.chat.id,
+            callback.message.message_id,
+        )
+
+        user = callback.from_user
+        actor_note = telegram_actor_label(user)
+
+        if status_requires_comment(status_key):
+            meta = get_status_meta(status_key)
+            prompt = await callback.message.reply(
+                f"💬 Напишите комментарий к статусу «{meta['label']}» "
+                f"ответом на это сообщение."
+            )
+            store_pending_status(
+                user.id,
+                candidate_id=callback_id,
+                status_key=status_key,
+                chat_id=callback.message.chat.id,
+                card_message_id=callback.message.message_id,
+                prompt_message_id=prompt.message_id,
+                actor_note=actor_note,
+            )
+            await callback.answer()
+            return
+
+        await apply_status_change(
+            callback.bot,
+            candidate_id=callback_id,
+            chat_id=callback.message.chat.id,
+            status_key=status_key,
+            actor_note=actor_note,
+            card_message_id=callback.message.message_id,
+            callback=callback,
+        )
 
     @dp.callback_query(F.data.startswith("ivi:"))
     async def on_interview_start(callback: types.CallbackQuery):
@@ -471,7 +514,7 @@ def register_client_zone_handlers(dp):
             remote_interview=remote,
             office_interview=office,
             actor="telegram",
-            actor_note=user.username or str(user.id),
+            actor_note=telegram_actor_label(user),
         )
         if not ok:
             await callback.answer(msg, show_alert=True)
@@ -497,10 +540,10 @@ def register_client_zone_handlers(dp):
             return
 
         callback_id = callback.data.split(":", 1)[1]
-        username = callback.from_user.username or HR_MEETING_CONFIRM_USERNAME
+        confirmer_label = telegram_actor_label(callback.from_user)
         ok, msg, candidate, vacancy = apply_and_save_confirm_hr_meeting(
             callback_id,
-            confirmer_username=username,
+            confirmer_label=confirmer_label,
         )
         if not ok:
             await callback.answer(msg, show_alert=True)
@@ -512,7 +555,7 @@ def register_client_zone_handlers(dp):
                 build_meeting_confirmation_html(
                     candidate,
                     confirmed=True,
-                    confirmer_username=username,
+                    confirmer_label=confirmer_label,
                 ),
                 parse_mode=ParseMode.HTML,
             )
@@ -533,7 +576,7 @@ def register_client_zone_handlers(dp):
             callback_id,
             chat_id=callback.message.chat.id,
             actor="telegram",
-            actor_note=user.username or str(user.id),
+            actor_note=telegram_actor_label(user),
         )
         if not ok:
             await callback.answer(msg, show_alert=True)
@@ -595,12 +638,13 @@ def register_client_zone_handlers(dp):
         prompt = await callback.message.reply(
             "💬 Напишите комментарий к кандидату следующим сообщением в чат."
         )
-        pending_comment[callback.from_user.id] = {
-            "candidate_id": callback_id,
-            "chat_id": callback.message.chat.id,
-            "card_message_id": callback.message.message_id,
-            "prompt_message_id": prompt.message_id,
-        }
+        store_pending_comment(
+            callback.from_user.id,
+            candidate_id=callback_id,
+            chat_id=callback.message.chat.id,
+            card_message_id=callback.message.message_id,
+            prompt_message_id=prompt.message_id,
+        )
         await callback.answer()
 
     @dp.message(F.reply_to_message)
@@ -611,18 +655,46 @@ def register_client_zone_handlers(dp):
         user_id = message.from_user.id
         reply = message.reply_to_message
 
-        state = pending_comment.get(user_id)
+        state = get_pending_action(user_id)
         if state and state.get("prompt_message_id") == reply.message_id:
-            pending_comment.pop(user_id, None)
-            await _finalize_comment(
-                message.bot,
-                chat_id=message.chat.id,
-                candidate_id=state["candidate_id"],
-                comment_text=message.text or "",
-                user_message=message,
-                prompt_message_id=state.get("prompt_message_id"),
-                card_message_id=state.get("card_message_id"),
-            )
+            from telegram_workflow import pop_pending_action
+
+            pop_pending_action(user_id)
+            if state.get("action") == "status":
+                text = (message.text or "").strip()
+                if not text:
+                    await message.reply("⚠️ Комментарий обязателен для этого статуса.")
+                    store_pending_status(
+                        user_id,
+                        candidate_id=state["candidate_id"],
+                        status_key=state["status_key"],
+                        chat_id=state["chat_id"],
+                        card_message_id=state.get("card_message_id"),
+                        prompt_message_id=state.get("prompt_message_id"),
+                        actor_note=state.get("actor_note", telegram_actor_label(message.from_user)),
+                    )
+                    return
+                await apply_status_change(
+                    message.bot,
+                    candidate_id=state["candidate_id"],
+                    chat_id=state.get("chat_id", message.chat.id),
+                    status_key=state["status_key"],
+                    actor_note=state.get("actor_note", telegram_actor_label(message.from_user)),
+                    comment_text=text,
+                    card_message_id=state.get("card_message_id"),
+                    user_message=message,
+                    prompt_message_id=state.get("prompt_message_id"),
+                )
+            else:
+                await _finalize_comment(
+                    message.bot,
+                    chat_id=message.chat.id,
+                    candidate_id=state["candidate_id"],
+                    comment_text=message.text or "",
+                    user_message=message,
+                    prompt_message_id=state.get("prompt_message_id"),
+                    card_message_id=state.get("card_message_id"),
+                )
             return
 
         vacancy, candidate, _data = find_candidate_by_telegram_message(
@@ -644,18 +716,406 @@ def register_client_zone_handlers(dp):
 
 
 async def try_handle_pending_comment(message: types.Message) -> bool:
-    user_id = message.from_user.id
-    state = pending_comment.pop(user_id, None)
-    if not state:
-        return False
+    return await try_handle_pending_action(message)
 
-    await _finalize_comment(
-        message.bot,
-        chat_id=state.get("chat_id", message.chat.id),
-        candidate_id=state["candidate_id"],
-        comment_text=message.text or "",
-        user_message=message,
-        prompt_message_id=state.get("prompt_message_id"),
-        card_message_id=state.get("card_message_id"),
+
+def _nav_actor(target):
+    if isinstance(target, types.CallbackQuery):
+        return target.bot, target.message.chat.id, target.from_user.id
+    return target.bot, target.chat.id, target.from_user.id
+
+
+async def _send_vacancy_picker(target, vacancies, *, title="📋 Выберите вакансию"):
+    from telegram_candidate_nav import format_vacancy_nav_label, vacancy_picker_keyboard
+    from telegram_nav_session import track_nav_message
+
+    bot, chat_id, user_id = _nav_actor(target)
+    lines = [f"<b>{title}</b>", ""]
+    for vac in vacancies:
+        lines.append(f"• {format_vacancy_nav_label(vac)}")
+    text = "\n".join(lines)
+    markup = _keyboard_from_dict(vacancy_picker_keyboard(vacancies))
+
+    if isinstance(target, types.CallbackQuery):
+        try:
+            await target.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            track_nav_message(chat_id, user_id, target.message.message_id)
+        except TelegramBadRequest:
+            sent = await target.message.answer(
+                text, parse_mode=ParseMode.HTML, reply_markup=markup
+            )
+            track_nav_message(chat_id, user_id, sent.message_id)
+        await target.answer()
+    else:
+        sent = await bot.send_message(
+            chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup
+        )
+        track_nav_message(chat_id, user_id, sent.message_id)
+
+
+async def _send_candidate_navigator(target, vacancy, index=0):
+    from telegram_candidate_nav import (
+        collect_vacancy_navigator_items,
+        format_navigator_html,
+        format_vacancy_nav_label,
+        build_navigator_keyboard,
     )
-    return True
+    from telegram_nav_session import track_nav_message
+
+    bot, chat_id, user_id = _nav_actor(target)
+    items = collect_vacancy_navigator_items(vacancy, runtime_chat_id=chat_id)
+    if not items:
+        text = (
+            f"Нет карточек кандидатов в чате для "
+            f"«{_esc(format_vacancy_nav_label(vacancy))}».\n"
+            f"Отправьте кандидатов из приложения HR."
+        )
+        if isinstance(target, types.CallbackQuery):
+            await target.answer("Нет карточек в чате", show_alert=True)
+            await target.message.answer(text, parse_mode=ParseMode.HTML)
+        else:
+            await target.answer(text, parse_mode=ParseMode.HTML)
+        return
+
+    total = len(items)
+    index = index % total
+    item = items[index]
+    text = format_navigator_html(vacancy, item, index, total)
+    markup = _keyboard_from_dict(build_navigator_keyboard(vacancy, index, total))
+
+    if isinstance(target, types.CallbackQuery):
+        try:
+            await target.message.edit_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=markup
+            )
+            track_nav_message(chat_id, user_id, target.message.message_id)
+        except TelegramBadRequest:
+            sent = await target.message.answer(
+                text, parse_mode=ParseMode.HTML, reply_markup=markup
+            )
+            track_nav_message(chat_id, user_id, sent.message_id)
+        await target.answer()
+    else:
+        sent = await bot.send_message(
+            chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup
+        )
+        track_nav_message(chat_id, user_id, sent.message_id)
+
+
+def register_group_chat_handlers(dp):
+    """Команды для групповых чатов: /pending, /help."""
+
+    @dp.message(Command("candidates"), F.chat.type.in_({"group", "supergroup"}))
+    async def cmd_candidates(message: types.Message):
+        from telegram_candidate_nav import find_vacancies_for_nav
+        from telegram_notify import normalize_chat_id
+        from vacancy_store import load_vacancies_list
+
+        args = (message.text or "").split(maxsplit=1)
+        query = args[1].strip() if len(args) > 1 else None
+        vacancies = find_vacancies_for_nav(message.chat.id, query)
+        logger.info(
+            "/candidates chat_id=%s norm=%s db_vacancies=%s found=%s query=%r",
+            message.chat.id,
+            normalize_chat_id(message.chat.id),
+            len(load_vacancies_list()),
+            len(vacancies),
+            query,
+        )
+
+        if not vacancies:
+            if query:
+                await message.answer(
+                    f"Вакансия «{_esc(query)}» не найдена в этом чате.\n"
+                    f"Пример: <code>/candidates Кладовщик</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                from vacancy_store import load_chats
+
+                known_lines = []
+                for chat in load_chats():
+                    cid = chat.get("id")
+                    cnt = len(find_vacancies_by_chat_id(cid, only_active=True))
+                    if cnt:
+                        known_lines.append(
+                            f"• {_esc(chat.get('name', 'Чат'))}: {cnt} вак. "
+                            f"(<code>{normalize_chat_id(cid)}</code>)"
+                        )
+                known_block = (
+                    "\n".join(known_lines)
+                    if known_lines
+                    else "• нет привязанных чатов с активными вакансиями"
+                )
+                await message.answer(
+                    "В этом чате нет активных вакансий.\n\n"
+                    f"ID этого чата: <code>{message.chat.id}</code>\n\n"
+                    f"В базе HR активные вакансии привязаны к:\n{known_block}\n\n"
+                    "Если вы в нужной группе — обновите Chat ID в "
+                    "HR → Настройки → Telegram (или создайте вакансию заново с этим чатом).",
+                    parse_mode=ParseMode.HTML,
+                )
+            return
+
+        from telegram_nav_session import cleanup_session, set_nav_command
+
+        await cleanup_session(message.bot, message.chat.id, message.from_user.id)
+        set_nav_command(message.chat.id, message.from_user.id, message.message_id)
+
+        if len(vacancies) == 1:
+            await _send_candidate_navigator(message, vacancies[0], index=0)
+            return
+
+        await _send_vacancy_picker(
+            message,
+            vacancies,
+            title="📋 Кандидаты — выберите вакансию",
+        )
+
+    @dp.callback_query(F.data == "cf:0")
+    async def on_nav_finish(callback: types.CallbackQuery):
+        from telegram_nav_session import cleanup_session
+
+        await cleanup_session(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
+            include_current=callback.message.message_id,
+        )
+        await callback.answer("Навигация завершена")
+
+    @dp.callback_query(F.data.startswith("cg:"))
+    async def on_goto_candidate_card(callback: types.CallbackQuery):
+        from telegram_candidate_nav import (
+            collect_vacancy_navigator_items,
+            send_candidate_card_pointer,
+        )
+
+        parts = callback.data.split(":")
+        if len(parts) != 3:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+        try:
+            vacancy_id = int(parts[1])
+            index = int(parts[2])
+        except ValueError:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+
+        vacancy = find_vacancy_by_id(vacancy_id)
+        if not vacancy or not vacancy_chat_matches(vacancy, callback.message.chat.id):
+            await callback.answer("Вакансия не найдена", show_alert=True)
+            return
+
+        runtime_chat_id = callback.message.chat.id
+        items = collect_vacancy_navigator_items(
+            vacancy, runtime_chat_id=runtime_chat_id
+        )
+        if not items:
+            await callback.answer("Нет карточек в чате", show_alert=True)
+            return
+
+        item = items[index % len(items)]
+        ok, feedback = await send_candidate_card_pointer(
+            callback.bot,
+            runtime_chat_id,
+            callback.from_user.id,
+            item,
+            vacancy=vacancy,
+        )
+        if ok:
+            await callback.answer(feedback)
+        else:
+            logger.warning(
+                "Переход к карточке не удался vacancy=%s index=%s: %s",
+                vacancy_id,
+                index,
+                feedback,
+            )
+            await callback.answer(feedback, show_alert=True)
+
+    @dp.callback_query(F.data.startswith("cv:"))
+    async def on_nav_vacancy_pick(callback: types.CallbackQuery):
+        try:
+            vacancy_id = int(callback.data.split(":", 1)[1])
+        except ValueError:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+        vacancy = find_vacancy_by_id(vacancy_id)
+        if not vacancy or not vacancy_chat_matches(vacancy, callback.message.chat.id):
+            await callback.answer("Вакансия не найдена", show_alert=True)
+            return
+        await _send_candidate_navigator(callback, vacancy, index=0)
+
+    @dp.callback_query(F.data.startswith("cn:"))
+    async def on_candidate_nav(callback: types.CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) < 3:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+
+        token = parts[1]
+        if token == "pick":
+            from telegram_candidate_nav import find_vacancies_for_nav
+
+            vacancies = find_vacancies_for_nav(callback.message.chat.id)
+            if not vacancies:
+                await callback.answer("Нет активных вакансий", show_alert=True)
+                return
+            if len(vacancies) == 1:
+                await _send_candidate_navigator(callback, vacancies[0], index=0)
+                return
+            await _send_vacancy_picker(
+                callback,
+                vacancies,
+                title="📋 Кандидаты — выберите вакансию",
+            )
+            return
+
+        if len(parts) >= 3 and parts[2] == "noop":
+            await callback.answer()
+            return
+
+        try:
+            vacancy_id = int(token)
+            index = int(parts[2])
+        except ValueError:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+
+        vacancy = find_vacancy_by_id(vacancy_id)
+        if not vacancy or not vacancy_chat_matches(vacancy, callback.message.chat.id):
+            await callback.answer("Вакансия не найдена", show_alert=True)
+            return
+        await _send_candidate_navigator(callback, vacancy, index=index)
+
+    async def _send_pending_ephemeral(chat_id, bot, text, *, extra_keyboard=None):
+        from telegram_nav_session import pending_keyboard_with_close
+
+        markup = _keyboard_from_dict(pending_keyboard_with_close(extra_keyboard))
+        return await bot.send_message(
+            chat_id,
+            text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=markup,
+        )
+
+    async def _show_pending_on_message(message, text, *, extra_keyboard=None):
+        from telegram_nav_session import (
+            arm_pending_ephemeral_delete,
+            begin_pending_ephemeral,
+            cleanup_pending_ephemeral,
+            set_pending_response,
+        )
+
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        await cleanup_pending_ephemeral(message.bot, chat_id, user_id)
+        begin_pending_ephemeral(chat_id, user_id, command_id=message.message_id)
+        sent = await _send_pending_ephemeral(
+            chat_id, message.bot, text, extra_keyboard=extra_keyboard
+        )
+        set_pending_response(chat_id, user_id, sent.message_id)
+        await arm_pending_ephemeral_delete(message.bot, chat_id, user_id)
+
+    @dp.callback_query(F.data == "pd:close")
+    async def on_pending_close(callback: types.CallbackQuery):
+        from telegram_nav_session import cleanup_pending_ephemeral
+
+        await cleanup_pending_ephemeral(
+            callback.bot,
+            callback.message.chat.id,
+            callback.from_user.id,
+        )
+        await callback.answer()
+
+    @dp.message(Command("pending"))
+    async def cmd_pending(message: types.Message):
+        if message.chat.type not in ("group", "supergroup"):
+            return
+
+        from telegram_reminders import collect_pending_candidates, format_pending_list_html
+
+        vacancies = find_vacancies_by_chat_id(message.chat.id)
+        if not vacancies:
+            await message.answer("В этом чате нет привязанных активных вакансий.")
+            return
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) > 1 and args[1].strip().lower() == "all":
+            items = collect_pending_candidates(message.chat.id)
+            text = format_pending_list_html(items, show_vacancy=len(vacancies) > 1)
+            await _show_pending_on_message(message, text)
+            return
+
+        if len(vacancies) == 1:
+            items = collect_pending_candidates(message.chat.id, vacancies[0]["id"])
+            text = format_pending_list_html(items, show_vacancy=False)
+            await _show_pending_on_message(message, text)
+            return
+
+        picker_rows = []
+        for vac in vacancies:
+            pending_count = len(collect_pending_candidates(message.chat.id, vac["id"]))
+            label = f"{vac['title']} ({pending_count})"
+            picker_rows.append([{"text": label, "callback_data": f"vp:{vac['id']}"}])
+        picker_rows.append([{"text": "📋 Все вакансии", "callback_data": "vp:all"}])
+        await _show_pending_on_message(
+            message,
+            "<b>⏳ Ждут оценки</b>\n\nВыберите вакансию:",
+            extra_keyboard={"inline_keyboard": picker_rows},
+        )
+
+    @dp.message(Command("menu"), F.chat.type.in_({"group", "supergroup"}))
+    async def cmd_menu_group(message: types.Message):
+        await message.answer(
+            "В группе: /candidates — карточки вакансии, /pending — ждут оценки.\n"
+            "Сводка по кандидатам — автоматически вт 18:00 и пт 15:00."
+        )
+
+    @dp.callback_query(F.data.startswith("vp:"))
+    async def on_pending_vacancy_pick(callback: types.CallbackQuery):
+        from telegram_nav_session import (
+            arm_pending_ephemeral_delete,
+            pending_keyboard_with_close,
+            set_pending_response,
+        )
+        from telegram_reminders import collect_pending_candidates, format_pending_list_html
+
+        token = callback.data.split(":", 1)[1]
+        chat_id = callback.message.chat.id
+        user_id = callback.from_user.id
+        vacancies = find_vacancies_by_chat_id(chat_id)
+        show_vacancy = len(vacancies) > 1
+
+        if token == "all":
+            items = collect_pending_candidates(chat_id)
+        else:
+            try:
+                vacancy_id = int(token)
+            except ValueError:
+                await callback.answer("Некорректные данные", show_alert=True)
+                return
+            items = collect_pending_candidates(chat_id, vacancy_id)
+
+        text = format_pending_list_html(items, show_vacancy=show_vacancy and token == "all")
+        markup = _keyboard_from_dict(pending_keyboard_with_close())
+        try:
+            await callback.message.edit_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=markup,
+            )
+            set_pending_response(chat_id, user_id, callback.message.message_id)
+        except TelegramBadRequest:
+            sent = await callback.message.answer(
+                text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=markup,
+            )
+            set_pending_response(chat_id, user_id, sent.message_id)
+        await arm_pending_ephemeral_delete(callback.bot, chat_id, user_id)
+        await callback.answer()

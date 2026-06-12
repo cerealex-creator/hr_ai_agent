@@ -238,6 +238,15 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if "interview_reminder_10_sent" not in candidate:
         candidate["interview_reminder_10_sent"] = False
         migrated = True
+    if "interview_reminder_60_sent" not in candidate:
+        candidate["interview_reminder_60_sent"] = False
+        migrated = True
+    if "feedback_reminder_last_sent_at" not in candidate:
+        candidate["feedback_reminder_last_sent_at"] = ""
+        migrated = True
+    if "think_long_reminder_sent" not in candidate:
+        candidate["think_long_reminder_sent"] = False
+        migrated = True
     if "calendar_event_id" not in candidate:
         candidate["calendar_event_id"] = ""
         migrated = True

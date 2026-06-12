@@ -1,11 +1,11 @@
 # Откат версии приложения
 
-## Точка отката перед Telegram-клиентской зоной
+## Точка отката перед полноценной Telegram-клиентской зоной
 
 | Метка | Коммит | Описание |
 |-------|--------|----------|
-| Тег `pre-telegram-client-mvp` | `41b81d4` | Стабильная версия до MVP Telegram |
-| Ветка `backup/pre-telegram-client-mvp` | `41b81d4` | То же самое |
+| Тег `pre-telegram-full-chat` | `a4c04f6` | Стабильная версия до доработки бота (напоминания, обязательный комментарий, /pending) |
+| Ветка `backup/pre-telegram-full-chat` | `a4c04f6` | То же самое |
 
 ---
 
@@ -16,44 +16,74 @@
 ```bash
 cd /Users/aleksandr/Desktop/hr_ai_agent
 git stash
-git checkout pre-telegram-client-mvp
+git checkout pre-telegram-full-chat
 ```
 
 Вернуться к новой версии:
 
 ```bash
-git checkout feature/telegram-client-mvp
+git checkout main
 git stash pop
 ```
 
 ### Вариант Б — полностью вернуть main к старой версии
 
-**Осторожно:** удалит коммиты Telegram MVP из ветки `main`.
+**Осторожно:** удалит коммиты после точки отката из ветки `main`.
 
 ```bash
 cd /Users/aleksandr/Desktop/hr_ai_agent
 git checkout main
-git reset --hard pre-telegram-client-mvp
+git reset --hard pre-telegram-full-chat
 ```
 
-Новая версия останется в ветке `feature/telegram-client-mvp`.
+Новая версия останется в истории reflog (`git reflog`).
 
-### Вариант В — откат только одного файла
+### Вариант В — откат только отдельных файлов
 
 ```bash
-git checkout pre-telegram-client-mvp -- bot.py client_zone.py
+git checkout pre-telegram-full-chat -- bot.py telegram_bot_handlers.py telegram_workflow.py telegram_reminders.py
 ```
+
+---
+
+## Предыдущая точка отката (Telegram MVP)
+
+| Метка | Коммит |
+|-------|--------|
+| `pre-telegram-client-mvp` | `41b81d4` |
 
 ---
 
 ## После отката
 
 1. Перезапустите Streamlit: `streamlit run hri_full_v1.py`
-2. Если бот был запущен — остановите: `docker compose stop hr-bot` или Ctrl+C в терминале с `bot.py`
-3. Данные в `data/` **не затрагиваются** откатом кода (папка в `.gitignore`)
+2. Перезапустите бота: `python bot.py` или `docker compose restart hr-bot`
+3. Данные в `data/` **не затрагиваются** откатом кода
 
 ---
 
-## Текущая рабочая ветка MVP
+## Что добавлено после `pre-telegram-full-chat` (незакоммичено поверх `a4c04f6`)
 
-`feature/telegram-client-mvp` — Telegram-клиентская зона (кнопки статуса в чате).
+Сейчас `HEAD` = тег отката; весь новый функционал — **локальные изменения**, не отдельные коммиты.
+
+| Блок | Файлы | Назначение |
+|------|-------|------------|
+| Статусы и комментарии | `telegram_workflow.py`, `telegram_bot_handlers.py` | Статус + уведомление, обязательный комментарий для Отказ/Подумать, смена статуса, собеседование |
+| Напоминания | `telegram_reminders.py`, `telegram_scheduler_state.py` | Встреча −1ч, просрочка оценки, «Подумать» 5д |
+| Навигатор `/candidates` | `telegram_candidate_nav.py`, `telegram_nav_session.py` | Стрелки, переход к карточке, ephemeral-сообщения |
+| Chat ID | `telegram_chat_id.py`, `telegram_notify.py`, `vacancy_store.py` | Синхронизация chat_id из `chats_db`, сравнение legacy/супергруппа |
+| Привязка карточек | `telegram_posts` в кандидатах, `telegram_client.py` | message_id для reply и навигатора |
+| Прочее | `telegram_bot_commands.py`, `telegram_chat_stats.py`, `models.py`, `client_actions.py` | Команды бота, статистика, этапы HR |
+
+### Когда имеет смысл откат
+
+- **Полный откат к `pre-telegram-full-chat`** — если нужна стабильная MVP-зона без `/candidates` и напоминаний. Данные в `data/` сохранятся, но `telegram_posts` и статусы останутся.
+- **Частичный откат** — только `telegram_candidate_nav.py` + связанные handlers, если ломается только навигатор.
+- **Не откатываться** — если баги локализованы (устаревший `message_id` после удаления сообщений в чате, рассинхрон chat_id). Исправляется синхронизацией привязки, без потери функционала.
+
+### После удаления сообщений в Telegram
+
+Код **не узнаёт** об удалении автоматически. Нужно одно из:
+
+1. Нажать любую кнопку на **актуальной** карточке (обновит `message_id` в базе), или
+2. Отправить кандидата заново из HR («Отправить в общий чат»).

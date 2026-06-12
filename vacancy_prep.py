@@ -19,7 +19,9 @@ WIZARD_FIELDS = [
 ]
 
 VACANCY_WIZARD_SYSTEM = """Ты — HR-директор. На основе ответов HR сформируй пакет документов для вакансии.
-Верни ТОЛЬКО JSON с запрошенными полями.
+Верни ТОЛЬКО валидный JSON с запрошенными полями.
+Поле «профиль» обязательно: структурированный объект с задачами, требованиями и условиями.
+Поле «опросник» обязательно: массив вопросов для собеседования.
 Соблюдай правила опросника из QUESTIONNAIRE_GENERATION_RULES."""
 
 VACANCY_CLARIFY_SYSTEM = """Ты — HR-консультант. По черновику анкеты вакансии задай 3–5 уточняющих вопросов HR.
@@ -143,17 +145,57 @@ def get_doc_flags_from_ui(key_prefix):
 
 
 def _profile_has_content(profile):
-    if not profile:
+    if profile is None:
         return False
+    if isinstance(profile, str):
+        return len(profile.strip()) >= 20
     if isinstance(profile, dict):
-        if profile.get("raw", "").strip():
-            return True
-        return bool(profile.keys() - {"raw"})
-    return bool(str(profile).strip())
+        if (profile.get("raw") or "").strip():
+            return len(profile["raw"].strip()) >= 20
+        payload = json.dumps(profile, ensure_ascii=False)
+        return len(payload) > 12 and payload not in ("{}", "[]")
+    return len(str(profile).strip()) >= 20
 
 
 def _questionnaire_has_content(questionnaire):
+    if isinstance(questionnaire, list):
+        return len(questionnaire) > 0
+    if isinstance(questionnaire, str):
+        return len(questionnaire.strip()) >= 20
     return bool(questionnaire)
+
+
+def _prepare_generated_for_save(generated):
+    """Нормализует ответ ИИ перед сохранением в вакансию."""
+    if not isinstance(generated, dict):
+        return {}
+    prepared = dict(generated)
+    profile = prepared.get("профиль")
+    if isinstance(profile, str) and profile.strip():
+        prepared["профиль"] = {"raw": profile.strip()}
+    questionnaire = prepared.get("опросник")
+    if isinstance(questionnaire, str) and questionnaire.strip():
+        try:
+            prepared["опросник"] = json.loads(questionnaire)
+        except json.JSONDecodeError:
+            prepared["опросник"] = [{"вопрос": questionnaire.strip(), "пример_ответа": ""}]
+    return prepared
+
+
+def _set_doc_gen_flash(message):
+    st.session_state["vacancy_doc_gen_flash"] = message
+
+
+def _render_doc_gen_flash():
+    message = st.session_state.pop("vacancy_doc_gen_flash", None)
+    if message:
+        st.success(message)
+        return True
+    return False
+
+
+def _wizard_max_tokens(deps):
+    return max(int(deps["config"]["model"].get("max_tokens", 4000)), 12000)
 
 
 def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fields=None):
@@ -165,6 +207,7 @@ def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fi
     }
     current = vacancy.get("documents", {})
     updates = dict(current)
+    saved_labels = []
 
     def _should_update(field_key):
         if only_fields is None:
@@ -179,12 +222,19 @@ def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fi
 
     if _should_update("profile") and _profile_has_content(generated.get("профиль")):
         updates["profile"] = json.dumps(generated.get("профиль", {}), ensure_ascii=False, indent=2)
+        saved_labels.append("профиль")
     if _should_update("questionnaire") and _questionnaire_has_content(generated.get("опросник")):
         updates["questions"] = json.dumps(generated.get("опросник", []), ensure_ascii=False, indent=2)
+        saved_labels.append("опросник")
     if _should_update("vacancy_text") and (generated.get("текст_вакансии") or "").strip():
         updates["vacancy_text"] = generated.get("текст_вакансии", "")
+        saved_labels.append("текст вакансии")
     if _should_update("keywords") and generated.get("ключевые_слова"):
         updates["keywords"] = ", ".join(generated.get("ключевые_слова", []))
+        saved_labels.append("ключевые слова")
+
+    if not saved_labels:
+        return False, []
 
     saved = deps["update_vacancy_docs"](vacancy["title"], {
         "profile": updates.get("profile", ""),
@@ -192,10 +242,55 @@ def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fi
         "questions": updates.get("questions", ""),
         "keywords": updates.get("keywords", ""),
     })
-    return saved
+    return saved, saved_labels
 
 
-def generate_package_from_wizard(answers, deps, doc_flags):
+def _normalize_generated_doc_keys(doc):
+    """Приводит англоязычные ключи ответа модели к формату normalize_docs."""
+    if not isinstance(doc, dict):
+        return doc
+    aliases = {
+        "profile": "профиль",
+        "questionnaire": "опросник",
+        "questions": "опросник",
+        "vacancy_text": "текст_вакансии",
+        "keywords": "ключевые_слова",
+        "job_title": "должность",
+        "title": "должность",
+    }
+    for eng, rus in aliases.items():
+        if eng in doc and rus not in doc:
+            doc[rus] = doc.pop(eng)
+    return doc
+
+
+def _wizard_field_key(key_prefix, field_id):
+    return f"wiz_{key_prefix}_{field_id}"
+
+
+def _collect_wizard_answers(key_prefix):
+    return {
+        field_id: (st.session_state.get(_wizard_field_key(key_prefix, field_id), "") or "").strip()
+        for field_id, _ in WIZARD_FIELDS
+    }
+
+
+def _collect_clarify_answers(key_prefix, questions):
+    return {
+        q: (st.session_state.get(f"clar_{key_prefix}_{i}", "") or "").strip()
+        for i, q in enumerate(questions)
+    }
+
+
+def _wizard_answers_filled(answers):
+    return any(
+        (value or "").strip()
+        for key, value in answers.items()
+        if key != "clarifications"
+    )
+
+
+def generate_package_from_wizard(answers, deps, doc_flags, *, vacancy_title=None):
     rules = deps.get("QUESTIONNAIRE_GENERATION_RULES", "")
     parts = ["профиль должности", "опросник"]
     if doc_flags.get("vacancy_text"):
@@ -205,7 +300,10 @@ def generate_package_from_wizard(answers, deps, doc_flags):
     system = (
         f"{VACANCY_WIZARD_SYSTEM}\n\nСоздай: {', '.join(parts)}.\n\n{rules}"
     )
-    user = "Ответы HR:\n" + json.dumps(answers, ensure_ascii=False, indent=2)
+    payload = dict(answers)
+    if vacancy_title and not payload.get("job_title"):
+        payload["job_title"] = vacancy_title
+    user = "Ответы HR:\n" + json.dumps(payload, ensure_ascii=False, indent=2)
     response = deps["client"].chat.completions.create(
         model=deps["config"]["model"]["name"],
         messages=[
@@ -213,10 +311,15 @@ def generate_package_from_wizard(answers, deps, doc_flags):
             {"role": "user", "content": user},
         ],
         temperature=deps["config"]["model"]["temperature"],
-        max_tokens=deps["config"]["model"]["max_tokens"],
+        max_tokens=_wizard_max_tokens(deps),
     )
-    result = deps["parse_ai_json_response"](response.choices[0].message.content)
-    return deps["normalize_docs"](result)
+    raw = response.choices[0].message.content
+    if not (raw or "").strip():
+        raise ValueError("ИИ вернул пустой ответ. Попробуйте ещё раз.")
+    result = deps["parse_ai_json_response"](raw)
+    result = _normalize_generated_doc_keys(result)
+    result = deps["normalize_docs"](result)
+    return _prepare_generated_for_save(result)
 
 
 def get_clarify_questions(answers, deps):
@@ -684,33 +787,45 @@ def render_import_mode(vacancy, deps, doc_flags, key_prefix):
                     gen["текст_вакансии"] = imported["vacancy_text"]
 
                 gen = deps["normalize_docs"](gen)
+                gen = _prepare_generated_for_save(gen)
                 if corrections.strip():
                     with st.spinner("Применение коррективов ИИ..."):
                         gen = refine_documents_with_ai(gen, corrections, deps)
+                        gen = _prepare_generated_for_save(gen)
 
-                saved = apply_generated_to_vacancy(
+                saved, saved_labels = apply_generated_to_vacancy(
                     vacancy, gen, deps, doc_flags, only_fields=set(imported.keys())
                 )
-                if not saved:
-                    st.error(f"Вакансия «{vacancy['title']}» не найдена в базе.")
-                else:
+                if _report_generation_result(vacancy, saved, saved_labels):
                     invalidate_doc_session_state(vacancy["id"])
-                    saved_labels = []
-                    if "profile" in imported:
-                        saved_labels.append("профиль")
-                    if "questions" in imported:
-                        saved_labels.append("опросник")
-                    if "vacancy_text" in imported:
-                        saved_labels.append("текст вакансии")
-                    st.session_state[ok_key] = (
-                        f"✅ Импорт завершён для «{vacancy['title']}»: сохранено — "
-                        f"{', '.join(saved_labels)}. Поля формы очищены. "
-                        f"Откройте «Вакансии в работе» → выберите вакансию → «Документы по вакансии»."
-                    )
                     st.session_state[f"imp_form_v_{key_prefix}"] = form_ver + 1
                     st.rerun()
             except Exception as e:
                 st.error(f"Ошибка импорта: {e}")
+
+
+def _report_generation_result(vacancy, saved, saved_labels, *, partial_hint=None):
+    title = vacancy.get("title", "вакансия")
+    if not saved:
+        st.error(f"Вакансия «{title}» не найдена в базе.")
+        return False
+    if not saved_labels:
+        st.error(
+            "ИИ вернул пустой или нераспознанный результат. "
+            "Попробуйте сократить анкету или повторите генерацию."
+        )
+        return False
+
+    labels = ", ".join(saved_labels)
+    message = (
+        f"✅ Документы сохранены для «{title}»: {labels}. "
+        f"Откройте «Вакансии в работе» → «Документы по вакансии»."
+    )
+    if partial_hint:
+        message += f" {partial_hint}"
+    _set_doc_gen_flash(message)
+    st.success(message)
+    return True
 
 
 def render_transcript_mode(vacancy, deps, doc_flags, key_prefix):
@@ -726,52 +841,87 @@ def render_transcript_mode(vacancy, deps, doc_flags, key_prefix):
                     gen = deps["generate_from_transcript"](
                         transcript, vacancy["title"], doc_flags=doc_flags
                     )
-                    apply_generated_to_vacancy(vacancy, gen, deps, doc_flags)
-                    invalidate_doc_session_state(vacancy["id"])
-                    deps["save_generation_to_history"](gen, transcript, vacancy_title=vacancy["title"])
-                    st.success("Документы сгенерированы и сохранены в вакансию!")
-                    st.rerun()
+                    gen = _prepare_generated_for_save(gen)
+                    saved, saved_labels = apply_generated_to_vacancy(
+                        vacancy, gen, deps, doc_flags
+                    )
+                    if _report_generation_result(vacancy, saved, saved_labels):
+                        invalidate_doc_session_state(vacancy["id"])
+                        deps["save_generation_to_history"](
+                            gen, transcript, vacancy_title=vacancy["title"]
+                        )
                 except Exception as e:
-                    st.error(str(e))
+                    st.error(f"Ошибка генерации: {e}")
 
 
 def render_wizard_mode(vacancy, deps, doc_flags, key_prefix):
     st.markdown("##### Анкета HR")
-    wk = _vac_key(vacancy["id"], f"wizard_{key_prefix}")
-    if wk not in st.session_state:
-        st.session_state[wk] = {}
+    clarify_key = _vac_key(vacancy["id"], f"clarify_q_{key_prefix}")
+    if clarify_key not in st.session_state:
+        st.session_state[clarify_key] = []
 
     for field_id, label in WIZARD_FIELDS:
-        st.session_state[wk][field_id] = st.text_area(
-            label,
-            value=st.session_state[wk].get(field_id, ""),
-            height=80,
-            key=f"wiz_{key_prefix}_{field_id}",
-        )
-
-    ck = _vac_key(vacancy["id"], f"clarify_{key_prefix}")
-    if ck not in st.session_state:
-        st.session_state[ck] = {"questions": [], "answers": {}}
+        widget_key = _wizard_field_key(key_prefix, field_id)
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = ""
+        st.text_area(label, height=80, key=widget_key)
 
     if st.button("🤖 Запросить уточнения у ИИ", key=f"clarify_btn_{key_prefix}"):
-        with st.spinner("..."):
-            st.session_state[ck]["questions"] = get_clarify_questions(st.session_state[wk], deps)
+        answers = _collect_wizard_answers(key_prefix)
+        if not _wizard_answers_filled(answers):
+            st.warning("Заполните хотя бы одно поле анкеты.")
+        else:
+            with st.spinner("Формируем уточняющие вопросы..."):
+                try:
+                    st.session_state[clarify_key] = get_clarify_questions(answers, deps)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Не удалось получить уточнения: {e}")
 
-    for i, q in enumerate(st.session_state[ck].get("questions", [])):
-        st.session_state[ck]["answers"][q] = st.text_input(q, key=f"clar_{key_prefix}_{i}")
+    clarify_questions = st.session_state.get(clarify_key, [])
+    for i, q in enumerate(clarify_questions):
+        st.text_input(q, key=f"clar_{key_prefix}_{i}")
 
     if st.button("✨ Сгенерировать из анкеты", key=f"wiz_gen_{key_prefix}"):
-        answers = dict(st.session_state[wk])
-        answers["clarifications"] = st.session_state[ck].get("answers", {})
-        with st.spinner("Генерация..."):
+        answers = _collect_wizard_answers(key_prefix)
+        if not _wizard_answers_filled(answers):
+            st.warning("Заполните хотя бы одно поле анкеты.")
+        else:
+            answers["clarifications"] = _collect_clarify_answers(
+                key_prefix, clarify_questions
+            )
+            status = st.status("Генерация документов из анкеты…", expanded=True)
             try:
-                gen = generate_package_from_wizard(answers, deps, doc_flags)
-                apply_generated_to_vacancy(vacancy, gen, deps, doc_flags)
-                invalidate_doc_session_state(vacancy["id"])
-                st.success("Документы созданы!")
-                st.rerun()
+                status.write("Отправляем данные в ИИ (это может занять 1–3 минуты)…")
+                gen = generate_package_from_wizard(
+                    answers,
+                    deps,
+                    doc_flags,
+                    vacancy_title=vacancy.get("title"),
+                )
+                status.write("Сохраняем результат в вакансию…")
+                saved, saved_labels = apply_generated_to_vacancy(
+                    vacancy, gen, deps, doc_flags
+                )
+                partial_hint = None
+                if saved_labels and "профиль" not in saved_labels:
+                    partial_hint = (
+                        "Профиль не сформировался полностью — "
+                        "при необходимости перегенерируйте его в «Документы по вакансии»."
+                    )
+                if _report_generation_result(
+                    vacancy, saved, saved_labels, partial_hint=partial_hint
+                ):
+                    status.update(label="Готово", state="complete", expanded=False)
+                    invalidate_doc_session_state(vacancy["id"])
+                    deps["save_generation_to_history"](
+                        gen, None, vacancy_title=vacancy["title"]
+                    )
+                else:
+                    status.update(label="Не удалось сохранить", state="error", expanded=True)
             except Exception as e:
-                st.error(str(e))
+                status.update(label="Ошибка генерации", state="error", expanded=True)
+                st.error(f"Ошибка генерации: {e}")
 
 
 def render_creation_zone(vacancy, deps):
@@ -795,6 +945,7 @@ def render_creation_zone(vacancy, deps):
 
 def render_new_vacancy_form(deps):
     """Создание вакансии + выбор для генерации документов."""
+    _render_doc_gen_flash()
     st.markdown("##### Регистрация вакансии")
     chats = deps["load_chats"]()
     new_title = st.text_input("Название должности", key="new_vac_title")

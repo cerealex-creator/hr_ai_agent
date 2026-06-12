@@ -2,13 +2,7 @@
 
 import streamlit as st
 
-import importlib
-
-import candidate_funnel
 import telegram_client
-
-importlib.reload(telegram_client)
-importlib.reload(candidate_funnel)
 
 from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form
 from candidate_funnel import render_candidates_zone
@@ -105,7 +99,21 @@ def render_vacancies_in_work(deps):
         return
 
     st.divider()
-    st.subheader(vacancy["title"])
+    head_l, head_r = st.columns([3, 1])
+    with head_l:
+        st.subheader(vacancy["title"])
+    with head_r:
+        st.write("")
+        if st.button(
+            "📨 Статистика в чат",
+            key=f"tg_digest_{vacancy['id']}",
+            use_container_width=True,
+        ):
+            ok, msg = telegram_client.send_vacancy_digest_to_chat(vacancy)
+            if ok:
+                st.success("Сводка отправлена в Telegram-чат!")
+            else:
+                st.error(msg)
     render_active_vacancy_workspace(vacancy, deps)
 
 
