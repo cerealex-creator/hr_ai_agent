@@ -325,47 +325,14 @@ def extract_text(uploaded_file):
 
 # Улучшенная функция получения прямой ссылки с Яндекс.Диска 
 def get_direct_yandex_link(public_url):
-    """
-    Преобразует публичную ссылку Яндекс.Диска в прямую ссылку на скачивание.
-    Использует API Яндекс.Диска для надежности.
-    """
+    """Преобразует публичную ссылку Яндекс.Диска в прямую ссылку на скачивание."""
     if not public_url:
         return None
-        
     if "disk.yandex.ru" in public_url or "yadi.sk" in public_url:
-        try:
-            # Извлекаем public key из ссылки
-            if "/i/" in public_url:
-                public_key = public_url.split("/i/")[-1].split("?")[0]
-            elif "/d/" in public_url:
-                # Если уже прямая ссылка, возвращаем как есть
-                return public_url
-            else:
-                return public_url
-            
-            # Используем API Яндекс.Диска для получения информации о файле
-            api_url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key=https://disk.yandex.ru/i/{public_key}&offset=0&limit=100"
-            
-            response = requests.get(api_url, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                # Получаем прямую ссылку на скачивание
-                download_url = data.get("file")
-                if download_url:
-                    print(f"✅ Получена прямая ссылка через API")
-                    return download_url
-                else:
-                    print(f"⚠️ API не вернул ссылку. Ответ: {data}")
-            
-            # Если API не сработал, пробуем старый метод
-            print(f"⚠️ Пробуем метод с заменой /i/ на /d/")
-            return public_url.replace("/i/", "/d/")
-            
-        except Exception as e:
-            print(f"❌ Ошибка получения прямой ссылки: {e}")
-            return public_url.replace("/i/", "/d/") if "/i/" in public_url else public_url
-    else:
-        return public_url
+        from resume_ai import get_yandex_download_url
+
+        return get_yandex_download_url(public_url)
+    return public_url
 
 # Улучшенная функция извлечения текста из PDF 
 def extract_text_from_pdf_url(pdf_url):
@@ -383,10 +350,14 @@ def extract_text_from_pdf_url(pdf_url):
             print("❌ Не удалось получить прямую ссылку")
             return ""
         
-        print(f"📥 Скачиваем PDF...")
+        print(f"📥 Скачиваем файл...")
         response = requests.get(download_url, timeout=60)
         if response.status_code == 200:
-            print(f"✅ PDF скачан, размер: {len(response.content)} байт")
+            print(f"✅ Файл скачан, размер: {len(response.content)} байт")
+            if not response.content.lstrip().startswith(b"%PDF"):
+                content_type = response.headers.get("Content-Type", "")
+                print(f"⚠️ Это не PDF (Content-Type: {content_type})")
+                return ""
             pdf_file = BytesIO(response.content)
             try:
                 reader = PyPDF2.PdfReader(pdf_file)
@@ -1883,7 +1854,7 @@ with tab5:
         """)
     with st.expander("🤖 4. Telegram: бот и chat_id"):
         st.markdown("""
-        **Запуск бота** (команды и напоминания):
+        **Запуск бота** (команды и кнопки в чате):
         ```bash
         ./venv/bin/python bot.py
         ```
@@ -1893,7 +1864,7 @@ with tab5:
         - Напишите в группе `/chatid` или `/id`.
         - Сохраните чат: **«Настройки»** → **«📂 Мои чаты Telegram»** → **«💾 Сохранить чат»**.
 
-        **Свой user_id** (для напоминаний в `.env`): напишите боту в личку `/id`.
+        **Свой user_id**: напишите боту в личку `/id`.
         """)
     with st.expander("📊 5. Итоги и клиентская зона"):
         st.markdown("""
@@ -2067,13 +2038,11 @@ with tab_settings:
 
         hr_id = get_hr_user_id()
         if hr_id:
-            st.caption(f"HR user_id для напоминаний: `{hr_id}`")
-        else:
-            st.warning("Добавьте в `.env`: `TELEGRAM_HR_USER_ID=ваш_id` (узнайте через /id в личке с ботом)")
+            st.caption(f"HR user_id: `{hr_id}`")
 
         st.markdown(
             """
-**Чтобы бот отвечал на команды** (`/id`, `/start`, `/chatid`) **и слал напоминания о собеседованиях**, запустите его в отдельном терминале:
+**Чтобы бот отвечал на команды** (`/id`, `/start`, `/chatid`) **и обрабатывал кнопки в чате**, запустите его в отдельном терминале:
 
 ```bash
 ./venv/bin/python bot.py
@@ -2159,7 +2128,7 @@ with tab_settings:
 
             st.caption(
                 "При статусе «Собеседование назначено» с датой и временем создаётся событие "
-                "(например: «Иванов Иван, графический дизайнер») с напоминаниями за 30 и 10 минут."
+                "(например: «Иванов Иван, графический дизайнер»)."
             )
 
     st.divider()

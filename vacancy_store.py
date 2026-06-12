@@ -12,7 +12,7 @@ VACANCIES_FILE = "data/vacancies_db.json"
 
 STATUS_CONFIG = {
     "wait": {"label": "Ждёт оценки", "icon": "⚪", "badge_class": "status-badge-wait"},
-    "ready": {"label": "Рассматриваем", "icon": "🟢", "badge_class": "status-badge-ready"},
+    "ready": {"label": "Встреча", "icon": "🟢", "badge_class": "status-badge-ready"},
     "reject": {"label": "Отказ", "icon": "🔴", "badge_class": "status-badge-reject"},
     "think": {"label": "Подумать", "icon": "🟡", "badge_class": "status-badge-think"},
     "offer": {"label": "Оффер", "icon": "🟢", "badge_class": "status-badge-offer"},
@@ -118,13 +118,27 @@ def save_vacancies_list(vacancies_list):
     save_vacancies({"vacancies": vacancies_list})
 
 
+def _latest_hr_stage_change_at(candidate):
+    history = candidate.get("hr_stage_history") or []
+    if not history:
+        return ""
+    return max((entry.get("at") or "") for entry in history)
+
+
 def merge_candidate_from_disk(memory_cand, disk_cand):
     """Подмешивает в память поля, обновлённые ботом/Telegram."""
     if not memory_cand.get("id") or memory_cand.get("id") != disk_cand.get("id"):
         return memory_cand
+    mem_stage_at = _latest_hr_stage_change_at(memory_cand)
+    disk_stage_at = _latest_hr_stage_change_at(disk_cand)
     for field in TELEGRAM_MERGE_FIELDS:
-        if field in disk_cand:
-            memory_cand[field] = disk_cand[field]
+        if field not in disk_cand:
+            continue
+        if field in ("hr_stage", "hr_stage_history"):
+            if disk_stage_at > mem_stage_at:
+                memory_cand[field] = disk_cand[field]
+            continue
+        memory_cand[field] = disk_cand[field]
     return memory_cand
 
 
@@ -164,6 +178,10 @@ def migrate_candidate(cand):
         cand["remote_interview"] = False
     if "office_interview" not in cand:
         cand["office_interview"] = bool(cand.get("office_interview_date"))
+    if "meeting_hr_confirmed" not in cand:
+        cand["meeting_hr_confirmed"] = False
+    if "meeting_hr_confirmation_post" not in cand:
+        cand["meeting_hr_confirmation_post"] = None
     if "telegram_posts" not in cand or not isinstance(cand.get("telegram_posts"), list):
         cand["telegram_posts"] = []
     if not cand.get("id"):

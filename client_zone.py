@@ -306,6 +306,7 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
                     new_time=new_time,
                     remote_interview=remote_interview,
                     office_interview=office_interview,
+                    vacancy=selected_vacancy,
                 )
                 for v in fresh.get("vacancies", []):
                     if v.get("id") == selected_vacancy.get("id"):

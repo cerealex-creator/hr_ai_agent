@@ -177,71 +177,8 @@ def save_vacancies(vacancies):
 
 
 def process_interview_reminders(now=None, dry_run=False):
-    """
-    Проверяет кандидатов со статусом «Собеседование назначено»
-    и отправляет напоминания за 30 и 10 минут.
-    Возвращает список строк с результатами.
-    """
-    tz = get_timezone()
-    now = now or datetime.now(tz)
-    chat_id = get_hr_telegram_chat_id()
-    if not chat_id and not dry_run:
-        return ["TELEGRAM_HR_USER_ID не задан в .env — напоминания не отправлены"]
-    vacancies = load_vacancies()
-    log = []
-    changed = False
-
-    for vacancy in vacancies:
-        title = vacancy.get("title", "")
-        for cand in vacancy.get("candidates", []):
-            if cand.get("hr_stage") != INTERVIEW_STAGE:
-                continue
-            dt = parse_interview_datetime(
-                cand.get("office_interview_date"),
-                cand.get("office_interview_time"),
-                tz=tz,
-            )
-            if not dt:
-                continue
-
-            delta_min = (dt - now).total_seconds() / 60
-            if delta_min < 0:
-                continue
-
-            cid = cand.get("id", cand.get("name", "?"))
-
-            if REMINDER_30_WINDOW[0] <= delta_min <= REMINDER_30_WINDOW[1]:
-                if not cand.get("interview_reminder_30_sent"):
-                    msg = build_reminder_30_message(cand, title)
-                    if dry_run:
-                        log.append(f"[dry] 30m → {cand.get('name')}")
-                    else:
-                        ok, err = send_telegram_html(chat_id, msg)
-                        if ok:
-                            cand["interview_reminder_30_sent"] = True
-                            changed = True
-                            log.append(f"30m sent: {cand.get('name')}")
-                        else:
-                            log.append(f"30m FAIL {cand.get('name')}: {err}")
-
-            if REMINDER_10_WINDOW[0] <= delta_min <= REMINDER_10_WINDOW[1]:
-                if not cand.get("interview_reminder_10_sent"):
-                    msg = build_reminder_10_message(cand)
-                    if dry_run:
-                        log.append(f"[dry] 10m → {cand.get('name')}")
-                    else:
-                        ok, err = send_telegram_html(chat_id, msg)
-                        if ok:
-                            cand["interview_reminder_10_sent"] = True
-                            changed = True
-                            log.append(f"10m sent: {cand.get('name')}")
-                        else:
-                            log.append(f"10m FAIL {cand.get('name')}: {err}")
-
-    if changed and not dry_run:
-        save_vacancies(vacancies)
-
-    return log
+    """Напоминания о собеседованиях через Telegram отключены."""
+    return []
 
 
 if __name__ == "__main__":

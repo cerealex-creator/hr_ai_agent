@@ -3,7 +3,6 @@ import json
 import os
 import logging
 from aiogram import Bot, Dispatcher, F, types
-from interview_schedule import process_interview_reminders
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -367,24 +366,11 @@ async def activate_vacancy(callback: types.CallbackQuery):
             return
     await callback.answer("Ошибка")
 
-# ---------- Напоминания о собеседованиях ----------
-async def interview_reminder_loop():
-    while True:
-        try:
-            results = await asyncio.to_thread(process_interview_reminders)
-            for line in results:
-                logging.info("interview_reminder: %s", line)
-        except Exception as e:
-            logging.exception("interview_reminder_loop: %s", e)
-        await asyncio.sleep(60)
-
-
 # ---------- Запуск ----------
 async def main():
     logging.basicConfig(level=logging.INFO)
     await bot.delete_webhook(drop_pending_updates=False)
     logger.info("Webhook сброшен, запуск polling для @%s", (await bot.get_me()).username)
-    asyncio.create_task(interview_reminder_loop())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":

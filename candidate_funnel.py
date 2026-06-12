@@ -244,7 +244,13 @@ def render_candidate_card(vacancy, cand, idx, deps):
             unsafe_allow_html=True,
         )
 
-    with st.expander(" · ".join(title_parts)):
+    collapse_key = k("collapse_after_stage")
+    stage_info_key = k("stage_info")
+    expanded = not st.session_state.pop(collapse_key, False)
+    if st.session_state.get(stage_info_key):
+        st.info(st.session_state.pop(stage_info_key))
+
+    with st.expander(" · ".join(title_parts), expanded=expanded):
         c1, c2 = st.columns([3, 1])
         with c1:
             cand["name"] = st.text_input("ФИО", value=cand.get("name", ""), key=k("name"))
@@ -431,9 +437,11 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     _persist_vacancy_candidates(vacancy, deps)
                     suggested = sync_hr_stage_from_client_status(cand)
                     if suggested and target_stage != suggested:
-                        st.info(f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}")
-                    else:
-                        st.rerun()
+                        st.session_state[stage_info_key] = (
+                            f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}"
+                        )
+                    st.session_state[collapse_key] = True
+                    st.rerun()
                 elif target_stage:
                     if current_stage == INTERVIEW_STAGE:
                         reset_reminders_if_schedule_changed(
@@ -443,6 +451,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         )
                         _apply_calendar_sync(cand, vacancy, previous_stage=INTERVIEW_STAGE)
                         _persist_vacancy_candidates(vacancy, deps)
+                        st.session_state[collapse_key] = True
                         st.rerun()
                     else:
                         st.caption("Статус без изменений.")
@@ -481,7 +490,9 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 if not resume_text and cand.get("resume_link"):
                     with st.spinner("Загрузка резюме по ссылке…"):
                         resume_text, err = fetch_resume_text_from_url(
-                            cand["resume_link"], deps["extract_text_from_pdf_url"]
+                            cand["resume_link"],
+                            deps["extract_text_from_pdf_url"],
+                            deps.get("transcribe_video_from_link"),
                         )
                     if err:
                         st.error(err)
@@ -658,13 +669,24 @@ def _parse_bulk_link_lines(text):
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
-def _append_bulk_candidate(vacancy, deps, resume_link="", hh_resume_link="", resume_text=None):
+def _append_bulk_candidate(
+    vacancy,
+    deps,
+    resume_link="",
+    hh_resume_link="",
+    video_link="",
+    resume_text=None,
+    transcript="",
+):
     """Создаёт кандидата при автозагрузке и заполняет карточку через ИИ при наличии текста."""
     cand = new_candidate_template(vacancy["id"])
     cand["resume_link"] = (resume_link or "").strip()
     cand["hh_resume_link"] = (hh_resume_link or "").strip()
+    cand["video_link"] = (video_link or "").strip()
     cand["ignore_flags"] = deps["default_ignore_flags"]()
     text = (resume_text or "").strip()
+    if (transcript or "").strip():
+        cand["transcript"] = transcript.strip()
     if text:
         populate_from_resume(cand, text, deps["client"], deps["config"])
     cand["cold_screening"] = True
@@ -694,7 +716,7 @@ def render_bulk_intake(vacancy, deps):
     links_key = f"bulk_links_{vid}_{st.session_state[links_ver_key]}"
     hh_links_key = f"bulk_hh_links_{vid}_{st.session_state[hh_links_ver_key]}"
     links = st.text_area(
-        "Ссылки на PDF резюме / Яндекс.Диск (по строке)",
+        "Ссылки на PDF или видео на Яндекс.Диске (по строке)",
         height=80,
         key=links_key,
     )
@@ -705,8 +727,8 @@ def render_bulk_intake(vacancy, deps):
         help="Строка 1 объединяется со строкой 1 из PDF, строка 2 — со строкой 2 и т.д.",
     )
     st.caption(
-        "Одна строка в каждом поле = один кандидат. PDF заполняет карточку через ИИ, "
-        "ссылка HH.ru сохраняется для кнопки «Открыть резюме на HH.ru»."
+        "Одна строка в каждом поле = один кандидат. PDF или видео с Диска заполняют карточку через ИИ "
+        "(видео расшифровывается), ссылка HH.ru — для кнопки «Открыть резюме на HH.ru»."
     )
 
     if st.button("🤖 Извлечь и добавить", key=f"bulk_btn_{vid}"):
@@ -724,27 +746,55 @@ def render_bulk_intake(vacancy, deps):
             resume_text = ""
             notes = []
 
+            source_link = pdf_link
+            video_link = ""
+            resume_link = pdf_link
+            transcript = ""
+
             if pdf_link:
-                text, err = fetch_resume_text_from_url(
-                    pdf_link, deps["extract_text_from_pdf_url"]
+                from resume_ai import get_yandex_public_meta, is_yandex_video_or_audio
+
+                yandex_meta = (
+                    get_yandex_public_meta(pdf_link)
+                    if ("disk.yandex" in pdf_link or "yadi.sk" in pdf_link)
+                    else None
                 )
+                is_video = is_yandex_video_or_audio(yandex_meta)
+                spinner_label = (
+                    f"Строка {i + 1}: расшифровка видео…"
+                    if is_video
+                    else f"Строка {i + 1}: загрузка файла…"
+                )
+                with st.spinner(spinner_label):
+                    text, err = fetch_resume_text_from_url(
+                        pdf_link,
+                        deps["extract_text_from_pdf_url"],
+                        deps.get("transcribe_video_from_link"),
+                    )
                 if text:
                     resume_text = text
+                    if is_video:
+                        video_link = pdf_link
+                        resume_link = ""
+                        transcript = text
                 elif err:
-                    notes.append(f"PDF: {err}")
+                    notes.append(err)
 
             if not resume_text and hh_link:
                 text, err = fetch_resume_text_from_url(
-                    hh_link, deps["extract_text_from_pdf_url"]
+                    hh_link,
+                    deps["extract_text_from_pdf_url"],
+                    deps.get("transcribe_video_from_link"),
                 )
                 if text:
                     resume_text = text
                 elif err:
                     notes.append(f"HH.ru: {err}")
 
-            if pdf_link and not resume_text:
+            if source_link and not resume_text:
                 st.warning(
-                    f"Строка {i + 1}: не удалось извлечь текст по PDF ({pdf_link})"
+                    f"Строка {i + 1}: не удалось получить текст ({source_link})"
+                    + (f" — {'; '.join(notes)}" if notes else "")
                 )
                 if not hh_link:
                     continue
@@ -752,9 +802,11 @@ def render_bulk_intake(vacancy, deps):
             _append_bulk_candidate(
                 vacancy,
                 deps,
-                resume_link=pdf_link,
+                resume_link=resume_link,
                 hh_resume_link=hh_link,
+                video_link=video_link,
                 resume_text=resume_text or None,
+                transcript=transcript,
             )
             added += 1
             if hh_link and notes:
@@ -798,7 +850,9 @@ def render_add_candidate(vacancy, deps):
                     text = deps["extract_text"](pdf)
                 elif resume_link.strip():
                     text, _ = fetch_resume_text_from_url(
-                        resume_link, deps["extract_text_from_pdf_url"]
+                        resume_link,
+                        deps["extract_text_from_pdf_url"],
+                        deps.get("transcribe_video_from_link"),
                     )
                 if text:
                     populate_from_resume(cand, text, deps["client"], deps["config"])

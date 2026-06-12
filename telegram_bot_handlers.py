@@ -1,15 +1,22 @@
 """Обработчики Telegram-клиентской зоны (статусы и комментарии)."""
 
-import asyncio
 import importlib
 import logging
+from datetime import datetime
 
 from aiogram import F, types
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from client_actions import (
+    HR_MEETING_CONFIRM_USERNAME,
+    apply_and_save_cancel_meeting,
     apply_and_save_client_action,
+    apply_and_save_confirm_hr_meeting,
+    build_meeting_confirmation_html,
+    can_confirm_hr_meeting,
     find_candidate_by_telegram_message,
     find_candidate_by_tg_callback_id,
 )
@@ -37,42 +44,80 @@ def _keyboard_from_dict(markup_dict):
     return builder.as_markup()
 
 
-async def _update_card_message(chat_id, message_id, text, keyboard_dict):
-    """Обновляет текст и кнопки через Telegram Bot API (requests)."""
-    tc = _reload_telegram_client()
+async def _update_card_message(
+    text,
+    keyboard_dict,
+    *,
+    callback=None,
+    bot=None,
+    chat_id=None,
+    message_id=None,
+):
+    """Обновляет текст и кнопки карточки через aiogram."""
+    markup = _keyboard_from_dict(keyboard_dict)
 
-    ok, err = await asyncio.to_thread(
-        tc.edit_telegram_message,
-        chat_id,
-        message_id,
-        text,
-        keyboard_dict,
-    )
-    if ok:
-        return True, None
+    async def _edit_message(msg, *, edit_bot=None, edit_chat_id=None, edit_message_id=None):
+        try:
+            if msg is not None:
+                await msg.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                    disable_web_page_preview=True,
+                )
+            else:
+                await edit_bot.edit_message_text(
+                    chat_id=edit_chat_id,
+                    message_id=edit_message_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                    disable_web_page_preview=True,
+                )
+            return True, None
+        except TelegramBadRequest as exc:
+            err = str(exc)
+            if "message is not modified" in err.lower():
+                return True, None
+            logger.warning("edit_text failed: %s", err)
+            try:
+                if msg is not None:
+                    await msg.edit_reply_markup(reply_markup=markup)
+                    await msg.edit_text(
+                        text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                else:
+                    await edit_bot.edit_message_reply_markup(
+                        chat_id=edit_chat_id,
+                        message_id=edit_message_id,
+                        reply_markup=markup,
+                    )
+                    await edit_bot.edit_message_text(
+                        chat_id=edit_chat_id,
+                        message_id=edit_message_id,
+                        text=text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                return True, None
+            except TelegramBadRequest as exc2:
+                if "message is not modified" in str(exc2).lower():
+                    return True, None
+                logger.warning("edit_reply_markup failed: %s", exc2)
+                return False, str(exc2)
 
-    logger.warning("editMessageText failed: %s", err)
-
-    ok_markup, err_markup = await asyncio.to_thread(
-        tc.edit_message_keyboard,
-        chat_id,
-        message_id,
-        keyboard_dict,
-    )
-    if ok_markup:
-        ok_text, err_text = await asyncio.to_thread(
-            tc.edit_telegram_message,
-            chat_id,
-            message_id,
-            text,
-            keyboard_dict,
+    if callback and callback.message:
+        return await _edit_message(callback.message)
+    if bot is not None and chat_id is not None and message_id is not None:
+        return await _edit_message(
+            None,
+            edit_bot=bot,
+            edit_chat_id=chat_id,
+            edit_message_id=message_id,
         )
-        if ok_text or (err_text and "not modified" in err_text.lower()):
-            return True, None
-        if ok_markup:
-            return True, None
-
-    return False, err or err_markup
+    return False, "сообщение для редактирования не найдено"
 
 
 async def _edit_card_locked(callback, candidate, vacancy):
@@ -88,12 +133,72 @@ async def _edit_card_locked(callback, candidate, vacancy):
         kind=kind,
     )
     keyboard = tc.build_locked_keyboard(candidate)
-    ok, err = await _update_card_message(
-        callback.message.chat.id,
-        callback.message.message_id,
-        text,
-        keyboard,
+    ok, err = await _update_card_message(text, keyboard, callback=callback)
+    if not ok:
+        raise RuntimeError(err or "не удалось обновить сообщение")
+
+
+async def _edit_card_interview_dates(callback, candidate, vacancy):
+    tc = _reload_telegram_client()
+    kind = tc.get_post_kind(
+        candidate, callback.message.chat.id, callback.message.message_id
     )
+    text = tc.build_candidate_card_html(
+        candidate,
+        vacancy["title"],
+        status_key=candidate.get("client_status", "wait"),
+        locked=True,
+        kind=kind,
+        interview_prompt="📅 <i>Выберите дату встречи</i>",
+    )
+    keyboard = tc.build_interview_date_keyboard(candidate)
+    ok, err = await _update_card_message(text, keyboard, callback=callback)
+    if not ok:
+        raise RuntimeError(err or "не удалось обновить сообщение")
+
+
+async def _edit_card_interview_times(callback, candidate, vacancy, date_token):
+    tc = _reload_telegram_client()
+    kind = tc.get_post_kind(
+        candidate, callback.message.chat.id, callback.message.message_id
+    )
+    date_label = tc.parse_interview_date_token(date_token)
+    try:
+        display_date = datetime.strptime(date_label, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        display_date = date_label
+    text = tc.build_candidate_card_html(
+        candidate,
+        vacancy["title"],
+        status_key=candidate.get("client_status", "wait"),
+        locked=True,
+        kind=kind,
+        interview_prompt=f"🕐 <i>Выберите время на {display_date}</i>",
+    )
+    keyboard = tc.build_interview_time_keyboard(candidate, date_token)
+    ok, err = await _update_card_message(text, keyboard, callback=callback)
+    if not ok:
+        raise RuntimeError(err or "не удалось обновить сообщение")
+
+
+async def _edit_card_interview_format(callback, candidate, vacancy, date_token, time_token):
+    tc = _reload_telegram_client()
+    kind = tc.get_post_kind(
+        candidate, callback.message.chat.id, callback.message.message_id
+    )
+    date_str = tc.parse_interview_date_token(date_token)
+    time_str = tc.parse_interview_time_token(time_token)
+    when = tc.format_interview_display(date_str, time_str)
+    text = tc.build_candidate_card_html(
+        candidate,
+        vacancy["title"],
+        status_key=candidate.get("client_status", "wait"),
+        locked=True,
+        kind=kind,
+        interview_prompt=f"📍 <i>Формат встречи {when}</i>",
+    )
+    keyboard = tc.build_interview_format_keyboard(candidate, date_token, time_token)
+    ok, err = await _update_card_message(text, keyboard, callback=callback)
     if not ok:
         raise RuntimeError(err or "не удалось обновить сообщение")
 
@@ -112,14 +217,47 @@ async def _edit_card_change_mode(callback, candidate, vacancy):
     )
     text += "\n\n👇 <i>Выберите новый статус</i>"
     keyboard = tc.build_change_status_keyboard(candidate)
-    ok, err = await _update_card_message(
-        callback.message.chat.id,
-        callback.message.message_id,
-        text,
-        keyboard,
-    )
+    ok, err = await _update_card_message(text, keyboard, callback=callback)
     if not ok:
         raise RuntimeError(err or "не удалось обновить сообщение")
+
+
+async def _refresh_candidate_telegram_cards(bot, candidate, vacancy):
+    tc = _reload_telegram_client()
+    keyboard = tc.build_locked_keyboard(candidate)
+    for post in candidate.get("telegram_posts", []):
+        kind = post.get("kind", "primary")
+        card_text = tc.build_candidate_card_html(
+            candidate,
+            vacancy["title"],
+            status_key=candidate.get("client_status", "wait"),
+            locked=True,
+            kind=kind,
+        )
+        try:
+            await bot.edit_message_text(
+                chat_id=post.get("chat_id"),
+                message_id=post.get("message_id"),
+                text=card_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=_keyboard_from_dict(keyboard),
+                disable_web_page_preview=True,
+            )
+        except TelegramBadRequest as exc:
+            if "message is not modified" not in str(exc).lower():
+                logger.warning("Не удалось обновить карточку %s: %s", post.get("message_id"), exc)
+
+
+async def _send_interview_date_fallback(callback, candidate, vacancy, status_label):
+    tc = _reload_telegram_client()
+    name = _esc(candidate.get("name", "кандидата"))
+    keyboard = _keyboard_from_dict(tc.build_interview_date_keyboard(candidate))
+    await callback.message.reply(
+        f"✅ Статус «{status_label}» сохранён для <b>{name}</b>.\n"
+        f"📅 <i>Выберите дату встречи:</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
 
 
 async def _finalize_comment(
@@ -186,7 +324,13 @@ async def _finalize_comment(
                 kind=kind,
             )
             keyboard = tc.build_locked_keyboard(candidate)
-            await _update_card_message(chat_id, card_message_id, text, keyboard)
+            await _update_card_message(
+                text,
+                keyboard,
+                bot=bot,
+                chat_id=chat_id,
+                message_id=card_message_id,
+            )
         except Exception as exc:
             logger.warning("Не удалось обновить карточку после комментария: %s", exc)
 
@@ -222,16 +366,200 @@ def register_client_zone_handlers(dp):
 
         from vacancy_store import get_status_meta
         meta = get_status_meta(candidate.get("client_status", "wait"))
+        await callback.answer(meta["label"], show_alert=False)
 
         try:
-            await _edit_card_locked(callback, candidate, vacancy)
-            await callback.answer(meta["label"], show_alert=False)
+            tc = _reload_telegram_client()
+            if status_key == "ready" and tc.needs_interview_schedule(candidate):
+                await _edit_card_interview_dates(callback, candidate, vacancy)
+            else:
+                await _edit_card_locked(callback, candidate, vacancy)
         except Exception as exc:
             logger.exception("Ошибка обновления карточки после статуса: %s", exc)
+            try:
+                if status_key == "ready":
+                    await _send_interview_date_fallback(
+                        callback, candidate, vacancy, meta["label"]
+                    )
+                else:
+                    await callback.message.reply(
+                        f"✅ Статус «{meta['label']}» сохранён, но карточка не обновилась.",
+                        parse_mode=ParseMode.HTML,
+                    )
+            except Exception as fallback_exc:
+                logger.exception("Ошибка резервного сообщения: %s", fallback_exc)
+
+    @dp.callback_query(F.data.startswith("ivi:"))
+    async def on_interview_start(callback: types.CallbackQuery):
+        callback_id = callback.data.split(":", 1)[1]
+        vacancy, candidate, _ = find_candidate_by_tg_callback_id(callback_id)
+        if not candidate or not vacancy:
+            await callback.answer("Кандидат не найден", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            await _edit_card_interview_dates(callback, candidate, vacancy)
+        except Exception as exc:
+            logger.exception("Ошибка выбора даты собеседования: %s", exc)
+            await callback.message.reply(
+                "⚠️ Не удалось обновить карточку. Выберите дату в сообщении ниже.",
+                reply_markup=_keyboard_from_dict(
+                    _reload_telegram_client().build_interview_date_keyboard(candidate)
+                ),
+            )
+
+    @dp.callback_query(F.data.startswith("ivd:"))
+    async def on_interview_date(callback: types.CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) != 3:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+        _, callback_id, date_token = parts
+        vacancy, candidate, _ = find_candidate_by_tg_callback_id(callback_id)
+        if not candidate or not vacancy:
+            await callback.answer("Кандидат не найден", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            await _edit_card_interview_times(callback, candidate, vacancy, date_token)
+        except Exception as exc:
+            logger.exception("Ошибка выбора времени собеседования: %s", exc)
+            await callback.message.reply("⚠️ Не удалось показать время. Попробуйте ещё раз.")
+
+    @dp.callback_query(F.data.startswith("ivt:"))
+    async def on_interview_time(callback: types.CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) != 4:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+        _, callback_id, date_token, time_token = parts
+        vacancy, candidate, _ = find_candidate_by_tg_callback_id(callback_id)
+        if not candidate or not vacancy:
+            await callback.answer("Кандидат не найден", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            await _edit_card_interview_format(
+                callback, candidate, vacancy, date_token, time_token
+            )
+        except Exception as exc:
+            logger.exception("Ошибка выбора формата собеседования: %s", exc)
+            await callback.message.reply("⚠️ Не удалось показать формат встречи. Попробуйте ещё раз.")
+
+    @dp.callback_query(F.data.startswith("ivf:"))
+    async def on_interview_save(callback: types.CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) != 5:
+            await callback.answer("Некорректные данные", show_alert=True)
+            return
+        _, callback_id, date_token, time_token, fmt_flag = parts
+        tc = _reload_telegram_client()
+        try:
+            date_str = tc.parse_interview_date_token(date_token)
+            time_str = tc.parse_interview_time_token(time_token)
+        except ValueError:
+            await callback.answer("Некорректная дата или время", show_alert=True)
+            return
+
+        remote, office = tc.interview_format_flags(fmt_flag)
+        user = callback.from_user
+        ok, msg, candidate, vacancy = apply_and_save_client_action(
+            callback_id,
+            chat_id=callback.message.chat.id,
+            office_interview_date=date_str,
+            office_interview_time=time_str,
+            remote_interview=remote,
+            office_interview=office,
+            actor="telegram",
+            actor_note=user.username or str(user.id),
+        )
+        if not ok:
+            await callback.answer(msg, show_alert=True)
+            return
+
+        await callback.answer("Встреча сохранена", show_alert=False)
+        try:
+            await _edit_card_locked(callback, candidate, vacancy)
+        except Exception as exc:
+            logger.exception("Ошибка сохранения собеседования: %s", exc)
+            await callback.message.reply(
+                "✅ Встреча сохранена, но карточка не обновилась.",
+                parse_mode=ParseMode.HTML,
+            )
+
+    @dp.callback_query(F.data.startswith("mcf:"))
+    async def on_meeting_hr_confirm(callback: types.CallbackQuery):
+        if not can_confirm_hr_meeting(callback.from_user):
             await callback.answer(
-                f"Статус сохранён ({meta['label']}), но карточка не обновилась",
+                f"Подтверждение доступно только @{HR_MEETING_CONFIRM_USERNAME}",
                 show_alert=True,
             )
+            return
+
+        callback_id = callback.data.split(":", 1)[1]
+        username = callback.from_user.username or HR_MEETING_CONFIRM_USERNAME
+        ok, msg, candidate, vacancy = apply_and_save_confirm_hr_meeting(
+            callback_id,
+            confirmer_username=username,
+        )
+        if not ok:
+            await callback.answer(msg, show_alert=True)
+            return
+
+        await callback.answer("Встреча подтверждена", show_alert=False)
+        try:
+            await callback.message.edit_text(
+                build_meeting_confirmation_html(
+                    candidate,
+                    confirmed=True,
+                    confirmer_username=username,
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramBadRequest as exc:
+            logger.warning("Не удалось обновить сообщение подтверждения: %s", exc)
+
+        if vacancy and candidate:
+            try:
+                await _refresh_candidate_telegram_cards(callback.bot, candidate, vacancy)
+            except Exception as exc:
+                logger.warning("Не удалось обновить карточки после подтверждения: %s", exc)
+
+    @dp.callback_query(F.data.startswith("ivx:"))
+    async def on_interview_cancel_meeting(callback: types.CallbackQuery):
+        callback_id = callback.data.split(":", 1)[1]
+        user = callback.from_user
+        ok, msg, candidate, vacancy = apply_and_save_cancel_meeting(
+            callback_id,
+            chat_id=callback.message.chat.id,
+            actor="telegram",
+            actor_note=user.username or str(user.id),
+        )
+        if not ok:
+            await callback.answer(msg, show_alert=True)
+            return
+        await callback.answer("Встреча отменена", show_alert=False)
+        try:
+            await _edit_card_locked(callback, candidate, vacancy)
+        except Exception as exc:
+            logger.exception("Ошибка обновления карточки после отмены встречи: %s", exc)
+            await callback.message.reply(
+                "✅ Встреча отменена, но карточка не обновилась.",
+                parse_mode=ParseMode.HTML,
+            )
+
+    @dp.callback_query(F.data.startswith("ivc:"))
+    async def on_interview_cancel(callback: types.CallbackQuery):
+        callback_id = callback.data.split(":", 1)[1]
+        vacancy, candidate, _ = find_candidate_by_tg_callback_id(callback_id)
+        if not candidate or not vacancy:
+            await callback.answer("Кандидат не найден", show_alert=True)
+            return
+        await callback.answer("Отменено")
+        try:
+            await _edit_card_locked(callback, candidate, vacancy)
+        except Exception as exc:
+            logger.exception("Ошибка отмены назначения собеседования: %s", exc)
 
     @dp.callback_query(F.data.startswith("cchg:"))
     async def on_change_status_request(callback: types.CallbackQuery):

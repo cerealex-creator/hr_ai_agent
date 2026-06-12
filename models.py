@@ -49,6 +49,7 @@ CLIENT_ZONE_ENTRY_STAGE = "client_review"
 CLIENT_PAUSE_STAGE = "client_pause"
 
 HR_STAGE_TO_CLIENT_STATUS = {
+    "client_meeting": "ready",
     CLIENT_PAUSE_STAGE: "think",
     OFFER_STAGE: "offer",
     STARTED_WORK_STAGE: "started",
@@ -178,7 +179,7 @@ def stage_for_selectbox(stage):
 CLIENT_STATUS_LABELS = {
     "new": "Новый",
     "wait": "Ждёт оценки",
-    "ready": "Рассматриваем",
+    "ready": "Встреча",
     "reject": "Отказ",
     "think": "Подумать",
     "offer": "Оффер",
@@ -239,6 +240,12 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
         migrated = True
     if "calendar_event_id" not in candidate:
         candidate["calendar_event_id"] = ""
+        migrated = True
+    if "meeting_hr_confirmed" not in candidate:
+        candidate["meeting_hr_confirmed"] = False
+        migrated = True
+    if "meeting_hr_confirmation_post" not in candidate:
+        candidate["meeting_hr_confirmation_post"] = None
         migrated = True
     if "client_final_verdict" not in candidate:
         candidate["client_final_verdict"] = ""
@@ -317,10 +324,6 @@ def set_hr_stage(candidate, new_stage, note=""):
 def sync_hr_stage_from_client_status(candidate):
     """Предлагает синхронизацию hr_stage при изменении client_status."""
     status = candidate.get("client_status", "wait")
-    if status == "ready":
-        if candidate.get("hr_stage") == "client_review":
-            return "client_meeting"
-        return None
     mapped = CLIENT_STATUS_TO_HR_STAGE.get(status)
     if mapped and candidate.get("hr_stage") != mapped:
         return mapped

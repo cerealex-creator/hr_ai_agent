@@ -307,20 +307,92 @@ def _html_to_text(html):
 
 
 def _extract_text_from_pdf_bytes(content):
+    if not content or not content.lstrip().startswith(b"%PDF"):
+        return ""
     reader = PyPDF2.PdfReader(BytesIO(content))
     return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
 
 
-def fetch_resume_text_from_url(url, extract_text_from_pdf_url):
+def get_yandex_public_meta(url):
+    url = (url or "").strip()
+    if not ("disk.yandex" in url or "yadi.sk" in url):
+        return None
+    try:
+        response = requests.get(
+            "https://cloud-api.yandex.net/v1/disk/public/resources",
+            params={"public_key": url},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            return response.json()
+    except requests.RequestException:
+        pass
+    return None
+
+
+def get_yandex_download_url(url):
+    url = (url or "").strip()
+    meta = get_yandex_public_meta(url)
+    if meta and meta.get("file"):
+        return meta["file"]
+    try:
+        response = requests.get(
+            "https://cloud-api.yandex.net/v1/disk/public/resources/download",
+            params={"public_key": url},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            return response.json().get("href")
+    except requests.RequestException:
+        pass
+    if "/i/" in url:
+        return url.replace("/i/", "/d/")
+    return url
+
+
+def is_yandex_video_or_audio(meta):
+    if not meta:
+        return False
+    mime = (meta.get("mime_type") or "").lower()
+    name = (meta.get("name") or "").lower()
+    if mime.startswith(("video/", "audio/")):
+        return True
+    return name.endswith((".mp4", ".webm", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".ogg", ".m4a"))
+
+
+def is_yandex_pdf(meta):
+    if not meta:
+        return False
+    mime = (meta.get("mime_type") or "").lower()
+    name = (meta.get("name") or "").lower()
+    return mime == "application/pdf" or name.endswith(".pdf")
+
+
+def fetch_resume_text_from_url(url, extract_text_from_pdf_url, transcribe_video_from_link=None):
     url = (url or "").strip()
     if not url:
         return "", "Пустая ссылка"
 
     if "disk.yandex" in url or "yadi.sk" in url:
+        meta = get_yandex_public_meta(url)
+        if meta and is_yandex_video_or_audio(meta):
+            if not transcribe_video_from_link:
+                label = meta.get("name") or "видео/аудио"
+                return "", f"Ссылка ведёт на {label} — нужна расшифровка"
+            text = transcribe_video_from_link(url) or ""
+            if len(text) < 50:
+                label = meta.get("name") or "видео"
+                return "", f"Не удалось расшифровать {label}"
+            return text, ""
+
         text = extract_text_from_pdf_url(url) or ""
-        if len(text) < 50:
-            return "", "Не удалось извлечь текст из PDF на Яндекс.Диске"
-        return text, ""
+        if len(text) >= 50:
+            return text, ""
+
+        if meta and not is_yandex_pdf(meta):
+            label = meta.get("name") or meta.get("mime_type") or "файл"
+            return "", f"Файл на Яндекс.Диске не PDF ({label})"
+        return "", "Не удалось извлечь текст из PDF на Яндекс.Диске"
 
     headers = {
         "User-Agent": (
