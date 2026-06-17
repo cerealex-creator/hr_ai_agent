@@ -6,7 +6,6 @@ import os
 import yaml
 import json
 import time
-import whisper
 import requests
 import boto3
 import subprocess
@@ -849,7 +848,7 @@ with tab1:
     source = st.radio("Выберите источник текста:", ("Аудио/видео", "Готовый файл"), horizontal=True, key="source_radio")
 
     if source == "Аудио/видео":
-        method = st.radio("Метод расшифровки:", ("Локально (Whisper)", "Яндекс (SpeechKit)"), horizontal=True, key="method_radio")
+        method = st.radio("Метод расшифровки:", ("Яндекс (SpeechKit)",), horizontal=True, key="method_radio")
         uploaded_audio = st.file_uploader("Выберите аудио/видео", type=["mp3", "mp4", "wav", "webm", "mkv", "ogg"])
         if uploaded_audio:
             os.makedirs("data/tmp", exist_ok=True)
@@ -864,8 +863,8 @@ with tab1:
                         time.sleep(0.05)
                         progress_bar.progress(i + 1)
                         status_text.text(f"Расшифровка... {i+1}%")
-                    if method == "Локально (Whisper)":
-                        model = whisper.load_model("medium")
+                    if method == "Яндекс (SpeechKit)":
+                        pass
                         result = model.transcribe(audio_path, language="ru", task="transcribe", fp16=False)
                         transcript_text = result["text"]
                     else:

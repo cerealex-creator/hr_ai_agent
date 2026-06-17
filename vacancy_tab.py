@@ -4,9 +4,70 @@ import streamlit as st
 
 import telegram_client
 
-from vacancy_prep import render_existing_documents_zone, render_new_vacancy_form
+from vacancy_prep import (
+    collect_vacancy_documents_for_template,
+    render_existing_documents_zone,
+    render_new_vacancy_form,
+    render_templates_library,
+    try_push_vacancy_to_templates,
+)
 from candidate_funnel import render_candidates_zone
 from vacancy_stats import render_vacancy_stats
+
+
+def _archive_prompt_key(vacancy_id):
+    return f"archive_tpl_prompt_{vacancy_id}"
+
+
+def _load_fresh_vacancy(vacancy, deps):
+    return next(
+        (v for v in deps["load_vacancies"]() if v["id"] == vacancy["id"]),
+        vacancy,
+    )
+
+
+def _archive_vacancy_record(vacancy, deps):
+    vacancy["active"] = False
+    from datetime import datetime
+
+    vacancy["closed_at"] = datetime.now().isoformat()
+    all_v = deps["load_vacancies"]()
+    for v in all_v:
+        if v["id"] == vacancy["id"]:
+            v.update(vacancy)
+    deps["save_vacancies"](all_v)
+    if st.session_state.get("opened_vacancy_id") == vacancy["id"]:
+        st.session_state.opened_vacancy_id = None
+    st.session_state.pop(_archive_prompt_key(vacancy["id"]), None)
+
+
+def _render_archive_template_prompt(vacancy, deps, status):
+    vac_id = vacancy["id"]
+    if status == "missing":
+        st.warning("Данная вакансия отсутствует в шаблонах. Добавить её в шаблоны?")
+    else:
+        st.warning("Данная вакансия отличается от шаблонной. Сохранить изменения в шаблон?")
+
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("Да", key=f"archive_tpl_yes_{vac_id}", type="primary", use_container_width=True):
+            fresh = _load_fresh_vacancy(vacancy, deps)
+            ok, msg, missing, _ = try_push_vacancy_to_templates(fresh)
+            if ok:
+                _archive_vacancy_record(fresh, deps)
+                if missing:
+                    st.warning(f"Вакансия закрыта. {msg}")
+                else:
+                    st.success(f"Вакансия закрыта. {msg}")
+                st.rerun()
+            else:
+                st.error(msg)
+    with col_no:
+        if st.button("Нет, только в архив", key=f"archive_tpl_no_{vac_id}", use_container_width=True):
+            fresh = _load_fresh_vacancy(vacancy, deps)
+            _archive_vacancy_record(fresh, deps)
+            st.success("Вакансия закрыта.")
+            st.rerun()
 
 
 def render_vacancy_picker(active):
@@ -61,19 +122,22 @@ def render_active_vacancy_workspace(vacancy, deps):
             st.rerun()
 
     with st.expander("🔒 Закрыть вакансию"):
-        if st.button("Переместить в архив", key=f"close_{vacancy['id']}"):
-            vacancy["active"] = False
-            from datetime import datetime
-            vacancy["closed_at"] = datetime.now().isoformat()
-            all_v = deps["load_vacancies"]()
-            for v in all_v:
-                if v["id"] == vacancy["id"]:
-                    v.update(vacancy)
-            deps["save_vacancies"](all_v)
-            if st.session_state.get("opened_vacancy_id") == vacancy["id"]:
-                st.session_state.opened_vacancy_id = None
-            st.success("Вакансия закрыта.")
-            st.rerun()
+        from vacancy_template_store import get_template_sync_status
+
+        prompt_status = st.session_state.get(_archive_prompt_key(vacancy["id"]))
+        if prompt_status in ("missing", "differs"):
+            _render_archive_template_prompt(vacancy, deps, prompt_status)
+        elif st.button("Переместить в архив", key=f"close_{vacancy['id']}"):
+            fresh = _load_fresh_vacancy(vacancy, deps)
+            docs = collect_vacancy_documents_for_template(fresh)
+            sync_status, _ = get_template_sync_status(fresh, docs)
+            if sync_status in ("missing", "differs"):
+                st.session_state[_archive_prompt_key(vacancy["id"])] = sync_status
+                st.rerun()
+            else:
+                _archive_vacancy_record(fresh, deps)
+                st.success("Вакансия закрыта.")
+                st.rerun()
 
 
 def render_vacancies_in_work(deps):
@@ -99,9 +163,28 @@ def render_vacancies_in_work(deps):
         return
 
     st.divider()
-    head_l, head_r = st.columns([3, 1])
+    head_l, head_m, head_r = st.columns([3, 1, 1])
     with head_l:
         st.subheader(vacancy["title"])
+    with head_m:
+        st.write("")
+        if st.button(
+            "📌 Добавить вакансию в шаблоны",
+            key=f"tpl_push_{vacancy['id']}",
+            use_container_width=True,
+        ):
+            fresh = next(
+                (v for v in deps["load_vacancies"]() if v["id"] == vacancy["id"]),
+                vacancy,
+            )
+            ok, msg, missing, _ = try_push_vacancy_to_templates(fresh)
+            if ok:
+                if missing:
+                    st.warning(msg)
+                else:
+                    st.success(msg)
+            else:
+                st.error(msg)
     with head_r:
         st.write("")
         if st.button(
@@ -121,10 +204,17 @@ def render_vacancy_tab(deps):
     st.header("🏢 Вакансии")
     st.caption("Вакансии в работе и создание новых — в одном месте.")
 
-    tab_work, tab_create = st.tabs(["📂 Вакансии в работе", "➕ Создание новой вакансии"])
+    tab_work, tab_templates, tab_create = st.tabs([
+        "📂 Вакансии в работе",
+        "📌 Шаблоны",
+        "➕ Создание новой вакансии",
+    ])
 
     with tab_work:
         render_vacancies_in_work(deps)
+
+    with tab_templates:
+        render_templates_library(deps)
 
     with tab_create:
         render_new_vacancy_form(deps)

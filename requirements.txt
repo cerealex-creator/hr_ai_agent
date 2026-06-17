@@ -1,6 +1,5 @@
 streamlit
 openai
-whisper
 python-docx
 openpyxl
 boto3

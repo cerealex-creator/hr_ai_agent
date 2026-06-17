@@ -30,6 +30,21 @@ DIGEST_SCHEDULE = (
 DIGEST_TIME_TOLERANCE_MIN = 12
 
 
+def _normalize_now(now=None):
+    tz = get_timezone()
+    now = now or datetime.now(tz)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    else:
+        now = now.astimezone(tz)
+    return now
+
+
+def is_reminder_day_off(now=None):
+    """Суббота и воскресенье — без автоматических напоминаний в чат."""
+    return _normalize_now(now).weekday() >= 5
+
+
 def _esc_local(text):
     return html.escape(str(text or "").strip())
 
@@ -70,7 +85,7 @@ def build_feedback_overdue_message(candidate, vacancy_title, days):
     return (
         f"⏳ <b>{name}</b> · 🏢 {vac}\n"
         f"Обратная связь не получена <b>{overdue}</b>.\n"
-        f"Изучите карточку выше и выберите статус 👇"
+        f"Изучите карточку выше и выберите статус 👆"
     )
 
 
@@ -80,7 +95,7 @@ def build_think_long_message(candidate, vacancy_title):
     return (
         f"🟡 <b>{name}</b> · 🏢 {vac}\n"
         f"Статус «Подумать» без изменений <b>более 5 дней</b>.\n"
-        f"Пожалуйста, обновите решение по карточке выше 👇"
+        f"Пожалуйста, обновите решение по карточке выше 👆"
     )
 
 
@@ -113,13 +128,13 @@ def _apply_job_mark(data, job):
 def collect_reminder_jobs(now=None):
     from vacancy_store import load_vacancies
 
-    tz = get_timezone()
-    now = now or datetime.now(tz)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=tz)
+    now = _normalize_now(now)
+    tz = now.tzinfo
+    data = load_vacancies()
+    if is_reminder_day_off(now):
+        return [], data
 
     jobs = []
-    data = load_vacancies()
 
     for vacancy in data.get("vacancies", []):
         if not vacancy.get("active", True):

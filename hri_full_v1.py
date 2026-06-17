@@ -6,7 +6,6 @@ import os
 import yaml
 import json
 import time
-import whisper
 import requests
 import boto3
 import subprocess
@@ -437,7 +436,7 @@ def transcribe_video_from_link(video_link):
         file_size = os.path.getsize(tmp_path)
         print(f"✅ Файл скачан: {tmp_path}, размер: {file_size / (1024*1024):.1f} МБ")
         
-        # Конвертируем в WAV (более надёжный формат для Whisper)
+        # Конвертируем в WAV (надёжный формат для SpeechKit)
         print(f"🔄 Конвертация в WAV...")
         wav_path = tmp_path + ".wav"
         
@@ -453,15 +452,9 @@ def transcribe_video_from_link(video_link):
         
         print(f"✅ WAV создан: {wav_path}")
         
-        # Загружаем модель Whisper
-        print(f"🎙️ Загружаем модель Whisper (base)...")
-        model = whisper.load_model("base")
-        print(f"✅ Модель загружена")
-        
-        # Расшифровываем
-        print(f"🎙️ Начинаем расшифровку...")
-        result = model.transcribe(wav_path, language="ru", task="transcribe")
-        text = result["text"]
+        # Расшифровываем через Яндекс SpeechKit (облако)
+        print("🎙️ Расшифровка через Яндекс SpeechKit...")
+        text = transcribe_speechkit_cloud(wav_path)
         print(f"✅ Расшифровка завершена! Текст: {len(text)} символов")
         
         return text.strip()
@@ -492,6 +485,24 @@ def transcribe_video_from_link(video_link):
 # ============================================================
 # ФУНКЦИИ ДЛЯ ЯНДЕКС ОБЛАКА
 # ============================================================
+def _validate_speechkit_config(*, bucket=None, access_key=None, secret_key=None, api_key=None):
+    missing = []
+    if not (bucket or "").strip():
+        missing.append("YANDEX_BUCKET_NAME")
+    if not (access_key or "").strip():
+        missing.append("YANDEX_ACCESS_KEY_ID")
+    if not (secret_key or "").strip():
+        missing.append("YANDEX_SECRET_ACCESS_KEY")
+    if api_key is not None and not (api_key or "").strip():
+        missing.append("YANDEX_API_KEY")
+    if missing:
+        raise RuntimeError(
+            "Не настроен Яндекс SpeechKit / Object Storage. Не хватает: "
+            + ", ".join(missing)
+            + ". Проверьте файл `.env` на сервере."
+        )
+
+
 def upload_to_s3_and_get_url(local_path, bucket, access_key, secret_key):
     """
     Загружает локальный файл в Yandex Object Storage и возвращает публичную ссылку.
@@ -500,6 +511,10 @@ def upload_to_s3_and_get_url(local_path, bucket, access_key, secret_key):
     import boto3
     from boto3 import client
     
+    _validate_speechkit_config(
+        bucket=bucket, access_key=access_key, secret_key=secret_key, api_key=None
+    )
+
     try:
         # Создаем клиент НАПРЯМУЮ, без session.Session()
         s3_client = client(
@@ -510,46 +525,62 @@ def upload_to_s3_and_get_url(local_path, bucket, access_key, secret_key):
         )
         
         object_name = os.path.basename(local_path)
-        file_size_mb = os.path.getsize(local_path) / (1024 * 1024)
-        
-        st.info(f"📁 Загружаю файл: {object_name} ({file_size_mb:.1f} МБ)")
-        st.info("⏳ Это может занять 1-3 минуты...")
+        if not os.path.exists(local_path):
+            raise RuntimeError(f"Файл для загрузки не найден: {local_path}")
         
         # Загружаем файл БЕЗ callback!
         s3_client.upload_file(local_path, bucket, object_name)
         
         # Формируем прямую ссылку
         url = f"https://storage.yandexcloud.net/{bucket}/{object_name}"
-        
-        st.success(f"✅ Файл загружен в облако!")
-        st.info(f"🔗 Ссылка: {url}")
-        
         return url
         
     except Exception as e:
-        st.error(f"❌ Ошибка загрузки: {type(e).__name__}")
-        st.error(f"📄 Детали: {str(e)}")
-        st.warning("💡 Проверьте:")
-        st.write("1. Что бакет существует и публичный")
-        st.write("2. Правильность ключей доступа")
-        st.write("3. Права сервисного аккаунта (роль storage.editor)")
-        
-        import traceback
-        st.code(traceback.format_exc())
-        
-        raise
+        raise RuntimeError(
+            "Ошибка загрузки файла в Yandex Object Storage. "
+            "Проверьте, что бакет существует и ключи имеют права `storage.editor`. "
+            f"Детали: {type(e).__name__}: {e}"
+        ) from e
 
 def convert_to_pcm(input_path, output_path=None):
     if output_path is None:
         output_path = os.path.splitext(input_path)[0] + "_speechkit.pcm"
-    subprocess.run([
-        "ffmpeg", "-y", "-i", input_path,
-        "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000",
-        "-f", "s16le", output_path
-    ], check=True, capture_output=True)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-acodec",
+                "pcm_s16le",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-f",
+                "s16le",
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "Не найден `ffmpeg`. Установите ffmpeg и повторите попытку."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or b"").decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(
+            "Ошибка конвертации через ffmpeg. "
+            + (f"stderr: {stderr}" if stderr else "Проверьте формат файла.")
+        ) from e
     return output_path
 
 def recognize_long_audio(audio_url, api_key):
+    _validate_speechkit_config(
+        bucket="ok", access_key="ok", secret_key="ok", api_key=api_key
+    )
     response = requests.post(
         "https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize",
         headers={"Authorization": f"Api-Key {api_key}"},
@@ -567,7 +598,9 @@ def recognize_long_audio(audio_url, api_key):
         }
     )
     if response.status_code != 200:
-        raise Exception(f"Ошибка запроса: {response.text}")
+        raise RuntimeError(
+            f"SpeechKit: ошибка запроса ({response.status_code}). {response.text}"
+        )
     operation = response.json()
     operation_id = operation["id"]
     while True:
@@ -576,10 +609,14 @@ def recognize_long_audio(audio_url, api_key):
             f"https://operation.api.cloud.yandex.net/operations/{operation_id}",
             headers={"Authorization": f"Api-Key {api_key}"}
         )
+        if status_response.status_code != 200:
+            raise RuntimeError(
+                f"SpeechKit: ошибка статуса операции ({status_response.status_code}). {status_response.text}"
+            )
         status_data = status_response.json()
         if status_data.get("done"):
             if "error" in status_data:
-                raise Exception(f"Ошибка распознавания: {status_data['error']}")
+                raise RuntimeError(f"SpeechKit: ошибка распознавания: {status_data['error']}")
             full_text = ""
             for chunk in status_data["response"]["chunks"]:
                 full_text += chunk["alternatives"][0]["text"] + " "
@@ -765,13 +802,33 @@ def save_vacancies(vacancies_list):
     from vacancy_store import save_vacancies_list
     save_vacancies_list(vacancies_list)
 
-def create_vacancy(title, chat_id, client_id=0):
+def _empty_vacancy_documents():
+    return {
+        "profile": "",
+        "vacancy_text": "",
+        "questions": "",
+        "keywords": "",
+        "notes": "",
+    }
+
+
+def _next_vacancy_id(vacancies):
+    if not vacancies:
+        return 1
+    return max(v.get("id", 0) for v in vacancies) + 1
+
+
+def create_vacancy(title, chat_id, client_id=0, *, documents=None):
     from telegram_notify import normalize_chat_id
     vacancies = load_vacancies()
+    title = (title or "").strip()
+    if not title:
+        return False, "Введите название должности"
     if any(v["title"] == title for v in vacancies):
         return False, "Вакансия с таким названием уже существует"
+    docs = documents if documents is not None else _empty_vacancy_documents()
     new_vacancy = {
-        "id": len(vacancies) + 1,
+        "id": _next_vacancy_id(vacancies),
         "title": title,
         "chat_id": normalize_chat_id(chat_id),
         "client_id": client_id,
@@ -779,18 +836,32 @@ def create_vacancy(title, chat_id, client_id=0):
         "created_at": datetime.now().isoformat(),
         "closed_at": None,
         "vacancy_summary": "",
-        "documents": {
-            "profile": "",
-            "vacancy_text": "",
-            "questions": "",
-            "keywords": "",
-            "notes": ""
-        },
-        "candidates": []
+        "documents": docs,
+        "candidates": [],
     }
     vacancies.append(new_vacancy)
     save_vacancies(vacancies)
     return True, new_vacancy
+
+
+def create_vacancy_from_template(template_id, title, chat_id=None, client_id=None):
+    import copy
+
+    from vacancy_template_store import get_template
+
+    template = get_template(template_id)
+    if not template:
+        return False, "Шаблон не найден"
+
+    resolved_chat = chat_id if chat_id is not None else template.get("chat_id")
+    resolved_client = client_id if client_id is not None else template.get("client_id", 0)
+    documents = copy.deepcopy(template.get("documents") or _empty_vacancy_documents())
+    return create_vacancy(
+        title or template.get("title", ""),
+        resolved_chat,
+        resolved_client,
+        documents=documents,
+    )
 
 def update_vacancy_docs(vacancy_title, docs_dict):
     vacancies = load_vacancies()
@@ -1237,15 +1308,14 @@ def render_questionnaire_edit_panel(job_title, profile, questionnaire, key_prefi
         render_questionnaire_item(i, q)
 
 
-def transcribe_whisper_local(audio_path, model_size="medium"):
-    """Расшифровка аудио/видео через локальный Whisper."""
-    model = whisper.load_model(model_size)
-    result = model.transcribe(audio_path, language="ru", task="transcribe", fp16=False)
-    return (result.get("text") or "").strip()
-
-
 def transcribe_speechkit_cloud(audio_path):
     """Расшифровка через Яндекс SpeechKit (файл загружается в Object Storage)."""
+    _validate_speechkit_config(
+        bucket=os.getenv("YANDEX_BUCKET_NAME"),
+        access_key=os.getenv("YANDEX_ACCESS_KEY_ID"),
+        secret_key=os.getenv("YANDEX_SECRET_ACCESS_KEY"),
+        api_key=os.getenv("YANDEX_API_KEY"),
+    )
     pcm_path = convert_to_pcm(audio_path)
     audio_url = upload_to_s3_and_get_url(
         pcm_path,
@@ -1322,6 +1392,7 @@ def build_vacancy_deps():
         "save_vacancies": save_vacancies,
         "load_chats": load_chats,
         "create_vacancy": create_vacancy,
+        "create_vacancy_from_template": create_vacancy_from_template,
         "update_vacancy_docs": update_vacancy_docs,
         "extract_text": extract_text,
         "extract_text_from_pdf_url": extract_text_from_pdf_url,
@@ -1334,7 +1405,6 @@ def build_vacancy_deps():
         "export_to_word": export_to_word,
         "export_to_pdf": export_to_pdf,
         "generate_from_transcript": generate_from_transcript,
-        "transcribe_whisper_local": transcribe_whisper_local,
         "transcribe_speechkit_cloud": transcribe_speechkit_cloud,
         "transcribe_video_from_link": transcribe_video_from_link,
         "regenerate_profile_with_ai": regenerate_profile_with_ai,
@@ -1827,7 +1897,7 @@ with tab5:
         1. Зарегистрируйте вакансию (название + чат Telegram).
         2. Выберите вакансию в списке (без значения по умолчанию).
         3. Отметьте создаваемые документы: профиль и опросник обязательны; текст вакансии и ключевые слова — по желанию.
-        4. Способы подготовки: **Из расшифровки** (аудио/видео Whisper или SpeechKit, файл или текст), **Импорт**, **Анкета HR**.
+        4. Способы подготовки: **Из расшифровки** (аудио/видео через SpeechKit, файл или текст), **Импорт**, **Анкета HR**.
         """)
     with st.expander("👥 3. Вкладка «Вакансии» — кандидаты"):
         st.markdown("""
@@ -2139,6 +2209,31 @@ with tab_settings:
                 "При статусе «Собеседование назначено» с датой и временем создаётся событие "
                 "(например: «Иванов Иван, графический дизайнер»)."
             )
+
+    st.divider()
+    st.subheader("📌 Шаблоны вакансий")
+    st.caption(
+        "Полное редактирование документов — во вкладке «Вакансии» → «Шаблоны». "
+        "Здесь можно быстро удалить шаблон."
+    )
+    from vacancy_template_store import delete_template, list_templates
+
+    templates = list_templates()
+    if not templates:
+        st.info("Шаблонов пока нет.")
+    else:
+        for i, tpl in enumerate(templates):
+            updated = (tpl.get("updated_at") or tpl.get("created_at") or "")[:16].replace("T", " ")
+            col_a, col_b, col_c = st.columns([4, 2, 1])
+            col_a.write(f"**{tpl.get('name', '—')}**")
+            col_b.caption(f"{tpl.get('title', '—')} · {updated or '—'}")
+            if col_c.button("🗑️", key=f"settings_del_tpl_{i}"):
+                ok, msg = delete_template(tpl["id"])
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+                st.rerun()
 
     st.divider()
     st.subheader("📋 Список вакансий")

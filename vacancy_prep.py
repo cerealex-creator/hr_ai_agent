@@ -514,10 +514,57 @@ def _doc_field_status(value):
     return "заполнен" if (value or "").strip() else "пуст"
 
 
-def render_existing_documents_zone(vacancy, deps):
-    """Подзона «Документы по вакансии» — только просмотр и редактирование."""
+def collect_vacancy_documents_for_template(vacancy):
+    """Актуальные документы вакансии: из открытого редактора или из базы."""
+    vid = vacancy["id"]
+    prof_key = _vac_key(vid, "profile_json")
     docs = vacancy.get("documents", {})
-    prof_key, vac_key, q_key, kw_key = _init_doc_state(vacancy, docs)
+    if prof_key in st.session_state:
+        return {
+            "profile": st.session_state.get(_vac_key(vid, "profile_json"), ""),
+            "vacancy_text": st.session_state.get(_vac_key(vid, "vac_text"), ""),
+            "questions": st.session_state.get(_vac_key(vid, "questions"), ""),
+            "keywords": st.session_state.get(_vac_key(vid, "keywords"), ""),
+            "notes": docs.get("notes") or "",
+        }
+    return docs
+
+
+def try_push_vacancy_to_templates(vacancy):
+    from vacancy_template_store import add_vacancy_to_templates
+
+    docs = collect_vacancy_documents_for_template(vacancy)
+    return add_vacancy_to_templates(vacancy, docs)
+
+
+def template_editor_entity(template):
+    return {
+        "id": f"tpl_{template['id']}",
+        "title": template.get("title") or template.get("name", ""),
+        "documents": template.get("documents", {}),
+    }
+
+
+def render_documents_editor(entity, deps, *, mode="vacancy", template_id=None):
+    """Редактор документов для вакансии или шаблона."""
+    docs = entity.get("documents", {})
+    prof_key, vac_key, q_key, kw_key = _init_doc_state(entity, docs)
+    entity_id = entity["id"]
+    save_key = f"save_docs_{entity_id}"
+    is_template = mode == "template"
+
+    from vacancy_template_store import get_missing_document_fields
+
+    missing = get_missing_document_fields({
+        "profile": st.session_state[prof_key],
+        "vacancy_text": st.session_state[vac_key],
+        "questions": st.session_state[q_key],
+        "keywords": st.session_state[kw_key],
+    })
+    if missing:
+        st.warning(f"Не заполнено: {', '.join(missing)}.")
+    else:
+        st.success("Все основные документы заполнены.")
 
     st.caption(
         "Статус в базе: "
@@ -529,47 +576,63 @@ def render_existing_documents_zone(vacancy, deps):
 
     profile_expanded = bool((docs.get("profile") or "").strip())
     with st.expander("📋 Профиль должности", expanded=profile_expanded):
-        render_profile_section(vacancy, prof_key, deps)
+        render_profile_section(entity, prof_key, deps)
 
     with st.expander("📄 Текст вакансии", expanded=False):
-        render_vacancy_text_section(vacancy, vac_key, prof_key, deps)
+        render_vacancy_text_section(entity, vac_key, prof_key, deps)
 
     with st.expander("❓ Опросник для собеседования", expanded=False):
         def on_q_apply(new_q):
             st.session_state[q_key] = json.dumps(new_q, ensure_ascii=False, indent=2)
 
         deps["render_questionnaire_edit_panel"](
-            job_title=vacancy["title"],
+            job_title=entity["title"],
             profile=st.session_state[prof_key],
             questionnaire=st.session_state[q_key],
-            key_prefix=f"vac_doc_{vacancy['id']}",
+            key_prefix=f"vac_doc_{entity_id}",
             on_apply=on_q_apply,
         )
 
     with st.expander("🔑 Ключевые слова", expanded=False):
-        render_keywords_section(vacancy, kw_key, prof_key, deps)
+        render_keywords_section(entity, kw_key, prof_key, deps)
 
-    if st.button("💾 Сохранить все документы", key=f"save_docs_{vacancy['id']}", type="primary"):
-        save_documents_from_editor(
-            vacancy,
-            st.session_state[prof_key],
-            st.session_state[vac_key],
-            st.session_state[q_key],
-            st.session_state[kw_key],
-            deps,
-        )
-        vacancy["documents"].update({
+    if st.button("💾 Сохранить все документы", key=save_key, type="primary"):
+        payload = {
             "profile": st.session_state[prof_key],
             "vacancy_text": st.session_state[vac_key],
             "questions": st.session_state[q_key],
             "keywords": st.session_state[kw_key],
-        })
-        st.session_state[_vac_key(vacancy["id"], "docs_fp")] = _docs_fingerprint(vacancy["documents"])
-        st.success("Документы сохранены!")
-        st.rerun()
+        }
+        if is_template:
+            from vacancy_template_store import update_template_documents
+
+            ok, msg = update_template_documents(template_id, {
+                **payload,
+                "notes": docs.get("notes") or "",
+            })
+            if ok:
+                entity["documents"].update(payload)
+                st.session_state[_vac_key(entity_id, "docs_fp")] = _docs_fingerprint(entity["documents"])
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+        else:
+            save_documents_from_editor(
+                entity,
+                payload["profile"],
+                payload["vacancy_text"],
+                payload["questions"],
+                payload["keywords"],
+                deps,
+            )
+            entity["documents"].update(payload)
+            st.session_state[_vac_key(entity_id, "docs_fp")] = _docs_fingerprint(entity["documents"])
+            st.success("Документы сохранены!")
+            st.rerun()
 
     gen = {
-        "должность": vacancy["title"],
+        "должность": entity["title"],
         "профиль": parse_profile_input(st.session_state[prof_key]),
         "текст_вакансии": st.session_state[vac_key],
         "опросник": deps["parse_questionnaire_input"](st.session_state[q_key]),
@@ -580,34 +643,150 @@ def render_existing_documents_zone(vacancy, deps):
         st.download_button(
             "📥 JSON",
             data=json.dumps(gen, ensure_ascii=False, indent=2),
-            file_name=f"{vacancy['title']}_docs.json",
+            file_name=f"{entity['title']}_docs.json",
             mime="application/json",
-            key=f"dl_json_{vacancy['id']}",
+            key=f"dl_json_{entity_id}",
         )
     with exp2:
-        if st.button("📄 Word", key=f"dl_word_{vacancy['id']}"):
+        if st.button("📄 Word", key=f"dl_word_{entity_id}"):
             path = deps["export_to_word"](gen)
             if path:
                 with open(path, "rb") as f:
                     st.download_button(
                         "Скачать Word",
                         data=f.read(),
-                        file_name=f"{vacancy['title']}.docx",
+                        file_name=f"{entity['title']}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key=f"dl_word_file_{vacancy['id']}",
+                        key=f"dl_word_file_{entity_id}",
                     )
     with exp3:
-        if st.button("📕 PDF", key=f"dl_pdf_{vacancy['id']}"):
+        if st.button("📕 PDF", key=f"dl_pdf_{entity_id}"):
             path = deps["export_to_pdf"](gen)
             if path:
                 with open(path, "rb") as f:
                     st.download_button(
                         "Скачать PDF",
                         data=f.read(),
-                        file_name=f"{vacancy['title']}.pdf",
+                        file_name=f"{entity['title']}.pdf",
                         mime="application/pdf",
-                        key=f"dl_pdf_file_{vacancy['id']}",
+                        key=f"dl_pdf_file_{entity_id}",
                     )
+
+
+def render_existing_documents_zone(vacancy, deps):
+    """Подзона «Документы по вакансии» — только просмотр и редактирование."""
+    render_documents_editor(vacancy, deps, mode="vacancy")
+
+    with st.expander("📌 Сохранить как шаблон", expanded=False):
+        st.caption(
+            "Копирует документы и привязку к чату в шаблоны. "
+            "Повторное сохранение с тем же именем обновляет шаблон."
+        )
+        tpl_name = st.text_input(
+            "Название шаблона",
+            value=vacancy["title"],
+            key=f"tpl_name_{vacancy['id']}",
+        )
+        if st.button("Сделать шаблоном", key=f"tpl_save_{vacancy['id']}"):
+            from vacancy_template_store import save_template_from_vacancy
+
+            vacancy_snapshot = {
+                **vacancy,
+                "documents": collect_vacancy_documents_for_template(vacancy),
+            }
+            ok, msg, _, missing = save_template_from_vacancy(
+                vacancy_snapshot,
+                tpl_name,
+            )
+            if ok:
+                if missing:
+                    st.warning(msg)
+                else:
+                    st.success(msg)
+            else:
+                st.error(msg)
+
+
+def render_template_documents_zone(template, deps):
+    """Редактирование документов шаблона — как у активной вакансии."""
+    from vacancy_template_store import get_template
+
+    fresh = get_template(template["id"]) or template
+    entity = template_editor_entity(fresh)
+    render_documents_editor(
+        entity,
+        deps,
+        mode="template",
+        template_id=fresh["id"],
+    )
+
+
+def render_templates_library(deps):
+    from vacancy_template_store import delete_template, list_templates
+
+    templates = list_templates()
+    if "opened_template_id" not in st.session_state:
+        st.session_state.opened_template_id = None
+
+    if not templates:
+        st.info(
+            "Шаблонов пока нет. Нажмите «Добавить вакансию в шаблоны» в меню вакансии "
+            "или сохраните шаблон в документах."
+        )
+        return
+
+    st.markdown("Выберите шаблон для просмотра и доработки документов.")
+    cols_per_row = 2
+    for row_start in range(0, len(templates), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for col_idx, template in enumerate(templates[row_start:row_start + cols_per_row]):
+            with cols[col_idx]:
+                is_open = st.session_state.opened_template_id == template["id"]
+                updated = (template.get("updated_at") or "")[:10]
+                label = f"{template.get('name', '—')}\n{updated or '—'}"
+                btn_type = "primary" if is_open else "secondary"
+                if st.button(
+                    label,
+                    key=f"tpl_pick_{template['id']}",
+                    type=btn_type,
+                    use_container_width=True,
+                ):
+                    if is_open:
+                        st.session_state.opened_template_id = None
+                    else:
+                        st.session_state.opened_template_id = template["id"]
+                    st.rerun()
+
+    opened_id = st.session_state.get("opened_template_id")
+    if not opened_id:
+        st.caption("Шаблон не выбран.")
+        return
+
+    template = next((t for t in templates if t["id"] == opened_id), None)
+    if not template:
+        st.session_state.opened_template_id = None
+        st.warning("Шаблон не найден.")
+        return
+
+    st.divider()
+    head_l, head_r = st.columns([4, 1])
+    with head_l:
+        st.subheader(template.get("name", "Шаблон"))
+        st.caption(
+            f"Роль: {template.get('title', '—')} · Chat ID: {template.get('chat_id', '—')}"
+        )
+    with head_r:
+        st.write("")
+        if st.button("🗑️ Удалить", key=f"tpl_del_{template['id']}", use_container_width=True):
+            ok, msg = delete_template(template["id"])
+            if ok:
+                st.session_state.opened_template_id = None
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    render_template_documents_zone(template, deps)
 
 
 def transcribe_uploaded_audio(uploaded_file, method, deps):
@@ -615,8 +794,6 @@ def transcribe_uploaded_audio(uploaded_file, method, deps):
     audio_path = os.path.join("data/tmp", uploaded_file.name)
     with open(audio_path, "wb") as f:
         f.write(uploaded_file.getvalue())
-    if method == "Локально (Whisper)":
-        return deps["transcribe_whisper_local"](audio_path), None
     try:
         return deps["transcribe_speechkit_cloud"](audio_path), None
     except Exception as e:
@@ -637,12 +814,7 @@ def render_transcript_source(vacancy, deps, key_prefix):
     )
 
     if source == "Аудио/видео":
-        method = st.radio(
-            "Метод расшифровки",
-            ("Локально (Whisper)", "Яндекс (SpeechKit)"),
-            horizontal=True,
-            key=f"meth_{key_prefix}_{vacancy['id']}",
-        )
+        method = "Яндекс (SpeechKit)"
         uploaded_audio = st.file_uploader(
             "Аудио/видео файл",
             type=["mp3", "mp4", "wav", "webm", "mkv", "ogg"],
@@ -943,11 +1115,56 @@ def render_creation_zone(vacancy, deps):
         render_wizard_mode(vacancy, deps, doc_flags, f"create_{vacancy['id']}")
 
 
+def _resolve_chat_from_template(chats, template):
+    from telegram_notify import chat_ids_equal
+
+    tpl_chat = template.get("chat_id")
+    if tpl_chat is None:
+        return None
+    return next((c for c in chats if chat_ids_equal(c["id"], tpl_chat)), None)
+
+
 def render_new_vacancy_form(deps):
     """Создание вакансии + выбор для генерации документов."""
+    from vacancy_template_store import list_templates
+
     _render_doc_gen_flash()
     st.markdown("##### Регистрация вакансии")
+
+    creation_mode = st.radio(
+        "Способ создания",
+        ("С нуля", "Из шаблона"),
+        horizontal=True,
+        key="new_vac_mode",
+    )
+
     chats = deps["load_chats"]()
+    templates = list_templates()
+    selected_template = None
+
+    if creation_mode == "Из шаблона":
+        if not templates:
+            st.info(
+                "Нет шаблонов. Откройте вакансию → «Документы по вакансии» → "
+                "«Сохранить как шаблон»."
+            )
+        else:
+            picked_name = selectbox_no_default(
+                "Шаблон",
+                [t["name"] for t in templates],
+                key="new_vac_tpl_picker",
+            )
+            if picked_name:
+                selected_template = next(t for t in templates if t["name"] == picked_name)
+                updated = (selected_template.get("updated_at") or "")[:10]
+                st.caption(
+                    f"Эталон роли: **{selected_template.get('title', '—')}**"
+                    + (f" · обновлён {updated}" if updated else "")
+                )
+                if st.session_state.get("new_vac_active_tpl") != selected_template["id"]:
+                    st.session_state.new_vac_active_tpl = selected_template["id"]
+                    st.session_state.new_vac_title = selected_template.get("title", "")
+
     new_title = st.text_input("Название должности", key="new_vac_title")
 
     chat_id = ""
@@ -960,21 +1177,53 @@ def render_new_vacancy_form(deps):
             chat_id = chat["id"]
             client_id = chat.get("department_id", 0)
             st.caption(f"Подразделение: {chat.get('department_name', '—')}")
+        elif selected_template:
+            tpl_chat = _resolve_chat_from_template(chats, selected_template)
+            if tpl_chat:
+                st.caption(
+                    f"Чат из шаблона: **{tpl_chat['name']}** "
+                    f"(будет использован, если не выберете другой)"
+                )
     else:
         st.warning("Добавьте чат во вкладке «Настройки».")
 
-    created_vacancy = None
     if st.button("Создать вакансию", key="create_vac_btn", type="primary"):
-        if not new_title.strip():
+        title = new_title.strip()
+        if not title:
             st.warning("Введите название должности.")
+        elif creation_mode == "Из шаблона":
+            if not selected_template:
+                st.warning("Выберите шаблон.")
+            else:
+                resolved_chat = chat_id or selected_template.get("chat_id")
+                resolved_client = client_id if chat_id else selected_template.get("client_id", 0)
+                if not resolved_chat:
+                    st.warning("Выберите чат Telegram или сохраните чат в шаблоне.")
+                else:
+                    ok, msg = deps["create_vacancy_from_template"](
+                        selected_template["id"],
+                        title,
+                        chat_id=chat_id or None,
+                        client_id=resolved_client if chat_id else None,
+                    )
+                    if ok:
+                        st.session_state.opened_vacancy_id = msg["id"]
+                        st.session_state.creation_vacancy_title = title
+                        st.success(
+                            f"Вакансия «{title}» создана из шаблона «{selected_template['name']}». "
+                            "Документы уже подставлены — проверьте их во вкладке «Вакансии в работе»."
+                        )
+                        st.rerun()
+                    else:
+                        st.error(msg or "Ошибка создания")
         elif not chat_id:
             st.warning("Выберите чат Telegram.")
         else:
-            ok, msg = deps["create_vacancy"](new_title.strip(), chat_id, client_id)
+            ok, msg = deps["create_vacancy"](title, chat_id, client_id)
             if ok:
                 st.session_state.opened_vacancy_id = None
-                st.session_state.creation_vacancy_title = new_title.strip()
-                st.success(f"Вакансия «{new_title}» создана. Теперь сгенерируйте документы ниже.")
+                st.session_state.creation_vacancy_title = title
+                st.success(f"Вакансия «{title}» создана. Теперь сгенерируйте документы ниже.")
                 st.rerun()
             else:
                 st.error(msg or "Ошибка создания")

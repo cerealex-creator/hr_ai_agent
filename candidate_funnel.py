@@ -97,8 +97,19 @@ def new_candidate_template(vacancy_id):
     }
 
 
-def _apply_calendar_sync(cand, vacancy, previous_stage=None):
-    ok, msg = sync_interview_calendar(cand, vacancy["title"], previous_stage)
+def _would_delete_calendar_on_stage_change(cand, target_stage, current_stage):
+    """True, если при фиксации этапа будет удалено событие из Google Calendar."""
+    if target_stage == INTERVIEW_STAGE:
+        return False
+    if current_stage == INTERVIEW_STAGE:
+        return True
+    return bool(cand.get("calendar_event_id"))
+
+
+def _apply_calendar_sync(cand, vacancy, previous_stage=None, keep_calendar_event=False):
+    ok, msg = sync_interview_calendar(
+        cand, vacancy["title"], previous_stage, keep_calendar_event=keep_calendar_event
+    )
     if msg:
         if ok:
             st.success(msg)
@@ -473,6 +484,25 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         note = h.get("note") or ""
                         st.caption(f"{at} — {HR_STAGES.get(h.get('stage'), h.get('stage', ''))}" + (f" ({note})" if note else ""))
 
+            suggested = sync_hr_stage_from_client_status(cand)
+            show_keep_calendar = (
+                _would_delete_calendar_on_stage_change(cand, picked_stage, current_stage)
+                or (
+                    suggested
+                    and suggested != cand.get("hr_stage")
+                    and _would_delete_calendar_on_stage_change(
+                        cand, suggested, cand.get("hr_stage")
+                    )
+                )
+            )
+            keep_calendar_event = False
+            if show_keep_calendar:
+                keep_calendar_event = st.checkbox(
+                    "Не удалять событие из Google Calendar",
+                    key=k("keep_cal_event"),
+                    help="При смене этапа событие в календаре останется без изменений",
+                )
+
             if st.button("Зафиксировать этап", key=k("stage_btn")):
                 target_stage = picked_stage
                 if target_stage == INTERVIEW_STAGE:
@@ -492,9 +522,13 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                    _apply_calendar_sync(cand, vacancy, previous_stage=prev_stage)
+                    _apply_calendar_sync(
+                        cand,
+                        vacancy,
+                        previous_stage=prev_stage,
+                        keep_calendar_event=keep_calendar_event,
+                    )
                     _persist_vacancy_candidates(vacancy, deps)
-                    suggested = sync_hr_stage_from_client_status(cand)
                     if suggested and target_stage != suggested:
                         st.session_state[stage_info_key] = (
                             f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}"
@@ -508,14 +542,18 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                        _apply_calendar_sync(cand, vacancy, previous_stage=INTERVIEW_STAGE)
+                        _apply_calendar_sync(
+                            cand,
+                            vacancy,
+                            previous_stage=INTERVIEW_STAGE,
+                            keep_calendar_event=keep_calendar_event,
+                        )
                         _persist_vacancy_candidates(vacancy, deps)
                         st.session_state[collapse_key] = True
                         st.rerun()
                     else:
                         st.caption("Статус без изменений.")
 
-            suggested = sync_hr_stage_from_client_status(cand)
             if suggested and cand.get("hr_stage") != suggested:
                 if st.button("↔ Применить этап по статусу заказчика", key=k("sync")):
                     prev_stage = cand.get("hr_stage")
@@ -526,7 +564,12 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                    _apply_calendar_sync(cand, vacancy, previous_stage=prev_stage)
+                    _apply_calendar_sync(
+                        cand,
+                        vacancy,
+                        previous_stage=prev_stage,
+                        keep_calendar_event=keep_calendar_event,
+                    )
                     _persist_vacancy_candidates(vacancy, deps)
                     st.rerun()
 

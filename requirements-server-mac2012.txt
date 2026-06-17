@@ -1,0 +1,22 @@
+# Сервер MacBook Pro 2012 (Catalina 10.15), Python 3.11
+# Без whisper — расшифровка через Яндекс SpeechKit в облаке.
+# Установка: pip install -r requirements-server-mac2012.txt
+
+numpy==1.26.4
+pyarrow==14.0.2
+cryptography==41.0.7
+streamlit==1.32.2
+openai
+python-docx
+openpyxl
+boto3
+python-dotenv
+pyyaml
+requests
+PyPDF2
+reportlab
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+aiogram
+aiohttp

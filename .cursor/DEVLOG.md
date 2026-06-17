@@ -1,0 +1,146 @@
+# DEVLOG — hr_ai_agent
+
+Журнал разработки для восстановления контекста между сессиями AI/разработчика.  
+Только факты: код, git, `data/`, `deploy/`.
+
+---
+
+## Шаблон записи (копировать для новых сессий)
+
+```markdown
+## YYYY-MM-DD — Краткий заголовок
+
+**Тип:** `feature` | `fix` | `refactor` | `deploy` | `decision` | `incident` | `checkpoint`
+
+**Сделано:**
+- …
+
+**Файлы:** `path/to/file.py`, …
+
+**Данные / конфиг:** `data/…`, `.env` ключи, миграции
+
+**Git:** `commit` / тег `…` / ветка `…` / незакоммичено
+
+**Поведение / регрессии:**
+- …
+
+**Открыто / риски:**
+- …
+
+**Следующий шаг:**
+- …
+```
+
+---
+
+## 2026-06-06 — Точка входа
+
+**Тип:** `checkpoint`
+
+### Стек и запуск
+
+| Компонент | Технология | Точка входа |
+|-----------|------------|-------------|
+| HR-приложение | Streamlit, Python | `streamlit run hri_full_v1.py` |
+| Telegram-бот | aiogram 3 | `python bot.py` |
+| ИИ | OpenAI-клиент → RouterAI (`hri_full_v1_config.yaml`, модель `qwen/qwen3.5-plus-20260420`) | `ROUTERAI_API_KEY` |
+| Расшифровка | Whisper (локально) / Yandex SpeechKit | `transcribe.py`, `resume_ai.py` |
+| Календарь | Google Calendar API | `google_calendar.py`, `data/google_calendar_*.json` |
+| Деплой | Docker Compose | `docker-compose.yml`: `hr-app` :8501, `hr-bot` |
+
+**Зависимости:** `requirements.txt` (streamlit, openai, aiogram, whisper, google-api-python-client, …).
+
+### Хранение данных (JSON, `data/`)
+
+| Файл | Назначение |
+|------|------------|
+| `vacancies_db.json` | Вакансии, кандидаты, документы, `telegram_posts`, статусы |
+| `chats_db.json` | Привязка Telegram-чатов к отделам |
+| `departments.json` | Подразделения для клиентских зон |
+| `vacancy_templates.json` | Шаблоны вакансий (документы + chat_id) |
+| `history/` | Архив генераций ИИ (вкладка «История») |
+
+Запись: `vacancy_store.py` (fcntl lock, atomic write). Слияние полей бота при сохранении из UI: `TELEGRAM_MERGE_FIELDS`.
+
+### HR-приложение (`hri_full_v1.py`)
+
+**Вкладки:** Вакансии · Инструкции · История · Настройки.
+
+**Вакансии** (`vacancy_tab.py`):
+- В работе: кандидаты, документы, статистика, архив, digest в чат
+- Создание: с нуля / из шаблона (`create_vacancy_from_template`)
+- Шаблоны: библиотека + полный редактор документов (`vacancy_prep.render_templates_library`)
+- Кнопка в меню вакансии: «Добавить вакансию в шаблоны»
+
+**Документы** (`vacancy_prep.py`): профиль, текст вакансии, опросник, ключевые слова; генерация из расшифровки / импорта / анкеты HR; экспорт Word/PDF/JSON.
+
+**Кандидаты** (`candidate_funnel.py`): воронка HR, оценка ИИ (`resume_ai.py`), Telegram-отправка, Google Calendar при назначении собеседования.
+
+**Клиентские зоны (Streamlit pages):** `/client?dept=…` (`pages/client.py`), `/master` (`pages/master.py`).
+
+### Telegram-бот
+
+**Модули:** `bot.py`, `telegram_bot_handlers.py`, `telegram_workflow.py`, `telegram_client.py`, `telegram_candidate_nav.py`, `telegram_reminders.py`.
+
+**Клиентская зона в чате:** кнопки статусов (Встреча / Подумать / Отказ / Оффер), комментарий, назначение встречи, подтверждение HR (`TELEGRAM_HR_CONFIRM_USERNAME`), редактирование карточки на месте.
+
+**Навигация:** `/candidates`, переход к карточке, `/pending`.
+
+**Автонапоминания** (`telegram_reminders.py`, цикл в `bot.py`):
+- Просрочка оценки (≥24 ч с отправки карточки, повтор ≥24 ч)
+- «Подумать» ≥5 дней
+- Встреча за ~60 мин
+- Сводки: вт 18:00, пт 15:00 (`TELEGRAM_REMINDER_TZ`)
+- **Сб–Вс:** автоматические напоминания не отправляются (`is_reminder_day_off`)
+- Reply-напоминания: 👆 на карточку выше; на самой карточке: 👇
+
+**Досылка задания:** отдельное сообщение + обновление primary-карточки (`send_task_completed_to_chat` → `refresh_primary_candidate_card_in_chat`). ФИО в сообщении о задании — ссылка на резюме.
+
+### Шаблоны вакансий
+
+`vacancy_template_store.py`: сохранение/обновление по имени, валидация незаполненных полей, `add_vacancy_to_templates`, редактирование документов во вкладке «Шаблоны».
+
+### Git и откат
+
+| Тег | Коммит | Смысл |
+|-----|--------|-------|
+| `pre-vacancy-templates` | `46360d5` | Бекап перед шаблонами (полная Telegram-зона) |
+| `pre-telegram-full-chat` | `a4c04f6` | До напоминаний, /pending, полного workflow |
+
+**Состояние на 2026-06-06:** `main` ahead of `origin/main` на 2 коммита.  
+**Незакоммичено:** шаблоны вакансий, правки напоминаний (выходные, 👆), `vacancy_template_store.py`, правки `ROLLBACK.md`.
+
+---
+
+## 2026-06-17 — Синхронизация календаря, транскрипция (SpeechKit-only), запуск на Mac-сервере
+
+**Тип:** `fix`
+
+**Сделано:**
+- Добавлен флажок «Не удалять событие из Google Calendar» при смене этапа кандидата (чтобы не сносить ранее назначенное собеседование).
+- Полностью исключён Whisper из проекта: удалены ветки локальной транскрипции, транскрипция аудио/видео оставлена только через Яндекс SpeechKit.
+- Убраны «тихие» ошибки SpeechKit: явная проверка `.env` ключей, понятные ошибки для ffmpeg/S3/SpeechKit API.
+
+**Файлы:** `candidate_funnel.py`, `interview_schedule.py`, `vacancy_prep.py`, `hri_full_v1.py`, `requirements.txt`, `requirements-server-mac2012.txt`, `deploy/ROLLBACK.md`
+
+**Данные / конфиг:**
+- Требуются ключи: `YANDEX_API_KEY`, `YANDEX_BUCKET_NAME`, `YANDEX_ACCESS_KEY_ID`, `YANDEX_SECRET_ACCESS_KEY`
+
+**Поведение / регрессии:**
+- Локальная транскрипция (Whisper) больше недоступна — только SpeechKit.
+
+Инструкции отката: `deploy/ROLLBACK.md`. Деплой VPS: `deploy/ИНСТРУКЦИЯ.md`, `deploy/sync-to-server.sh`.
+
+### Известные ограничения (из кода)
+
+- `create_vacancy`: запрет дубликата `title` среди всех вакансий (включая архивные).
+- `process_interview_reminders` в `interview_schedule.py`: **отключены** (пустой return).
+- Напоминание «за час до встречи» не уходит в Сб–Вс; для встреч в выходные окно может быть пропущено без догонки.
+- `telegram_posts`: нет автоочистки при ручном удалении сообщений в Telegram (есть `prune_stale_telegram_posts`, привязка через действия на карточке).
+- Гибридная архитектура (HR на ноутбуке + бот в облаке) **не реализована** — один shared `data/` на машине/сервере.
+
+### Ближайшие цели (вывод из состояния репозитория)
+
+- Закоммитить незавершённую работу: шаблоны + напоминания.
+- Продакшен: Docker на VPS по `deploy/ИНСТРУКЦИЯ.md`.
+- Операционная устойчивость бота 24/7 (отдельно от HR) — обсуждалось, в коде нет sync-слоя.

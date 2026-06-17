@@ -37,9 +37,12 @@ def reset_reminders_if_schedule_changed(cand, date_str, time_str):
         cand["interview_reminder_60_sent"] = False
 
 
-def sync_interview_calendar(cand, vacancy_title, previous_stage=None):
+def sync_interview_calendar(
+    cand, vacancy_title, previous_stage=None, keep_calendar_event=False
+):
     """
     Синхронизирует событие в Google Calendar.
+    keep_calendar_event: не удалять событие при смене этапа с «Назначено собеседование».
     Возвращает (ok, message) — message пустой если действие не требовалось.
     """
     try:
@@ -71,6 +74,8 @@ def sync_interview_calendar(cand, vacancy_title, previous_stage=None):
         return ok, msg
 
     if previous_stage == INTERVIEW_STAGE or cand.get("calendar_event_id"):
+        if keep_calendar_event:
+            return True, "Событие в Google Calendar оставлено"
         ok, msg = delete_interview_event(cand)
         return ok, msg
 
