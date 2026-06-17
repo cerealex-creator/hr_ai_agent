@@ -88,13 +88,20 @@ def build_candidate_card_html(
     candidate,
     vacancy_title,
     *,
+    vacancy=None,
     status_key=None,
     locked=False,
     kind="primary",
     interview_prompt=None,
 ):
+    from vacancy_store import vacancy_show_portfolio_field
+
+    show_portfolio = vacancy_show_portfolio_field(vacancy) if vacancy else False
     builder = build_task_completed_message if kind == "task" else build_primary_candidate_message
-    text = builder(candidate, vacancy_title)
+    if kind == "task":
+        text = builder(candidate, vacancy_title)
+    else:
+        text = builder(candidate, vacancy_title, show_portfolio=show_portfolio)
     if locked and status_key:
         meta = get_status_meta(status_key)
         text += f"\n\n<b>Текущий статус:</b> {meta['icon']} {meta['label']}"
@@ -429,6 +436,7 @@ def send_candidate_card_to_chat(
     text = build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=status if locked else None,
         locked=locked,
         kind=kind,
@@ -447,7 +455,9 @@ def send_candidate_card_to_chat(
     buttons_ok = bool(ok and keyboard)
 
     if not ok and keyboard:
-        plain_text = build_candidate_card_html(candidate, vacancy["title"], locked=False, kind=kind)
+        plain_text = build_candidate_card_html(
+            candidate, vacancy["title"], vacancy=vacancy, locked=False, kind=kind
+        )
         ok, msg, message_id = send_telegram_html(chat_id, plain_text)
         if ok and message_id:
             k_ok, k_msg = edit_message_keyboard(chat_id, message_id, keyboard)
@@ -510,6 +520,7 @@ def refresh_primary_candidate_card_in_chat(vacancy, candidate):
     text = build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=status if locked else None,
         locked=locked,
         kind="primary",
@@ -518,7 +529,7 @@ def refresh_primary_candidate_card_in_chat(vacancy, candidate):
     ok, msg = edit_telegram_message(chat_id, message_id, text, reply_markup=keyboard)
     if not ok and keyboard:
         plain_text = build_candidate_card_html(
-            candidate, vacancy["title"], locked=False, kind="primary"
+            candidate, vacancy["title"], vacancy=vacancy, locked=False, kind="primary"
         )
         ok, msg = edit_telegram_message(chat_id, message_id, plain_text)
         if ok:

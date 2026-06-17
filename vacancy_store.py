@@ -333,6 +333,8 @@ def migrate_candidate(cand):
         cand["id"] = str(uuid.uuid4())
     if not cand.get("tg_callback_id"):
         cand["tg_callback_id"] = cand["id"].replace("-", "")[:8]
+    if "portfolio_link" not in cand:
+        cand["portfolio_link"] = ""
     status = cand.get("client_status", "wait")
     if status == "new" or status not in STATUS_CONFIG:
         cand["client_status"] = "wait"
@@ -346,9 +348,34 @@ def migrate_candidate(cand):
     return cand
 
 
+def migrate_vacancy(vacancy):
+    """Дополняет вакансию недостающими полями настроек."""
+    if "show_portfolio_field" not in vacancy:
+        vacancy["show_portfolio_field"] = False
+    return vacancy
+
+
+def vacancy_show_portfolio_field(vacancy):
+    migrate_vacancy(vacancy)
+    return bool(vacancy.get("show_portfolio_field"))
+
+
 def migrate_vacancies_data(data):
     changed = False
     for vacancy in data.get("vacancies", []):
+        before = json.dumps(
+            {k: vacancy.get(k) for k in ("show_portfolio_field",)},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        migrate_vacancy(vacancy)
+        after = json.dumps(
+            {k: vacancy.get(k) for k in ("show_portfolio_field",)},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        if before != after:
+            changed = True
         for cand in vacancy.get("candidates", []):
             before = json.dumps(cand, sort_keys=True, ensure_ascii=False)
             migrate_candidate(cand)

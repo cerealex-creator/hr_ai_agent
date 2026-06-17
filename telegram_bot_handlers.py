@@ -152,6 +152,7 @@ async def _edit_card_locked(callback, candidate, vacancy):
     text = tc.build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=candidate.get("client_status", "wait"),
         locked=True,
         kind=kind,
@@ -170,6 +171,7 @@ async def _edit_card_interview_dates(callback, candidate, vacancy):
     text = tc.build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=candidate.get("client_status", "wait"),
         locked=True,
         kind=kind,
@@ -194,6 +196,7 @@ async def _edit_card_interview_times(callback, candidate, vacancy, date_token):
     text = tc.build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=candidate.get("client_status", "wait"),
         locked=True,
         kind=kind,
@@ -216,6 +219,7 @@ async def _edit_card_interview_format(callback, candidate, vacancy, date_token, 
     text = tc.build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=candidate.get("client_status", "wait"),
         locked=True,
         kind=kind,
@@ -235,6 +239,7 @@ async def _edit_card_change_mode(callback, candidate, vacancy):
     text = tc.build_candidate_card_html(
         candidate,
         vacancy["title"],
+        vacancy=vacancy,
         status_key=candidate.get("client_status", "wait"),
         locked=True,
         kind=kind,
@@ -254,6 +259,7 @@ async def _refresh_candidate_telegram_cards(bot, candidate, vacancy):
         card_text = tc.build_candidate_card_html(
             candidate,
             vacancy["title"],
+            vacancy=vacancy,
             status_key=candidate.get("client_status", "wait"),
             locked=True,
             kind=kind,
@@ -346,6 +352,7 @@ async def _finalize_comment(
             text = tc.build_candidate_card_html(
                 candidate,
                 vacancy["title"],
+                vacancy=vacancy,
                 status_key=candidate.get("client_status", "wait"),
                 locked=True,
                 kind=kind,

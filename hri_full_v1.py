@@ -818,7 +818,7 @@ def _next_vacancy_id(vacancies):
     return max(v.get("id", 0) for v in vacancies) + 1
 
 
-def create_vacancy(title, chat_id, client_id=0, *, documents=None):
+def create_vacancy(title, chat_id, client_id=0, *, documents=None, show_portfolio_field=False):
     from telegram_notify import normalize_chat_id
     vacancies = load_vacancies()
     title = (title or "").strip()
@@ -841,6 +841,7 @@ def create_vacancy(title, chat_id, client_id=0, *, documents=None):
         "vacancy_summary": "",
         "documents": docs,
         "candidates": [],
+        "show_portfolio_field": bool(show_portfolio_field),
     }
     vacancies.append(new_vacancy)
     save_vacancies(vacancies)
@@ -866,8 +867,32 @@ def create_vacancy_from_template(template_id, title, chat_id=None, client_id=Non
         documents=documents,
     )
 
-def update_vacancy_docs(vacancy_title, docs_dict):
+def update_vacancy_docs_by_id(vacancy_id, docs_dict, *, replace_documents=False):
+    """Обновляет documents у вакансии по id (надёжнее, чем по названию)."""
     vacancies = load_vacancies()
+    for v in vacancies:
+        if v.get("id") != vacancy_id:
+            continue
+        if "documents" not in v:
+            v["documents"] = _empty_vacancy_documents()
+        if replace_documents:
+            notes = (v["documents"].get("notes") or "")
+            v["documents"] = {**_empty_vacancy_documents(), "notes": notes}
+        v["documents"].update(docs_dict)
+        save_vacancies(vacancies)
+        return True
+    return False
+
+
+def update_vacancy_docs(vacancy_title, docs_dict, *, vacancy_id=None):
+    if vacancy_id is not None:
+        return update_vacancy_docs_by_id(vacancy_id, docs_dict)
+    vacancies = load_vacancies()
+    matches = [v for v in vacancies if v.get("title") == vacancy_title]
+    if len(matches) > 1:
+        active = [v for v in matches if v.get("active", True)]
+        if len(active) == 1:
+            return update_vacancy_docs_by_id(active[0]["id"], docs_dict)
     for v in vacancies:
         if v["title"] == vacancy_title:
             if "documents" not in v:
@@ -1395,6 +1420,7 @@ def build_vacancy_deps():
         "create_vacancy": create_vacancy,
         "create_vacancy_from_template": create_vacancy_from_template,
         "update_vacancy_docs": update_vacancy_docs,
+        "update_vacancy_docs_by_id": update_vacancy_docs_by_id,
         "extract_text": extract_text,
         "extract_text_from_pdf_url": extract_text_from_pdf_url,
         "get_direct_yandex_link": get_direct_yandex_link,
@@ -1891,8 +1917,9 @@ with tab5:
 затем генерация или импорт документов. Расшифровка разговора с заказчиком —
 через загрузку аудио или видео (нужен установленный ffmpeg) или готовый текст.
 
-**История** — архив ранее сгенерированных пакетов. Можно загрузить старый пакет
-и применить к активной вакансии.
+**История** — архив ранее сгенерированных пакетов. Нажмите «Загрузить» у нужного пакета,
+выберите вакансию и «Применить» — **прежние документы вакансии будут полностью заменены**
+пакетом из истории (поля, которых нет в пакете, очищаются).
 
 **Настройки** — чаты Telegram по отделам, список всех вакансий, шаблоны,
 подключение Google Calendar. Удаление вакансии из общего списка — тоже здесь,
@@ -1996,72 +2023,14 @@ with tab5:
 
 # ---------- ВКЛАДКА 6: ИСТОРИЯ ГЕНЕРАЦИЙ ----------
 with tab6:
-    st.header("📜 История генераций")
-    st.caption("Все ранее созданные пакеты документов. Вы можете загрузить любой из них для просмотра, доработки или экспорта.")
+    from vacancy_prep import render_history_tab
 
-    if "generated" in st.session_state:
-        gen = st.session_state.generated
-        active_v = [v for v in load_vacancies() if v.get("active", True)]
-        if active_v:
-            from ui_helpers import selectbox_no_default
-            apply_target = selectbox_no_default(
-                "Применить загруженный пакет к вакансии",
-                [v["title"] for v in active_v],
-                key="hist_apply_vacancy",
-            )
-            if st.button("📥 Применить пакет к вакансии", key="hist_apply_btn"):
-                if not apply_target:
-                    st.warning("Выберите вакансию из списка.")
-                else:
-                    update_vacancy_docs(apply_target, {
-                        "profile": json.dumps(gen.get("профиль", {}), ensure_ascii=False, indent=2),
-                        "vacancy_text": gen.get("текст_вакансии", ""),
-                        "questions": json.dumps(gen.get("опросник", []), ensure_ascii=False, indent=2),
-                        "keywords": ", ".join(gen.get("ключевые_слова", [])),
-                    })
-                    applied = next(v for v in active_v if v["title"] == apply_target)
-                    st.session_state.opened_vacancy_id = applied["id"]
-                    st.success(f"Пакет применён к «{apply_target}». Откройте вкладку «Вакансии».")
-                    st.rerun()
-
-    index = get_history_index()
-    if not index:
-        st.info("История пуста. Сгенерируйте документы во вкладке «Вакансии» → «Создание новой вакансии», чтобы они появились здесь.")
-    else:
-        for i, rec in enumerate(index):
-            with st.expander(f"📄 {rec['datetime']} – {rec['title'] or 'Без названия'}"):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**Время:** {rec['datetime']}")
-                    st.markdown(f"**Должность:** {rec['title']}")
-                    if rec['vacancy_title']:
-                        st.markdown(f"**Связанная вакансия:** {rec['vacancy_title']}")
-                    st.markdown(f"**Превью текста вакансии:**")
-                    st.text(rec['preview'] if rec['preview'] else "(нет текста)")
-                with col2:
-                    if st.button("📂 Загрузить", key=f"load_{i}"):
-                        data = load_generation_from_history(rec['filename'])
-                        if data:
-                            st.session_state.generated = data
-                            st.success(f"Загружен пакет от {rec['datetime']}! Примените его во вкладке «Вакансии» → «Документы».")
-                            st.rerun()
-                        else:
-                            st.error("Ошибка загрузки файла.")
-                    data_for_export = load_generation_from_history(rec['filename'])
-                    if data_for_export:
-                        st.download_button(
-                            "📥 Скачать JSON",
-                            data=json.dumps(data_for_export, ensure_ascii=False, indent=2),
-                            file_name=rec['filename'],
-                            mime="application/json",
-                            key=f"export_hist_{i}"
-                        )
-                    if st.button("🗑️ Удалить", key=f"del_{i}"):
-                        if delete_generation_from_history(rec['filename']):
-                            st.success("Пакет удалён из истории.")
-                            st.rerun()
-                        else:
-                            st.error("Ошибка удаления.")
+    render_history_tab(
+        build_vacancy_deps(),
+        get_history_index=get_history_index,
+        load_generation_from_history=load_generation_from_history,
+        delete_generation_from_history=delete_generation_from_history,
+    )
 
 # ---------- ВКЛАДКА 7: НАСТРОЙКИ ----------
 with tab_settings:

@@ -100,12 +100,17 @@ def render_profile_display(profile):
 
 
 def save_documents_from_editor(vacancy, profile, vacancy_text, questions, keywords, deps):
-    deps["update_vacancy_docs"](vacancy["title"], {
+    updater = deps.get("update_vacancy_docs_by_id") or deps["update_vacancy_docs"]
+    payload = {
         "profile": profile,
         "vacancy_text": vacancy_text,
         "questions": questions,
         "keywords": keywords,
-    })
+    }
+    if deps.get("update_vacancy_docs_by_id"):
+        updater(vacancy["id"], payload)
+    else:
+        updater(vacancy["title"], payload)
 
 
 def import_text_from_url(url, deps):
@@ -385,6 +390,311 @@ def _init_doc_state(vacancy, docs):
         st.session_state[fp_key] = db_fp
 
     return prof_key, vac_key, q_key, kw_key
+
+
+def _documents_from_history_package(generated):
+    """
+    Собирает документы вакансии из пакета истории.
+    Отсутствующие в пакете поля — пустые строки (полная замена, не слияние).
+    Возвращает (docs_dict, written_labels, cleared_labels).
+    """
+    docs = {
+        "profile": "",
+        "vacancy_text": "",
+        "questions": "",
+        "keywords": "",
+    }
+    written = []
+    cleared = []
+
+    if _profile_has_content(generated.get("профиль")):
+        docs["profile"] = json.dumps(
+            generated.get("профиль", {}), ensure_ascii=False, indent=2
+        )
+        written.append("профиль")
+    else:
+        cleared.append("профиль")
+
+    if _questionnaire_has_content(generated.get("опросник")):
+        docs["questions"] = json.dumps(
+            generated.get("опросник", []), ensure_ascii=False, indent=2
+        )
+        written.append("опросник")
+    else:
+        cleared.append("опросник")
+
+    if (generated.get("текст_вакансии") or "").strip():
+        docs["vacancy_text"] = generated.get("текст_вакансии", "")
+        written.append("текст вакансии")
+    else:
+        cleared.append("текст вакансии")
+
+    if generated.get("ключевые_слова"):
+        docs["keywords"] = ", ".join(generated.get("ключевые_слова", []))
+        written.append("ключевые слова")
+    else:
+        cleared.append("ключевые слова")
+
+    return docs, written, cleared
+
+
+def apply_package_from_history(vacancy, generated_raw, deps):
+    """
+    Полностью заменяет документы вакансии пакетом из истории.
+    Возвращает (saved: bool, written_labels: list[str], cleared_labels: list[str]).
+    """
+    gen = dict(generated_raw or {})
+    gen = _normalize_generated_doc_keys(gen)
+    gen = deps["normalize_docs"](gen)
+    gen = _prepare_generated_for_save(gen)
+    docs, written, cleared = _documents_from_history_package(gen)
+    if not written:
+        return False, [], cleared
+
+    saved = deps["update_vacancy_docs_by_id"](
+        vacancy["id"], docs, replace_documents=True
+    )
+    if saved:
+        invalidate_doc_session_state(vacancy["id"])
+        title = vacancy.get("title", "")
+        written_text = ", ".join(written)
+        msg = (
+            f"✅ Документы вакансии «{title}» заменены пакетом из истории: {written_text}."
+        )
+        if cleared:
+            msg += f" Очищены поля без данных в пакете: {', '.join(cleared)}."
+        msg += " Откройте «Вакансии в работе» → «Документы по вакансии»."
+        _set_doc_gen_flash(msg)
+    return saved, written, cleared
+
+
+def describe_history_package(generated):
+    """Краткое описание содержимого пакета для UI истории."""
+    if not isinstance(generated, dict):
+        return []
+    parts = []
+    if _profile_has_content(generated.get("профиль")):
+        parts.append("профиль")
+    questionnaire = generated.get("опросник")
+    if _questionnaire_has_content(questionnaire):
+        if isinstance(questionnaire, list):
+            parts.append(f"опросник ({len(questionnaire)} вопр.)")
+        else:
+            parts.append("опросник")
+    if (generated.get("текст_вакансии") or "").strip():
+        parts.append("текст вакансии")
+    keywords = generated.get("ключевые_слова") or []
+    if keywords:
+        parts.append(f"ключевые слова ({len(keywords)})")
+    return parts
+
+
+def _vacancy_history_picker_options(vacancies):
+    """Подписи для выбора вакансии; при одинаковых названиях — id и дата."""
+    title_counts = {}
+    for v in vacancies:
+        title = (v.get("title") or "").strip()
+        title_counts[title] = title_counts.get(title, 0) + 1
+
+    labels = []
+    by_label = {}
+    for v in vacancies:
+        title = (v.get("title") or "").strip()
+        if title_counts.get(title, 0) > 1:
+            created = (v.get("created_at") or "")[:10]
+            label = f"{title} · id {v['id']} · {created}"
+        else:
+            label = title
+        labels.append(label)
+        by_label[label] = v
+    return labels, by_label
+
+
+def render_history_tab(
+    deps,
+    *,
+    get_history_index,
+    load_generation_from_history,
+    delete_generation_from_history,
+):
+    """Вкладка «История генераций»."""
+    from ui_helpers import selectbox_no_default
+
+    st.header("📜 История генераций")
+    st.caption(
+        "Ранее созданные пакеты документов. Загрузите пакет, выберите вакансию "
+        "и нажмите «Применить» — **прежние документы вакансии будут полностью заменены** "
+        "содержимым пакета."
+    )
+
+    _render_doc_gen_flash()
+
+    success_msg = st.session_state.pop("hist_apply_success", None)
+    if success_msg:
+        st.success(success_msg)
+
+    load_msg = st.session_state.pop("hist_load_message", None)
+    if load_msg:
+        st.info(load_msg)
+
+    gen = st.session_state.get("generated")
+    loaded_rec = st.session_state.get("hist_loaded_rec")
+    if gen:
+        st.markdown("### 📦 Загруженный пакет")
+        if loaded_rec:
+            st.markdown(
+                f"**{loaded_rec.get('title') or 'Без названия'}** · "
+                f"{loaded_rec.get('datetime', '')}"
+            )
+            if loaded_rec.get("vacancy_title"):
+                st.caption(f"Исходная вакансия при генерации: {loaded_rec['vacancy_title']}")
+
+        package_parts = describe_history_package(gen)
+        if package_parts:
+            st.markdown("**Содержимое:** " + ", ".join(package_parts))
+        else:
+            st.warning(
+                "В пакете не найдено распознанных документов. "
+                "Проверьте файл JSON или выберите другой пакет."
+            )
+
+        active_v = [v for v in deps["load_vacancies"]() if v.get("active", True)]
+        if not active_v:
+            st.warning("Нет активных вакансий — создайте вакансию, чтобы применить пакет.")
+        else:
+            picker_labels, picker_map = _vacancy_history_picker_options(active_v)
+            apply_target = selectbox_no_default(
+                "Применить пакет к вакансии",
+                picker_labels,
+                key="hist_apply_vacancy",
+                help_text=(
+                    "Выберите вакансию, в которую нужно записать документы из пакета. "
+                    "Если названия совпадают, смотрите id и дату создания."
+                ),
+            )
+            if st.button("📥 Применить пакет к вакансии", key="hist_apply_btn", type="primary"):
+                if not apply_target:
+                    st.warning("Выберите вакансию из списка.")
+                elif not package_parts:
+                    st.error("Нечего применять: пакет пустой или в неверном формате.")
+                else:
+                    vacancy = picker_map[apply_target]
+                    apply_title = vacancy.get("title", apply_target)
+                    with st.spinner(
+                        f"Замена документов в «{apply_title}» (id {vacancy['id']})…"
+                    ):
+                        saved, written, cleared = apply_package_from_history(
+                            vacancy, gen, deps
+                        )
+                    if saved and written:
+                        st.session_state.opened_vacancy_id = vacancy["id"]
+                        success = (
+                            f"✅ Документы «{apply_title}» (id {vacancy['id']}) заменены: "
+                            f"{', '.join(written)}."
+                        )
+                        if cleared:
+                            success += (
+                                f" Очищены (не было в пакете): {', '.join(cleared)}."
+                            )
+                        success += (
+                            " Откройте «Вакансии в работе» → «Документы по вакансии»."
+                        )
+                        st.session_state.hist_apply_success = success
+                        st.rerun()
+                    elif not written:
+                        st.error(
+                            "Пакет не содержит документов для сохранения "
+                            "(нужен хотя бы профиль или опросник)."
+                        )
+                    else:
+                        st.error(
+                            f"Не удалось сохранить документы для «{apply_title}» "
+                            f"(id {vacancy['id']})."
+                        )
+
+        st.divider()
+
+    index = get_history_index()
+    if not index:
+        st.info(
+            "История пуста. Сгенерируйте документы во вкладке «Вакансии» → "
+            "«Создание новой вакансии», чтобы они появились здесь."
+        )
+        return
+
+    st.markdown("### Архив пакетов")
+    for i, rec in enumerate(index):
+        with st.expander(f"📄 {rec['datetime']} – {rec['title'] or 'Без названия'}"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**Время:** {rec['datetime']}")
+                st.markdown(f"**Должность:** {rec['title']}")
+                if rec.get("vacancy_title"):
+                    st.markdown(f"**Связанная вакансия:** {rec['vacancy_title']}")
+                st.markdown("**Превью текста вакансии:**")
+                st.text(rec.get("preview") or "(нет текста)")
+            with col2:
+                if st.button("📂 Загрузить", key=f"load_{i}"):
+                    data = load_generation_from_history(rec["filename"])
+                    if data:
+                        st.session_state.generated = data
+                        st.session_state.hist_loaded_rec = {
+                            "filename": rec["filename"],
+                            "datetime": rec["datetime"],
+                            "title": rec.get("title"),
+                            "vacancy_title": rec.get("vacancy_title") or "",
+                        }
+                        parts = describe_history_package(data)
+                        parts_text = ", ".join(parts) if parts else "документы не распознаны"
+                        st.session_state.hist_load_message = (
+                            f"Пакет от {rec['datetime']} загружен ({parts_text}). "
+                            "Выберите вакансию выше и нажмите «Применить пакет к вакансии»."
+                        )
+                        linked = (rec.get("vacancy_title") or "").strip()
+                        active_for_link = [
+                            v for v in deps["load_vacancies"]() if v.get("active", True)
+                        ]
+                        picker_labels, picker_map = _vacancy_history_picker_options(
+                            active_for_link
+                        )
+                        if linked:
+                            matches = [
+                                label
+                                for label, vac in picker_map.items()
+                                if vac.get("title") == linked
+                            ]
+                            if len(matches) == 1:
+                                st.session_state["hist_apply_vacancy"] = matches[0]
+                            elif len(matches) > 1:
+                                newest = max(
+                                    (picker_map[m] for m in matches),
+                                    key=lambda v: v.get("created_at") or "",
+                                )
+                                for label, vac in picker_map.items():
+                                    if vac.get("id") == newest.get("id"):
+                                        st.session_state["hist_apply_vacancy"] = label
+                                        break
+                        st.rerun()
+                    else:
+                        st.error("Не удалось прочитать файл пакета.")
+                data_for_export = load_generation_from_history(rec["filename"])
+                if data_for_export:
+                    st.download_button(
+                        "📥 Скачать JSON",
+                        data=json.dumps(data_for_export, ensure_ascii=False, indent=2),
+                        file_name=rec["filename"],
+                        mime="application/json",
+                        key=f"export_hist_{i}",
+                    )
+                if st.button("🗑️ Удалить", key=f"del_{i}"):
+                    if delete_generation_from_history(rec["filename"]):
+                        if st.session_state.get("hist_loaded_rec", {}).get("filename") == rec["filename"]:
+                            st.session_state.pop("generated", None)
+                            st.session_state.pop("hist_loaded_rec", None)
+                        st.success("Пакет удалён из истории.")
+                        st.rerun()
+                    else:
+                        st.error("Ошибка удаления.")
 
 
 def render_profile_section(vacancy, prof_key, deps):
@@ -673,8 +983,34 @@ def render_documents_editor(entity, deps, *, mode="vacancy", template_id=None):
                     )
 
 
+def render_vacancy_candidate_settings(vacancy, deps):
+    """Настройки полей карточки кандидата для вакансии."""
+    from vacancy_store import migrate_vacancy
+
+    migrate_vacancy(vacancy)
+    with st.expander("⚙️ Настройки карточки кандидата", expanded=False):
+        show_portfolio = st.checkbox(
+            "Поле «Портфолио» в карточке кандидата",
+            value=bool(vacancy.get("show_portfolio_field")),
+            key=f"vac_portfolio_{vacancy['id']}",
+            help=(
+                "Если включено — в карточке появится поле ссылки на портфолио. "
+                "При заполнении ссылка отобразится в сообщении в Telegram."
+            ),
+        )
+        if st.button("Сохранить настройки", key=f"save_vac_settings_{vacancy['id']}"):
+            all_v = deps["load_vacancies"]()
+            for v in all_v:
+                if v["id"] == vacancy["id"]:
+                    v["show_portfolio_field"] = show_portfolio
+            deps["save_vacancies"](all_v)
+            st.success("Настройки сохранены")
+            st.rerun()
+
+
 def render_existing_documents_zone(vacancy, deps):
     """Подзона «Документы по вакансии» — только просмотр и редактирование."""
+    render_vacancy_candidate_settings(vacancy, deps)
     render_documents_editor(vacancy, deps, mode="vacancy")
 
     with st.expander("📌 Сохранить как шаблон", expanded=False):
@@ -1187,6 +1523,13 @@ def render_new_vacancy_form(deps):
     else:
         st.warning("Добавьте чат во вкладке «Настройки».")
 
+    show_portfolio_field = st.checkbox(
+        "Поле «Портфолио» в карточке кандидата",
+        value=False,
+        key="new_vac_show_portfolio",
+        help="Можно включить позже в настройках вакансии.",
+    )
+
     if st.button("Создать вакансию", key="create_vac_btn", type="primary"):
         title = new_title.strip()
         if not title:
@@ -1207,6 +1550,12 @@ def render_new_vacancy_form(deps):
                         client_id=resolved_client if chat_id else None,
                     )
                     if ok:
+                        if show_portfolio_field:
+                            all_v = deps["load_vacancies"]()
+                            for v in all_v:
+                                if v["id"] == msg["id"]:
+                                    v["show_portfolio_field"] = True
+                            deps["save_vacancies"](all_v)
                         st.session_state.opened_vacancy_id = msg["id"]
                         st.session_state.creation_vacancy_title = title
                         st.success(
@@ -1219,7 +1568,9 @@ def render_new_vacancy_form(deps):
         elif not chat_id:
             st.warning("Выберите чат Telegram.")
         else:
-            ok, msg = deps["create_vacancy"](title, chat_id, client_id)
+            ok, msg = deps["create_vacancy"](
+                title, chat_id, client_id, show_portfolio_field=show_portfolio_field
+            )
             if ok:
                 st.session_state.opened_vacancy_id = None
                 st.session_state.creation_vacancy_title = title

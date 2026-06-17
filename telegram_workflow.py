@@ -188,6 +188,7 @@ async def apply_status_change(
         text = tc.build_candidate_card_html(
             candidate,
             vacancy["title"],
+            vacancy=vacancy,
             status_key=candidate.get("client_status", "wait"),
             locked=True,
             kind=kind,

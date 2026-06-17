@@ -151,7 +151,7 @@ def validate_task_message_fields(cand):
     return missing
 
 
-def build_primary_candidate_message(cand, vacancy_title):
+def build_primary_candidate_message(cand, vacancy_title, *, show_portfolio=False):
     name = _esc(cand.get("name", ""))
     vac = _esc(vacancy_title)
     lines = [
@@ -165,6 +165,10 @@ def build_primary_candidate_message(cand, vacancy_title):
         "",
         f"🎥 {_link(cand['video_link'], 'Запись собеседования')}",
     ]
+    if show_portfolio:
+        portfolio = (cand.get("portfolio_link") or "").strip()
+        if portfolio:
+            lines.extend(["", f"🎨 {_link(portfolio, 'Портфолио кандидата')}"])
     task = (cand.get("task_link") or "").strip()
     if task:
         lines.extend(["", f"✅ {_link(task, 'Выполненное задание')}"])

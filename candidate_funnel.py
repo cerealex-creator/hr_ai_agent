@@ -43,6 +43,7 @@ from interview_schedule import (
     sync_interview_calendar,
     INTERVIEW_STAGE,
 )
+from vacancy_store import vacancy_show_portfolio_field
 
 
 def new_candidate_template(vacancy_id):
@@ -52,6 +53,7 @@ def new_candidate_template(vacancy_id):
         "name": "",
         "resume_link": "",
         "hh_resume_link": "",
+        "portfolio_link": "",
         "video_link": "",
         "task_link": "",
         "transcript": "",
@@ -316,6 +318,13 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 value=cand.get("video_link", ""),
                 key=k("video"),
             )
+            if vacancy_show_portfolio_field(vacancy):
+                cand["portfolio_link"] = st.text_input(
+                    "Портфолио",
+                    value=cand.get("portfolio_link", ""),
+                    key=k("portfolio"),
+                    help="Ссылка на портфолио кандидата — попадёт в Telegram при отправке в чат.",
+                )
             cand["hr_comment"] = st.text_area(
                 "Комментарий HR", value=cand.get("hr_comment", ""), key=k("hr_comment"), height=80
             )
@@ -935,6 +944,9 @@ def render_add_candidate(vacancy, deps):
         hh_resume_link = st.text_input("Ссылка на резюме HH.ru")
         pdf = st.file_uploader("Или PDF резюме", type=["pdf"])
         video_link = st.text_input("Запись собеседования")
+        portfolio_link = ""
+        if vacancy_show_portfolio_field(vacancy):
+            portfolio_link = st.text_input("Портфолио")
         hr_comment = st.text_area("Комментарий")
         auto_extract = st.checkbox("Автоизвлечение данных из резюме", value=True)
         submitted = st.form_submit_button("Добавить")
@@ -944,6 +956,7 @@ def render_add_candidate(vacancy, deps):
             cand["resume_link"] = resume_link.strip()
             cand["hh_resume_link"] = hh_resume_link.strip()
             cand["video_link"] = video_link.strip()
+            cand["portfolio_link"] = portfolio_link.strip()
             cand["hr_comment"] = hr_comment.strip()
             cand["ignore_flags"] = deps["default_ignore_flags"]()
             if auto_extract:
