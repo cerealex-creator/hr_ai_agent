@@ -19,6 +19,10 @@ def _archive_prompt_key(vacancy_id):
     return f"archive_tpl_prompt_{vacancy_id}"
 
 
+def _delete_prompt_key(vacancy_id):
+    return f"delete_vac_prompt_{vacancy_id}"
+
+
 def _load_fresh_vacancy(vacancy, deps):
     return next(
         (v for v in deps["load_vacancies"]() if v["id"] == vacancy["id"]),
@@ -137,6 +141,47 @@ def render_active_vacancy_workspace(vacancy, deps):
             else:
                 _archive_vacancy_record(fresh, deps)
                 st.success("Вакансия закрыта.")
+                st.rerun()
+
+    with st.expander("🗑️ Удалить вакансию"):
+        st.warning(
+            "Удаление необратимо: вакансия и все кандидаты будут удалены из базы."
+        )
+        prompt_key = _delete_prompt_key(vacancy["id"])
+        if st.session_state.get(prompt_key):
+            c1, c2 = st.columns([1, 3])
+            with c1:
+                if st.button(
+                    "Удалить",
+                    key=f"del_vac_yes_{vacancy['id']}",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    from vacancy_store import delete_vacancy_by_id
+
+                    ok, msg = delete_vacancy_by_id(vacancy.get("id"))
+                    st.session_state.pop(prompt_key, None)
+                    if ok:
+                        st.success(msg)
+                        if st.session_state.get("opened_vacancy_id") == vacancy["id"]:
+                            st.session_state.opened_vacancy_id = None
+                        st.rerun()
+                    st.error(msg)
+            with c2:
+                if st.button(
+                    "Отмена",
+                    key=f"del_vac_no_{vacancy['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(prompt_key, None)
+                    st.rerun()
+        else:
+            if st.button(
+                "Запросить удаление",
+                key=f"del_vac_ask_{vacancy['id']}",
+                use_container_width=True,
+            ):
+                st.session_state[prompt_key] = True
                 st.rerun()
 
 

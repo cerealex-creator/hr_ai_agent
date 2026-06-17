@@ -3,6 +3,7 @@ import json
 import os
 import logging
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -74,6 +75,10 @@ register_client_zone_handlers(dp)
 register_group_chat_handlers(dp)
 
 REMINDER_INTERVAL_SEC = int(os.getenv("TELEGRAM_REMINDER_INTERVAL_SEC", "900"))
+NETWORK_RETRY_ATTEMPTS = int(os.getenv("TELEGRAM_NETWORK_RETRY_ATTEMPTS", "5"))
+NETWORK_RETRY_BASE_SEC = int(os.getenv("TELEGRAM_NETWORK_RETRY_BASE_SEC", "3"))
+POLL_RESTART_DELAY_SEC = int(os.getenv("TELEGRAM_POLL_RESTART_DELAY_SEC", "15"))
+POLL_RESTART_MAX_SEC = int(os.getenv("TELEGRAM_POLL_RESTART_MAX_SEC", "300"))
 
 # Временное хранилище для привязки пользователя к отделу (после глубокой ссылки)
 user_dept = {}
@@ -391,6 +396,88 @@ async def activate_vacancy(callback: types.CallbackQuery):
             return
     await callback.answer("Ошибка")
 
+def _network_errors():
+    try:
+        import aiohttp
+        client_errors = (aiohttp.ClientError,)
+    except ImportError:
+        client_errors = ()
+    return (TelegramNetworkError, asyncio.TimeoutError, *client_errors)
+
+
+async def _call_with_retries(label, coro_factory, *, required=True):
+    """Повторяет Telegram-запрос при временных сетевых сбоях."""
+    last_exc = None
+    for attempt in range(1, NETWORK_RETRY_ATTEMPTS + 1):
+        try:
+            return await coro_factory()
+        except _network_errors() as exc:
+            last_exc = exc
+            if attempt >= NETWORK_RETRY_ATTEMPTS:
+                break
+            delay = NETWORK_RETRY_BASE_SEC * attempt
+            logger.warning(
+                "%s: попытка %s/%s не удалась (%s), пауза %s с",
+                label,
+                attempt,
+                NETWORK_RETRY_ATTEMPTS,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    if required:
+        raise last_exc
+    logger.warning("%s: пропускаем после %s попыток (%s)", label, NETWORK_RETRY_ATTEMPTS, last_exc)
+    return None
+
+
+async def _close_bot_session():
+    session = getattr(bot, "session", None)
+    if session and not session.closed:
+        await session.close()
+
+
+async def _prepare_bot_for_polling():
+    await _call_with_retries(
+        "delete_webhook",
+        lambda: bot.delete_webhook(drop_pending_updates=False),
+        required=False,
+    )
+    me = await _call_with_retries("get_me", bot.get_me)
+    await _call_with_retries(
+        "register_bot_commands",
+        lambda: register_bot_commands(bot),
+    )
+    return me
+
+
+async def _run_polling_forever():
+    poll_delay = POLL_RESTART_DELAY_SEC
+    while True:
+        try:
+            me = await _prepare_bot_for_polling()
+            logger.info("Webhook сброшен, запуск polling для @%s", me.username)
+            poll_delay = POLL_RESTART_DELAY_SEC
+            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+            logger.info("Polling завершился штатно")
+            return
+        except _network_errors() as exc:
+            logger.warning(
+                "Сетевая ошибка polling (%s). Перезапуск через %s с",
+                exc,
+                poll_delay,
+            )
+        except Exception:
+            logger.exception(
+                "Неожиданная ошибка polling. Перезапуск через %s с",
+                poll_delay,
+            )
+        finally:
+            await _close_bot_session()
+        await asyncio.sleep(poll_delay)
+        poll_delay = min(int(poll_delay * 1.5), POLL_RESTART_MAX_SEC)
+
+
 # ---------- Напоминания ----------
 async def reminder_loop():
     await asyncio.sleep(30)
@@ -413,12 +500,12 @@ async def main():
         logger.info("vacancy.chat_id выровнены по chats_db")
     if prune_stale_telegram_posts():
         logger.info("Устаревшие telegram_posts удалены из базы")
-    await bot.delete_webhook(drop_pending_updates=False)
-    me = await bot.get_me()
-    await register_bot_commands(bot)
-    logger.info("Webhook сброшен, запуск polling для @%s", me.username)
     asyncio.create_task(reminder_loop())
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    await _run_polling_forever()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Остановка бота по Ctrl+C")

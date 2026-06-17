@@ -29,6 +29,14 @@ DIGEST_SCHEDULE = (
 )
 DIGEST_TIME_TOLERANCE_MIN = 12
 
+# Накопленное за сб–вс отправляем в понедельник с этого времени (TELEGRAM_REMINDER_TZ)
+MONDAY_CATCHUP_HOUR = 10
+MONDAY_CATCHUP_MINUTE = 0
+
+# Встречи с 09:00 → напоминание «за час» не раньше 08:00
+INTERVIEW_REMINDER_EARLIEST_HOUR = 8
+INTERVIEW_REMINDER_EARLIEST_MINUTE = 0
+
 
 def _normalize_now(now=None):
     tz = get_timezone()
@@ -41,8 +49,24 @@ def _normalize_now(now=None):
 
 
 def is_reminder_day_off(now=None):
-    """Суббота и воскресенье — без автоматических напоминаний в чат."""
-    return _normalize_now(now).weekday() >= 5
+    """Сб–вс без напоминаний; в понедельник — до 10:00 (накопленное за выходные)."""
+    now = _normalize_now(now)
+    if now.weekday() >= 5:
+        return True
+    if now.weekday() == 0:
+        return now.hour * 60 + now.minute < MONDAY_CATCHUP_HOUR * 60 + MONDAY_CATCHUP_MINUTE
+    return False
+
+
+def is_interview_reminder_allowed(now=None):
+    """Напоминание за ~1 ч до встречи: не в сб–вс и не раньше 08:00."""
+    now = _normalize_now(now)
+    if now.weekday() >= 5:
+        return False
+    return (
+        now.hour * 60 + now.minute
+        >= INTERVIEW_REMINDER_EARLIEST_HOUR * 60 + INTERVIEW_REMINDER_EARLIEST_MINUTE
+    )
 
 
 def _esc_local(text):
@@ -131,8 +155,7 @@ def collect_reminder_jobs(now=None):
     now = _normalize_now(now)
     tz = now.tzinfo
     data = load_vacancies()
-    if is_reminder_day_off(now):
-        return [], data
+    quiet = is_reminder_day_off(now)
 
     jobs = []
 
@@ -151,7 +174,7 @@ def collect_reminder_jobs(now=None):
             migrate_candidate(cand)
             cand_id = cand.get("id")
 
-            if _candidate_has_meeting(cand):
+            if _candidate_has_meeting(cand) and is_interview_reminder_allowed(now):
                 dt = parse_interview_datetime(
                     cand.get("office_interview_date"),
                     cand.get("office_interview_time"),
@@ -176,6 +199,9 @@ def collect_reminder_jobs(now=None):
                                 "candidate_id": cand_id,
                                 "mark_type": "interview_60",
                             })
+
+            if quiet:
+                continue
 
             if not is_visible_in_client_zone(cand):
                 continue

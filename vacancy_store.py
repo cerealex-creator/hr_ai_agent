@@ -226,6 +226,43 @@ def save_vacancies_list(vacancies_list):
     save_vacancies({"vacancies": vacancies_list})
 
 
+def delete_vacancy_by_id(vacancy_id):
+    """
+    Удаляет вакансию из базы.
+    Возвращает (ok, message).
+    """
+    if not vacancy_id:
+        return False, "Не указан id вакансии"
+    data = load_vacancies()
+    vacancies = data.get("vacancies", [])
+    before = len(vacancies)
+    vacancies = [v for v in vacancies if v.get("id") != vacancy_id]
+    if len(vacancies) == before:
+        return False, "Вакансия не найдена"
+    data["vacancies"] = vacancies
+    save_vacancies(data)
+    return True, "Вакансия удалена"
+
+
+def delete_vacancy_by_title(title):
+    """
+    Удаляет вакансию по названию (в проекте названия уникальны).
+    Возвращает (ok, message).
+    """
+    t = (title or "").strip()
+    if not t:
+        return False, "Не указано название вакансии"
+    data = load_vacancies()
+    vacancies = data.get("vacancies", [])
+    before = len(vacancies)
+    vacancies = [v for v in vacancies if (v.get("title") or "").strip() != t]
+    if len(vacancies) == before:
+        return False, "Вакансия не найдена"
+    data["vacancies"] = vacancies
+    save_vacancies(data)
+    return True, "Вакансия удалена"
+
+
 def _latest_hr_stage_change_at(candidate):
     history = candidate.get("hr_stage_history") or []
     if not history:
