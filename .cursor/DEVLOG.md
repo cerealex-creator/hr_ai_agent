@@ -471,7 +471,7 @@
 
 **Данные / конфиг:** `.env.example` — `TELEGRAM_FORCE_IPV4`
 
-**Git:** commit + push `main`
+**Git:** commit `da428f7`, push `main`
 
 **Открыто / риски:**
 - Telegram с Timeweb VPS (РФ) недоступен — бот локально с VPN; WireGuard отложен.
