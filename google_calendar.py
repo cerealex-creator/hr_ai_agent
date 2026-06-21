@@ -52,29 +52,56 @@ def get_calendar_status():
         return "not_configured", "Нет файла credentials (data/google_calendar_credentials.json)"
     if not token_exists():
         return "needs_auth", "Credentials есть — нужна авторизация (кнопка ниже)"
+    _, err = get_calendar_service()
+    if err:
+        if "invalid_grant" in err.lower() or "expired" in err.lower() or "revoked" in err.lower():
+            return "needs_auth", "Токен Google Calendar устарел — нажмите «Подключить Google Calendar»"
+        return "error", err
     return "ready", "Google Calendar подключён"
 
 
-def _get_credentials():
+def _load_credentials():
+    """Загрузка и refresh без интерактива (для фоновой работы календаря)."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
 
     token_path = get_token_path()
-    creds = None
+    if not os.path.exists(token_path):
+        return None
+
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if creds.valid:
+        return creds
+
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            _save_credentials(creds)
+            return creds
+        except Exception:
+            return None
+
+    return None
+
+
+def _oauth_flow():
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    return InstalledAppFlow.from_client_secrets_file(get_credentials_path(), SCOPES)
+
+
+def _get_credentials():
+    """Интерактивная авторизация (открывает браузер). Только по кнопке в настройках."""
+    creds = _load_credentials()
+    if creds:
+        return creds
+
+    token_path = get_token_path()
     if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        os.remove(token_path)
 
-    if creds and creds.valid:
-        return creds
-
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _save_credentials(creds)
-        return creds
-
-    flow = InstalledAppFlow.from_client_secrets_file(get_credentials_path(), SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=True)
+    flow = _oauth_flow()
+    creds = flow.run_local_server(port=8765, open_browser=True, prompt="consent")
     _save_credentials(creds)
     return creds
 
@@ -91,7 +118,9 @@ def get_calendar_service():
     try:
         from googleapiclient.discovery import build
 
-        creds = _get_credentials()
+        creds = _load_credentials()
+        if not creds:
+            return None, "Токен Google Calendar устарел — переподключите в Настройках"
         service = build("calendar", "v3", credentials=creds, cache_discovery=False)
         return service, None
     except Exception as e:
@@ -102,8 +131,51 @@ def run_oauth_authorization():
     """Запускает OAuth в браузере. Возвращает (ok, message)."""
     if not credentials_file_exists():
         return False, f"Положите credentials JSON в {get_credentials_path()}"
+    token_path = get_token_path()
+    if os.path.exists(token_path):
+        os.remove(token_path)
     try:
         _get_credentials()
+        return True, "Авторизация успешна! Календарь подключён."
+    except Exception as e:
+        return False, (
+            f"{e}\n\n"
+            "Если в браузере «Подтверждение не отправлено» — не закрывайте Терминал и попробуйте:\n"
+            "  python google_calendar_auth.py --console"
+        )
+
+
+def run_oauth_console():
+    """Авторизация: ссылка в браузере, код вручную (если localhost не срабатывает)."""
+    from urllib.parse import parse_qs, urlparse
+
+    if not credentials_file_exists():
+        return False, f"Положите credentials JSON в {get_credentials_path()}"
+    token_path = get_token_path()
+    if os.path.exists(token_path):
+        os.remove(token_path)
+    try:
+        flow = _oauth_flow()
+        flow.redirect_uri = "http://localhost:8765/"
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        print("\n1) Откройте ссылку в браузере и разрешите доступ:\n")
+        print(auth_url)
+        print(
+            "\n2) После входа браузер может показать ошибку — это нормально.\n"
+            "   Скопируйте **весь адрес** из строки браузера (начинается с http://localhost:8765/?code=...)\n"
+            "   или только длинный код после code=\n"
+        )
+        pasted = input("3) Вставьте сюда и нажмите Enter:\n").strip()
+        if not pasted:
+            return False, "Код не введён"
+        if "code=" in pasted:
+            code = parse_qs(urlparse(pasted).query).get("code", [None])[0]
+        else:
+            code = pasted
+        if not code:
+            return False, "Не удалось извлечь code из вставленного текста"
+        flow.fetch_token(code=code)
+        _save_credentials(flow.credentials)
         return True, "Авторизация успешна! Календарь подключён."
     except Exception as e:
         return False, str(e)

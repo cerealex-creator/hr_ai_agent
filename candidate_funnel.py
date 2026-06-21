@@ -112,12 +112,7 @@ def _apply_calendar_sync(cand, vacancy, previous_stage=None, keep_calendar_event
     ok, msg = sync_interview_calendar(
         cand, vacancy["title"], previous_stage, keep_calendar_event=keep_calendar_event
     )
-    if msg:
-        if ok:
-            st.success(msg)
-        else:
-            st.warning(f"Google Calendar: {msg}")
-    return ok
+    return ok, msg
 
 
 def populate_from_resume(cand, resume_text, client, config):
@@ -148,6 +143,36 @@ def _send_task_completed_to_chat(vacancy, cand):
 
 def _candidates_snapshot_key(vacancy_id):
     return f"_cands_saved_snapshot_{vacancy_id}"
+
+
+_CAND_FUNNEL_RERUN_KEY = "_cand_funnel_rerun"
+_CAND_FUNNEL_FLASH_KEY = "_cand_funnel_flash"
+
+
+def _request_candidates_rerun():
+    st.session_state[_CAND_FUNNEL_RERUN_KEY] = True
+
+
+def _flush_candidates_rerun():
+    if st.session_state.pop(_CAND_FUNNEL_RERUN_KEY, False):
+        st.rerun()
+
+
+def _set_cand_funnel_flash(message, level="success"):
+    st.session_state[_CAND_FUNNEL_FLASH_KEY] = (level, message)
+
+
+def _render_cand_funnel_flash():
+    flash = st.session_state.pop(_CAND_FUNNEL_FLASH_KEY, None)
+    if not flash:
+        return
+    level, message = flash
+    if level == "success":
+        st.success(message)
+    elif level == "warning":
+        st.warning(message)
+    else:
+        st.info(message)
 
 
 def _candidates_snapshot(candidates):
@@ -236,7 +261,7 @@ def _render_candidate_resume_links(cand, k, vacancy, deps):
         if st.button("Готово", key=k("links_done")):
             st.session_state[edit_key] = False
             _persist_vacancy_candidates(vacancy, deps)
-            st.rerun()
+            _request_candidates_rerun()
         return
 
     buttons = []
@@ -252,7 +277,7 @@ def _render_candidate_resume_links(cand, k, vacancy, deps):
             if kind == "edit":
                 if st.button(label, key=k("links_edit"), use_container_width=True):
                     st.session_state[edit_key] = True
-                    st.rerun()
+                    _request_candidates_rerun()
             else:
                 st.link_button(label, url, key=k(f"{kind}_open_compact"), use_container_width=True)
 
@@ -293,12 +318,19 @@ def render_candidate_card(vacancy, cand, idx, deps):
         )
 
     collapse_key = k("collapse_after_stage")
+    expander_rev_key = k("expander_rev")
     stage_info_key = k("stage_info")
-    expanded = not st.session_state.pop(collapse_key, True)
+    if st.session_state.pop(collapse_key, False):
+        st.session_state[expander_rev_key] = st.session_state.get(expander_rev_key, 0) + 1
+    expander_rev = st.session_state.get(expander_rev_key, 0)
     if st.session_state.get(stage_info_key):
         st.info(st.session_state.pop(stage_info_key))
 
-    with st.expander(" · ".join(title_parts), expanded=expanded):
+    with st.expander(
+        " · ".join(title_parts),
+        expanded=expander_rev == 0,
+        key=k(f"exp_{expander_rev}"),
+    ):
         c1, c2 = st.columns([3, 1])
         with c1:
             cand["name"] = st.text_input("ФИО", value=cand.get("name", ""), key=k("name"))
@@ -531,19 +563,24 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                    _apply_calendar_sync(
+                    cal_ok, cal_msg = _apply_calendar_sync(
                         cand,
                         vacancy,
                         previous_stage=prev_stage,
                         keep_calendar_event=keep_calendar_event,
                     )
                     _persist_vacancy_candidates(vacancy, deps)
+                    if cal_msg:
+                        _set_cand_funnel_flash(
+                            cal_msg if cal_ok else f"Google Calendar: {cal_msg}",
+                            "success" if cal_ok else "warning",
+                        )
                     if suggested and target_stage != suggested:
                         st.session_state[stage_info_key] = (
                             f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}"
                         )
                     st.session_state[collapse_key] = True
-                    st.rerun()
+                    _request_candidates_rerun()
                 elif target_stage:
                     if current_stage == INTERVIEW_STAGE:
                         reset_reminders_if_schedule_changed(
@@ -551,15 +588,20 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                        _apply_calendar_sync(
+                        cal_ok, cal_msg = _apply_calendar_sync(
                             cand,
                             vacancy,
                             previous_stage=INTERVIEW_STAGE,
                             keep_calendar_event=keep_calendar_event,
                         )
                         _persist_vacancy_candidates(vacancy, deps)
+                        if cal_msg:
+                            _set_cand_funnel_flash(
+                                cal_msg if cal_ok else f"Google Calendar: {cal_msg}",
+                                "success" if cal_ok else "warning",
+                            )
                         st.session_state[collapse_key] = True
-                        st.rerun()
+                        _request_candidates_rerun()
                     else:
                         st.caption("Статус без изменений.")
 
@@ -573,14 +615,20 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             cand.get("office_interview_date"),
                             cand.get("office_interview_time"),
                         )
-                    _apply_calendar_sync(
+                    cal_ok, cal_msg = _apply_calendar_sync(
                         cand,
                         vacancy,
                         previous_stage=prev_stage,
                         keep_calendar_event=keep_calendar_event,
                     )
                     _persist_vacancy_candidates(vacancy, deps)
-                    st.rerun()
+                    if cal_msg:
+                        _set_cand_funnel_flash(
+                            cal_msg if cal_ok else f"Google Calendar: {cal_msg}",
+                            "success" if cal_ok else "warning",
+                        )
+                    st.session_state[collapse_key] = True
+                    _request_candidates_rerun()
 
             eval_ok_key = f"eval_ok_{vacancy['id']}_{cand.get('id', idx)}"
             if st.session_state.get(eval_ok_key):
@@ -652,7 +700,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         else:
                             msg = f"Оценка {score}/4 сохранена для «{cand.get('name', 'кандидат')}»."
                         st.session_state[eval_ok_key] = msg
-                        st.rerun()
+                        _request_candidates_rerun()
                     except Exception as e:
                         st.error(f"Ошибка оценки по резюме: {e}")
                 else:
@@ -760,7 +808,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                                         f"расшифровка сохранена ({len(transcript_text)} симв.)"
                                     )
                                 st.session_state[eval_int_ok_key] = ". ".join(parts) + "."
-                                st.rerun()
+                                _request_candidates_rerun()
                     except Exception as e:
                         st.error(f"Ошибка оценки по интервью: {e}")
 
@@ -994,6 +1042,7 @@ def render_candidates_zone(vacancy, deps):
     with tab_add:
         render_add_candidate(vacancy, deps)
     with tab_list:
+        _render_cand_funnel_flash()
         vacancies = deps["load_vacancies"]()
         vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
         all_candidates = sort_candidates_for_list(vacancy.get("candidates", []))
@@ -1010,6 +1059,7 @@ def render_candidates_zone(vacancy, deps):
 
         _ensure_candidates_snapshot(vacancy["id"], all_candidates)
         pending_banner = st.empty()
+        banner_save_clicked = False
 
         if not visible:
             st.info("Нет кандидатов в работе.")
@@ -1030,14 +1080,13 @@ def render_candidates_zone(vacancy, deps):
                         v["candidates"] = vacancy["candidates"]
                 deps["save_vacancies"](vacancies)
                 _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
-                st.rerun()
+                _request_candidates_rerun()
 
             if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
                 from corporate_ui import render_pending_changes_banner
 
                 with pending_banner.container():
-                    if render_pending_changes_banner(vacancy["id"]):
-                        st.rerun()
+                    banner_save_clicked = render_pending_changes_banner(vacancy["id"])
 
         save_col, reject_col = st.columns([1, 1])
         with save_col:
@@ -1056,7 +1105,14 @@ def render_candidates_zone(vacancy, deps):
                     st.session_state[show_rejected_key] = not show_rejected
                     st.rerun()
 
-        if save_clicked:
+        if save_clicked or banner_save_clicked:
             _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
             pending_banner.empty()
-            st.success("Сохранено!")
+            _set_cand_funnel_flash(
+                "Изменения по кандидатам сохранены!"
+                if banner_save_clicked
+                else "Сохранено!"
+            )
+            _request_candidates_rerun()
+
+        _flush_candidates_rerun()

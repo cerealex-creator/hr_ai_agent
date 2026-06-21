@@ -19,13 +19,12 @@ CORPORATE = {
 
 
 def render_pending_changes_banner(key_suffix):
-    """Плашка «есть изменения» с кнопкой Rerun, как в Streamlit."""
-    c = CORPORATE
+    """Плашка о несохранённых изменениях по кандидатам."""
     st.markdown(
-        f"""
+        """
         <div class="pending-changes-banner">
             <span class="pending-changes-dot"></span>
-            <span>Есть несохранённые изменения — нажмите <b>Rerun</b> или сохраните кандидатов</span>
+            <span>Есть несохранённые изменения по кандидатам — нажмите <b>Сохранить</b></span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -33,8 +32,8 @@ def render_pending_changes_banner(key_suffix):
     _, btn_col = st.columns([5, 1])
     with btn_col:
         return st.button(
-            "Rerun",
-            key=f"pending_rerun_{key_suffix}",
+            "💾 Сохранить",
+            key=f"pending_save_{key_suffix}",
             type="primary",
             use_container_width=True,
         )

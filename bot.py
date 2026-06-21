@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import logging
+
+import network_ipv4  # noqa: F401 — requests → IPv4
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
@@ -67,7 +69,26 @@ TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
 if not TOKEN:
     raise ValueError("Не задан TELEGRAM_BOT_TOKEN в окружении")
 
-bot = Bot(token=TOKEN)
+
+def _create_bot(token: str) -> Bot:
+    """На VPS с битым IPv6: TELEGRAM_FORCE_IPV4=1 в .env."""
+    force_ipv4 = os.getenv("TELEGRAM_FORCE_IPV4", "").strip().lower() in ("1", "true", "yes")
+    if not force_ipv4:
+        return Bot(token=token)
+    import socket
+
+    from aiogram.client.session.aiohttp import AiohttpSession
+
+    try:
+        return Bot(
+            token=token,
+            session=AiohttpSession(connector_kwargs={"family": socket.AF_INET}),
+        )
+    except TypeError:
+        return Bot(token=token)
+
+
+bot = _create_bot(TOKEN)
 dp = Dispatcher()
 logger = logging.getLogger(__name__)
 

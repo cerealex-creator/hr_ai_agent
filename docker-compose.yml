@@ -1,9 +1,10 @@
 services:
   hr-app:
-    build: .
+    build:
+      context: .
+      network: host
     container_name: hr-ai-agent
-    ports:
-      - "8501:8501"
+    network_mode: host
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
@@ -12,8 +13,11 @@ services:
     restart: unless-stopped
 
   hr-bot:
-    build: .
+    build:
+      context: .
+      network: host
     container_name: hr-ai-bot
+    network_mode: host
     command: ["python", "bot.py"]
     volumes:
       - ./data:/app/data

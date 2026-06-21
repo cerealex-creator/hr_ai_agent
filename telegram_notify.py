@@ -3,7 +3,8 @@
 import html
 import os
 
-import requests
+import network_ipv4  # noqa: F401 — requests → IPv4
+from network_ipv4 import get_requests_session
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,7 +71,7 @@ def get_bot_status():
     if not token:
         return False, "Не задан TELEGRAM_BOT_TOKEN в .env", {}
     try:
-        r = requests.get(
+        r = get_requests_session().get(
             f"https://api.telegram.org/bot{token}/getMe",
             timeout=15,
         )
@@ -115,7 +116,7 @@ def send_telegram_html(
     if reply_to_message_id is not None:
         payload["reply_to_message_id"] = reply_to_message_id
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        response = get_requests_session().post(url, json=payload, timeout=30)
         data = response.json()
         if data.get("ok"):
             message_id = data.get("result", {}).get("message_id")

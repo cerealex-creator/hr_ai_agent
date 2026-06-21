@@ -2206,6 +2206,10 @@ with tab_settings:
             )
 
             if credentials_file_exists():
+                st.caption(
+                    "Если кнопка не открывает браузер — в Терминале: "
+                    "`python google_calendar_auth.py` (из папки проекта с активным venv)."
+                )
                 if st.button("🔗 Подключить Google Calendar", key="settings_gcal_auth"):
                     from google_calendar import run_oauth_authorization
 

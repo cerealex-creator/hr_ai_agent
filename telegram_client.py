@@ -2,8 +2,6 @@
 
 from datetime import datetime, timedelta
 
-import requests
-
 from client_actions import find_candidate_by_id, find_candidate_by_tg_callback_id
 from models import CLIENT_ZONE_ENTRY_STAGE, set_hr_stage
 from vacancy_store import get_status_meta, load_vacancies, migrate_candidate, save_vacancies
@@ -21,6 +19,7 @@ from telegram_notify import (
     normalize_chat_id,
     send_telegram_html,
 )
+from network_ipv4 import get_requests_session
 
 WEEKDAY_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
@@ -278,7 +277,7 @@ def edit_telegram_message(chat_id, message_id, text, reply_markup=None, bot_toke
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     try:
-        response = requests.post(
+        response = get_requests_session().post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json=payload,
             timeout=30,
@@ -296,7 +295,7 @@ def edit_message_keyboard(chat_id, message_id, reply_markup, bot_token=None):
     if not token:
         return False, "Не задан TELEGRAM_BOT_TOKEN"
     try:
-        response = requests.post(
+        response = get_requests_session().post(
             f"https://api.telegram.org/bot{token}/editMessageReplyMarkup",
             json={
                 "chat_id": normalize_chat_id(chat_id),
