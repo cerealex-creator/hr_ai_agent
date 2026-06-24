@@ -9,6 +9,19 @@ model:
   api_key_env: "ROUTERAI_API_KEY"
   temperature: 0.3
   max_tokens: 4000
+  disable_thinking: true
+  max_tokens_by_task:
+    extract: 500
+    resume_eval: 1500
+    questionnaire: 2000
+    interview_eval: 2000
+  task_limits:
+    profile: 5000
+    resume: 8000
+    transcript: 10000
+    questionnaire: 4000
+    hr_comment: 2000
+    eval_comment: 1500
   supports_temperature: true
   token_param_type: "max_tokens"
 

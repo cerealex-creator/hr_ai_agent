@@ -7,6 +7,14 @@ from io import BytesIO
 import requests
 import PyPDF2
 
+from ai_helpers import (
+    create_chat_completion,
+    get_char_limit,
+    parse_ai_json_response,
+    trim_profile_for_eval,
+    trim_text,
+)
+
 RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки структурированные данные из текста резюме.
 Верни ТОЛЬКО валидный JSON без markdown:
 {
@@ -73,14 +81,6 @@ CANDIDATE_QUESTIONNAIRE_SYSTEM = (
 )
 
 
-def parse_ai_json_response(content):
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-    return json.loads(content.strip())
-
-
 def format_phone(phone):
     if not phone or str(phone).strip().lower() in ("нет информации", "—", "-", ""):
         return "Нет информации"
@@ -140,14 +140,16 @@ def format_salary(salary):
 def extract_data_from_resume(resume_text, client, config):
     if not resume_text or not resume_text.strip():
         raise ValueError("Пустой текст резюме")
-    response = client.chat.completions.create(
-        model=config["model"]["name"],
+    resume_limit = get_char_limit(config, "resume", 8000)
+    response = create_chat_completion(
+        client,
+        config,
+        "extract",
         messages=[
             {"role": "system", "content": RESUME_EXTRACT_SYSTEM},
-            {"role": "user", "content": f"Текст резюме:\n{resume_text[:12000]}"},
+            {"role": "user", "content": f"Текст резюме:\n{trim_text(resume_text, resume_limit)}"},
         ],
         temperature=0.1,
-        max_tokens=800,
     )
     data = parse_ai_json_response(response.choices[0].message.content)
     return {
@@ -182,36 +184,42 @@ def normalize_questionnaire_list(items):
     return [q for q in result if (q.get("вопрос") or "").strip()]
 
 
-def format_hr_comment_block(hr_comment):
+def format_hr_comment_block(hr_comment, config=None):
     text = (hr_comment or "").strip()
     if not text:
         return ""
+    limit = get_char_limit(config, "hr_comment", 2000) if config else 2000
     return (
         "\nКОММЕНТАРИЙ HR (обязательно учти при оценке — замечания рекрутера после контакта с кандидатом):\n"
-        f"{text[:4000]}\n"
+        f"{text[:limit]}\n"
     )
 
 
 def evaluate_resume_with_ai(
     resume_text, vacancy_profile, job_title, client, config, hr_comment=""
 ):
-    profile_block = vacancy_profile or "Профиль не задан"
-    hr_block = format_hr_comment_block(hr_comment)
-    response = client.chat.completions.create(
-        model=config["model"]["name"],
+    profile_block = trim_profile_for_eval(
+        vacancy_profile,
+        get_char_limit(config, "profile", 5000),
+    )
+    resume_limit = get_char_limit(config, "resume", 8000)
+    hr_block = format_hr_comment_block(hr_comment, config)
+    response = create_chat_completion(
+        client,
+        config,
+        "resume_eval",
         messages=[
             {"role": "system", "content": RESUME_EVAL_SYSTEM},
             {
                 "role": "user",
                 "content": (
-                    f"Должность: {job_title}\n\nПРОФИЛЬ:\n{profile_block[:8000]}\n\n"
-                    f"РЕЗЮМЕ:\n{resume_text[:12000]}"
+                    f"Должность: {job_title}\n\nПРОФИЛЬ:\n{profile_block}\n\n"
+                    f"РЕЗЮМЕ:\n{trim_text(resume_text, resume_limit)}"
                     f"{hr_block}"
                 ),
             },
         ],
         temperature=0.3,
-        max_tokens=config["model"]["max_tokens"],
     )
     result = parse_ai_json_response(response.choices[0].message.content)
     rating = result.get("rating", 0)
@@ -244,23 +252,32 @@ def generate_candidate_interview_questionnaire(
     questionnaire_rules="",
 ):
     """Персональный опросник: образец вакансии + уточнения по резюме."""
-    profile_block = vacancy_profile or "Профиль не задан"
+    profile_block = trim_profile_for_eval(
+        vacancy_profile,
+        get_char_limit(config, "profile", 5000),
+    )
+    resume_limit = get_char_limit(config, "resume", 8000)
+    eval_comment_limit = get_char_limit(config, "eval_comment", 1500)
     base_list = normalize_questionnaire_list(base_questionnaire or [])
     base_json = json.dumps(base_list, ensure_ascii=False, indent=2) if base_list else "[]"
+    if len(base_json) > get_char_limit(config, "questionnaire", 4000):
+        base_json = base_json[: get_char_limit(config, "questionnaire", 4000)]
 
     user_parts = [
         f"Должность: {job_title}",
-        f"ПРОФИЛЬ:\n{profile_block[:8000]}",
-        f"РЕЗЮМЕ:\n{resume_text[:12000]}",
+        f"ПРОФИЛЬ:\n{profile_block}",
+        f"РЕЗЮМЕ:\n{trim_text(resume_text, resume_limit)}",
         f"ТЕКУЩИЙ ОПРОСНИК ВАКАНСИИ (выбери ключевые вопросы, объединяй повторяющиеся):\n{base_json}",
     ]
     if (eval_comment or "").strip():
-        user_parts.append(f"КОММЕНТАРИЙ ИИ ПО РЕЗЮМЕ:\n{eval_comment[:2000]}")
+        user_parts.append(
+            f"КОММЕНТАРИЙ ИИ ПО РЕЗЮМЕ:\n{trim_text(eval_comment, eval_comment_limit)}"
+        )
     if strengths:
         user_parts.append("СИЛЬНЫЕ СТОРОНЫ:\n" + "\n".join(f"- {s}" for s in strengths[:10]))
     if weaknesses:
         user_parts.append("СЛАБЫЕ СТОРОНЫ / ПРОБЕЛЫ:\n" + "\n".join(f"- {w}" for w in weaknesses[:10]))
-    hr_block = format_hr_comment_block(hr_comment)
+    hr_block = format_hr_comment_block(hr_comment, config)
     if hr_block:
         user_parts.append(hr_block.strip())
     user_parts.append(
@@ -274,14 +291,15 @@ def generate_candidate_interview_questionnaire(
     if (questionnaire_rules or "").strip():
         system_content += f"\n\n{questionnaire_rules.strip()}"
 
-    response = client.chat.completions.create(
-        model=config["model"]["name"],
+    response = create_chat_completion(
+        client,
+        config,
+        "questionnaire",
         messages=[
             {"role": "system", "content": system_content},
             {"role": "user", "content": "\n\n".join(user_parts)},
         ],
         temperature=0.3,
-        max_tokens=config["model"]["max_tokens"],
     )
     result = parse_ai_json_response(response.choices[0].message.content)
     raw = result.get("опросник", result if isinstance(result, list) else [])

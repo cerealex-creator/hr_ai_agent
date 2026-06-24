@@ -26,6 +26,7 @@ import tempfile
 from datetime import datetime
 import glob
 import re
+import logging
 from urllib.parse import quote
 from corporate_ui import apply_corporate_ui
 from eval_ui import render_ai_score_badge
@@ -96,6 +97,11 @@ def load_config(config_path="hri_full_v1_config.yaml"):
         return yaml.safe_load(f)
 
 config = load_config()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 api_key_env = config["model"].get("api_key_env", "PROXYAPI_KEY")
 api_key = os.getenv(api_key_env)
@@ -435,28 +441,12 @@ def transcribe_video_from_link(video_link):
         
         file_size = os.path.getsize(tmp_path)
         print(f"✅ Файл скачан: {tmp_path}, размер: {file_size / (1024*1024):.1f} МБ")
-        
-        # Конвертируем в WAV (надёжный формат для SpeechKit)
-        print(f"🔄 Конвертация в WAV...")
-        wav_path = tmp_path + ".wav"
-        
-        # Используем ffmpeg для конвертации в WAV
-        subprocess.run([
-            'ffmpeg', '-y',
-            '-i', tmp_path,
-            '-ar', '16000',        # 16kHz
-            '-ac', '1',             # моно
-            '-c:a', 'pcm_s16le',   # 16-bit PCM
-            wav_path
-        ], check=True, capture_output=True)
-        
-        print(f"✅ WAV создан: {wav_path}")
-        
-        # Расшифровываем через Яндекс SpeechKit (облако)
+
+        # Одна конвертация в PCM внутри transcribe_speechkit_cloud
         print("🎙️ Расшифровка через Яндекс SpeechKit...")
-        text = transcribe_speechkit_cloud(wav_path)
+        text = transcribe_speechkit_cloud(tmp_path)
         print(f"✅ Расшифровка завершена! Текст: {len(text)} символов")
-        
+
         return text.strip()
         
     except subprocess.CalledProcessError as e:
@@ -476,11 +466,6 @@ def transcribe_video_from_link(video_link):
         if pcm_path and os.path.exists(pcm_path):
             os.unlink(pcm_path)
             print(f"🗑️ PCM файл удален")
-        # Удаляем WAV если создан
-        wav_path = tmp_path + ".wav" if tmp_path else None
-        if wav_path and os.path.exists(wav_path):
-            os.unlink(wav_path)
-            print(f"🗑️ WAV файл удален")
 
 # ============================================================
 # ФУНКЦИИ ДЛЯ ЯНДЕКС ОБЛАКА
@@ -1464,16 +1449,24 @@ def evaluate_candidate_with_ai_v2(
     interview_questionnaire="",
     hr_comment="",
 ):
+    from ai_helpers import create_chat_completion, get_char_limit, trim_profile_for_eval, trim_text
     from resume_ai import format_hr_comment_block
 
-    profile_block = (vacancy_profile or "Профиль не задан")[:8000]
-    resume_block = (resume_text or "Не предоставлено")[:8000]
-    transcript_block = (
+    profile_block = trim_profile_for_eval(
+        vacancy_profile,
+        get_char_limit(config, "profile", 5000),
+    )
+    resume_block = trim_text(resume_text or "Не предоставлено", get_char_limit(config, "resume", 8000))
+    transcript_block = trim_text(
         transcript_text
         if transcript_text
-        else "Не предоставлена — опирайся на резюме, снижай уверенность оценки"
-    )[:12000]
-    questionnaire_trimmed = (interview_questionnaire or "")[:6000]
+        else "Не предоставлена — опирайся на резюме, снижай уверенность оценки",
+        get_char_limit(config, "transcript", 10000),
+    )
+    questionnaire_trimmed = trim_text(
+        interview_questionnaire or "",
+        get_char_limit(config, "questionnaire", 4000),
+    )
 
     questionnaire_block = ""
     if questionnaire_trimmed.strip():
@@ -1498,7 +1491,7 @@ def evaluate_candidate_with_ai_v2(
 
 РАСШИФРОВКА ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ (разговорная речь, ответы могут быть неполными):
 {transcript_block}
-{format_hr_comment_block(hr_comment)}
+{format_hr_comment_block(hr_comment, config)}
 Алгоритм:
 1. Составь чек-лист требований профиля; для каждого отметь: подтверждено интервью / подтверждено резюме / частично / не раскрыто.
 2. Отдельно разбери: причины ухода/поиска работы, пробелы в опыте, мотивацию, раздражители, обратную связь от работодателей — лояльность, адекватность, управляемость, конфликтность, требовательность.
@@ -1522,14 +1515,15 @@ def evaluate_candidate_with_ai_v2(
 
 ВАЖНО: profile_requirements_met — только целые проценты 0–100. Не используй 0.75 вместо 75 и не ставь 3–4 как процент при score 3."""
     try:
-        response = client.chat.completions.create(
-            model=config["model"]["name"],
+        response = create_chat_completion(
+            client,
+            config,
+            "interview_eval",
             messages=[
                 {"role": "system", "content": EVAL_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
-            max_tokens=config["model"]["max_tokens"],
         )
         result = parse_ai_json_response(response.choices[0].message.content)
         normalized = normalize_evaluation_result(result)
