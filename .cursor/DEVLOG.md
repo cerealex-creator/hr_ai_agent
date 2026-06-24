@@ -46,14 +46,14 @@
 
 **Файлы:** `ai_helpers.py`, `resume_ai.py`, `candidate_funnel.py`, `hri_full_v1.py`, `hri_full_v1_config.yaml`
 
-**Git:** ветка `feature/ai-pipeline-speedup`, commit `c31b174`
+**Git:** ветка `feature/ai-pipeline-speedup`, commit `dde3ee0` → merged в `main`
 
 **Риски/регрессии:**
 - Опросник теперь отдельная кнопка — привычный one-click flow изменился.
 - `disable_thinking` / `extra_body.reasoning` может не поддерживаться RouterAI (есть fallback).
 
 **Следующий шаг:**
-- Прогнать на реальном кандидате (PDF + видео), при успехе merge в `main`.
+- Мониторить качество оценок и опросников на проде.
 
 ---
 
