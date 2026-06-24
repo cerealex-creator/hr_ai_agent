@@ -46,7 +46,7 @@
 
 **Файлы:** `ai_helpers.py`, `resume_ai.py`, `candidate_funnel.py`, `hri_full_v1.py`, `hri_full_v1_config.yaml`
 
-**Git:** ветка `feature/ai-pipeline-speedup`, commit `dde3ee0` → merged в `main`
+**Git:** merged в `main` (`dde3ee0`..`fc75fee`), push `origin/main`
 
 **Риски/регрессии:**
 - Опросник теперь отдельная кнопка — привычный one-click flow изменился.
