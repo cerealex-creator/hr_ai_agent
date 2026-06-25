@@ -12,7 +12,20 @@ from vacancy_prep import (
     try_push_vacancy_to_templates,
 )
 from candidate_funnel import render_candidates_zone
-from vacancy_stats import render_vacancy_stats
+from vacancy_display import find_vacancy_by_id, format_vacancy_search_period
+from warranty import (
+    format_vacancy_work_line,
+    format_warranty_countdown,
+    is_warranty_search_vacancy,
+    migrate_vacancy_warranty,
+)
+from vacancy_close import (
+    CLOSE_REASON_CLIENT,
+    CLOSE_REASON_SUCCESS,
+    can_close_vacancy_normally,
+    close_reason_label,
+    vacancy_has_successful_hire,
+)
 
 
 def _archive_prompt_key(vacancy_id):
@@ -30,11 +43,19 @@ def _load_fresh_vacancy(vacancy, deps):
     )
 
 
-def _archive_vacancy_record(vacancy, deps):
+def _archive_close_reason_key(vacancy_id):
+    return f"archive_close_reason_{vacancy_id}"
+
+
+def _archive_vacancy_record(vacancy, deps, *, close_reason=None):
     vacancy["active"] = False
     from datetime import datetime
 
     vacancy["closed_at"] = datetime.now().isoformat()
+    if close_reason:
+        vacancy["close_reason"] = close_reason
+    elif vacancy_has_successful_hire(vacancy):
+        vacancy["close_reason"] = CLOSE_REASON_SUCCESS
     all_v = deps["load_vacancies"]()
     for v in all_v:
         if v["id"] == vacancy["id"]:
@@ -43,10 +64,29 @@ def _archive_vacancy_record(vacancy, deps):
     if st.session_state.get("opened_vacancy_id") == vacancy["id"]:
         st.session_state.opened_vacancy_id = None
     st.session_state.pop(_archive_prompt_key(vacancy["id"]), None)
+    st.session_state.pop(_archive_close_reason_key(vacancy["id"]), None)
+
+
+def _start_archive_flow(vacancy, deps, *, close_reason):
+    fresh = _load_fresh_vacancy(vacancy, deps)
+    docs = collect_vacancy_documents_for_template(fresh)
+    from vacancy_template_store import get_template_sync_status
+
+    sync_status, _ = get_template_sync_status(fresh, docs)
+    if sync_status in ("missing", "differs"):
+        st.session_state[_archive_prompt_key(vacancy["id"])] = sync_status
+        st.session_state[_archive_close_reason_key(vacancy["id"])] = close_reason
+        st.rerun()
+    else:
+        _archive_vacancy_record(fresh, deps, close_reason=close_reason)
+        label = close_reason_label(close_reason) or "Вакансия закрыта"
+        st.success(f"{label}.")
+        st.rerun()
 
 
 def _render_archive_template_prompt(vacancy, deps, status):
     vac_id = vacancy["id"]
+    close_reason = st.session_state.get(_archive_close_reason_key(vac_id), CLOSE_REASON_SUCCESS)
     if status == "missing":
         st.warning("Данная вакансия отсутствует в шаблонах. Добавить её в шаблоны?")
     else:
@@ -58,19 +98,20 @@ def _render_archive_template_prompt(vacancy, deps, status):
             fresh = _load_fresh_vacancy(vacancy, deps)
             ok, msg, missing, _ = try_push_vacancy_to_templates(fresh)
             if ok:
-                _archive_vacancy_record(fresh, deps)
+                _archive_vacancy_record(fresh, deps, close_reason=close_reason)
+                done = close_reason_label(close_reason) or "Вакансия закрыта"
                 if missing:
-                    st.warning(f"Вакансия закрыта. {msg}")
+                    st.warning(f"{done}. {msg}")
                 else:
-                    st.success(f"Вакансия закрыта. {msg}")
+                    st.success(f"{done}. {msg}")
                 st.rerun()
             else:
                 st.error(msg)
     with col_no:
         if st.button("Нет, только в архив", key=f"archive_tpl_no_{vac_id}", use_container_width=True):
             fresh = _load_fresh_vacancy(vacancy, deps)
-            _archive_vacancy_record(fresh, deps)
-            st.success("Вакансия закрыта.")
+            _archive_vacancy_record(fresh, deps, close_reason=close_reason)
+            st.success(close_reason_label(close_reason) or "Вакансия закрыта.")
             st.rerun()
 
 
@@ -85,8 +126,17 @@ def render_vacancy_picker(active):
         for col_idx, vacancy in enumerate(active[row_start:row_start + cols_per_row]):
             with cols[col_idx]:
                 cand_count = len(vacancy.get("candidates", []))
+                migrate_vacancy_warranty(vacancy)
                 is_open = st.session_state.opened_vacancy_id == vacancy["id"]
                 label = f"{vacancy['title']}\nКандидаты: {cand_count}"
+                period = format_vacancy_search_period(vacancy)
+                if period and period != "период не указан":
+                    label += f"\n{period}"
+                if is_warranty_search_vacancy(vacancy):
+                    label += "\n🛡️ Гарантийный поиск"
+                countdown = format_warranty_countdown(vacancy)
+                if countdown:
+                    label += f"\n{countdown}"
                 btn_type = "primary" if is_open else "secondary"
                 if st.button(label, key=f"vac_pick_{vacancy['id']}", type=btn_type, use_container_width=True):
                     if is_open:
@@ -97,16 +147,30 @@ def render_vacancy_picker(active):
 
 
 def render_active_vacancy_workspace(vacancy, deps):
-    cand_count = len(vacancy.get("candidates", []))
+    migrate_vacancy_warranty(vacancy)
+    metrics_line = format_vacancy_work_line(vacancy, html=True)
     st.markdown(
-        f'<p class="vacancy-candidates-count">Кандидаты: <strong>{cand_count}</strong></p>',
+        f'<p class="vacancy-candidates-count">{metrics_line}</p>',
         unsafe_allow_html=True,
     )
+    if is_warranty_search_vacancy(vacancy):
+        src_id = vacancy.get("warranty_source_vacancy_id")
+        source = find_vacancy_by_id(deps["load_vacancies"](), src_id)
+        if source:
+            src_period = format_vacancy_search_period(source)
+            st.info(
+                f"🛡️ **Гарантийный поиск** — замена по архивной вакансии "
+                f"«{source.get('title', '—')}» ({src_period})."
+            )
+        else:
+            st.info("🛡️ **Гарантийный поиск** — замена по архивной вакансии.")
+    countdown = format_warranty_countdown(vacancy)
+    if countdown:
+        st.caption(f"🛡️ {countdown}")
 
-    sub_cands, sub_docs, sub_stats = st.tabs([
+    sub_cands, sub_docs = st.tabs([
         "👥 Кандидаты",
         "📄 Документы по вакансии",
-        "📊 Статистика",
     ])
 
     with sub_cands:
@@ -115,33 +179,28 @@ def render_active_vacancy_workspace(vacancy, deps):
     with sub_docs:
         render_existing_documents_zone(vacancy, deps)
 
-    with sub_stats:
-        if render_vacancy_stats(vacancy):
-            all_v = deps["load_vacancies"]()
-            for v in all_v:
-                if v["id"] == vacancy["id"]:
-                    v["vacancy_summary"] = vacancy.get("vacancy_summary", "")
-            deps["save_vacancies"](all_v)
-            st.success("Итог сохранён!")
-            st.rerun()
-
     with st.expander("🔒 Закрыть вакансию"):
-        from vacancy_template_store import get_template_sync_status
-
         prompt_status = st.session_state.get(_archive_prompt_key(vacancy["id"]))
         if prompt_status in ("missing", "differs"):
             _render_archive_template_prompt(vacancy, deps, prompt_status)
-        elif st.button("Переместить в архив", key=f"close_{vacancy['id']}"):
-            fresh = _load_fresh_vacancy(vacancy, deps)
-            docs = collect_vacancy_documents_for_template(fresh)
-            sync_status, _ = get_template_sync_status(fresh, docs)
-            if sync_status in ("missing", "differs"):
-                st.session_state[_archive_prompt_key(vacancy["id"])] = sync_status
-                st.rerun()
-            else:
-                _archive_vacancy_record(fresh, deps)
-                st.success("Вакансия закрыта.")
-                st.rerun()
+        elif can_close_vacancy_normally(vacancy):
+            if st.button("Переместить в архив", key=f"close_{vacancy['id']}"):
+                _start_archive_flow(vacancy, deps, close_reason=CLOSE_REASON_SUCCESS)
+        else:
+            st.warning(
+                "Нельзя закрыть вакансию в архив: ни у одного кандидата нет статуса "
+                "«Вышел на работу» или «Выход на стажировку»."
+            )
+            st.caption(
+                "Если заказчик передумал или решил не продолжать поиск — "
+                "используйте вариант ниже."
+            )
+            if st.button(
+                "Вакансия закрыта заказчиком",
+                key=f"close_client_{vacancy['id']}",
+                type="primary",
+            ):
+                _start_archive_flow(vacancy, deps, close_reason=CLOSE_REASON_CLIENT)
 
     with st.expander("🗑️ Удалить вакансию"):
         st.warning(
@@ -193,7 +252,7 @@ def render_vacancies_in_work(deps):
         st.info("Нет вакансий в работе. Создайте новую во вкладке «Создание новой вакансии».")
         return
 
-    st.markdown("Выберите вакансию, чтобы открыть документы, кандидатов и статистику.")
+    st.markdown("Выберите вакансию, чтобы открыть документы и кандидатов.")
     render_vacancy_picker(active)
 
     opened_id = st.session_state.get("opened_vacancy_id")
@@ -210,7 +269,13 @@ def render_vacancies_in_work(deps):
     st.divider()
     head_l, head_m, head_r = st.columns([3, 1, 1])
     with head_l:
-        st.subheader(vacancy["title"])
+        title = vacancy["title"]
+        period = format_vacancy_search_period(vacancy)
+        if is_warranty_search_vacancy(vacancy):
+            title += " · 🛡️ Гарантийный поиск"
+        if period and period != "период не указан":
+            title += f" · {period}"
+        st.subheader(title)
     with head_m:
         st.write("")
         if st.button(

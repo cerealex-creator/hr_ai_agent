@@ -6,27 +6,12 @@ import streamlit as st
 
 from models import (
     HR_STAGES,
-    HR_STAGE_ORDER,
     CLIENT_STATUS_LABELS,
     CLIENT_REVIEW_STATUSES,
     is_visible_in_client_zone,
+    reached_hr_stage,
 )
 from client_zone import get_status_meta, STATUS_ORDER
-
-
-def _reached_stage(candidate, target_stage):
-    if candidate.get("hr_stage") == target_stage:
-        return True
-    if target_stage not in HR_STAGE_ORDER:
-        return False
-    target_idx = HR_STAGE_ORDER.index(target_stage)
-    current = candidate.get("hr_stage", "resume_screening")
-    if current in HR_STAGE_ORDER and HR_STAGE_ORDER.index(current) >= target_idx:
-        return True
-    for h in candidate.get("hr_stage_history", []):
-        if h.get("stage") == target_stage:
-            return True
-    return False
 
 
 def collect_all_candidates(vacancies):
@@ -40,6 +25,8 @@ def collect_all_candidates(vacancies):
 def aggregate_client_status(candidates):
     counts = {}
     for cand in candidates:
+        if not is_visible_in_client_zone(cand):
+            continue
         key = cand.get("client_status", "wait")
         counts[key] = counts.get(key, 0) + 1
     return counts
@@ -180,7 +167,7 @@ def render_master_dashboard(vacancies, dept_names):
             ("client_review", "offer"),
         ]
         for from_s, to_s in conv_pairs:
-            reached_to = sum(1 for c in all_candidates if _reached_stage(c, to_s))
+            reached_to = sum(1 for c in all_candidates if reached_hr_stage(c, to_s))
             pct = reached_to / total_cand * 100
             st.write(f"- {HR_STAGES[from_s]} → {HR_STAGES[to_s]}: {reached_to}/{total_cand} ({pct:.0f}%)")
 

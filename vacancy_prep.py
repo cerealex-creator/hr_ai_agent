@@ -490,24 +490,10 @@ def describe_history_package(generated):
 
 
 def _vacancy_history_picker_options(vacancies):
-    """Подписи для выбора вакансии; при одинаковых названиях — id и дата."""
-    title_counts = {}
-    for v in vacancies:
-        title = (v.get("title") or "").strip()
-        title_counts[title] = title_counts.get(title, 0) + 1
+    """Подписи для выбора вакансии; при одинаковых названиях — период поиска."""
+    from vacancy_display import build_vacancy_picker_options
 
-    labels = []
-    by_label = {}
-    for v in vacancies:
-        title = (v.get("title") or "").strip()
-        if title_counts.get(title, 0) > 1:
-            created = (v.get("created_at") or "")[:10]
-            label = f"{title} · id {v['id']} · {created}"
-        else:
-            label = title
-        labels.append(label)
-        by_label[label] = v
-    return labels, by_label
+    return build_vacancy_picker_options(vacancies)
 
 
 def render_history_tab(
@@ -569,7 +555,7 @@ def render_history_tab(
                 key="hist_apply_vacancy",
                 help_text=(
                     "Выберите вакансию, в которую нужно записать документы из пакета. "
-                    "Если названия совпадают, смотрите id и дату создания."
+                    "Если названия совпадают, смотрите период поиска (например, апрель–май 26)."
                 ),
             )
             if st.button("📥 Применить пакет к вакансии", key="hist_apply_btn", type="primary"):
@@ -580,8 +566,11 @@ def render_history_tab(
                 else:
                     vacancy = picker_map[apply_target]
                     apply_title = vacancy.get("title", apply_target)
+                    from vacancy_display import format_vacancy_search_period
+
+                    apply_period = format_vacancy_search_period(vacancy, precise=True)
                     with st.spinner(
-                        f"Замена документов в «{apply_title}» (id {vacancy['id']})…"
+                        f"Замена документов в «{apply_title}» ({apply_period})…"
                     ):
                         saved, written, cleared = apply_package_from_history(
                             vacancy, gen, deps
@@ -589,7 +578,7 @@ def render_history_tab(
                     if saved and written:
                         st.session_state.opened_vacancy_id = vacancy["id"]
                         success = (
-                            f"✅ Документы «{apply_title}» (id {vacancy['id']}) заменены: "
+                            f"✅ Документы «{apply_title}» ({apply_period}) заменены: "
                             f"{', '.join(written)}."
                         )
                         if cleared:
@@ -609,7 +598,7 @@ def render_history_tab(
                     else:
                         st.error(
                             f"Не удалось сохранить документы для «{apply_title}» "
-                            f"(id {vacancy['id']})."
+                            f"({apply_period})."
                         )
 
         st.divider()

@@ -27,6 +27,13 @@ from client_actions import (
     find_vacancy_by_id,
     vacancy_chat_matches,
 )
+from interview_attendance import (
+    ATTENDANCE_CANCELLED_CANDIDATE,
+    ATTENDANCE_CANCELLED_CLIENT,
+    ATTENDANCE_CONFIRMED,
+    apply_and_save_interview_attendance,
+    build_morning_attendance_message,
+)
 from telegram_notify import _esc
 from telegram_workflow import (
     apply_status_change,
@@ -371,6 +378,58 @@ async def _finalize_comment(
     return True
 
 
+async def _handle_interview_attendance_callback(callback, status):
+    if callback.message.chat.type != "private":
+        await callback.answer(
+            "Подтверждение явки доступно только в личном чате с ботом",
+            show_alert=True,
+        )
+        return
+    if not can_confirm_hr_meeting(callback.from_user):
+        await callback.answer(
+            f"Доступно только @{HR_MEETING_CONFIRM_USERNAME}",
+            show_alert=True,
+        )
+        return
+
+    callback_id = callback.data.split(":", 1)[1]
+    ok, msg, candidate, vacancy, group_job = apply_and_save_interview_attendance(
+        callback_id,
+        status,
+    )
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+
+    await callback.answer(msg, show_alert=False)
+    if candidate and vacancy:
+        try:
+            await callback.message.edit_text(
+                build_morning_attendance_message(
+                    candidate,
+                    vacancy.get("title", ""),
+                    resolved=True,
+                    status=status,
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramBadRequest as exc:
+            logger.warning("Не удалось обновить утреннее напоминание: %s", exc)
+
+    if group_job:
+        # Подтверждение и отмена заказчиком в общий чат не уходят.
+        try:
+            await callback.bot.send_message(
+                group_job["chat_id"],
+                group_job["text"],
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=group_job.get("reply_to_message_id"),
+                disable_web_page_preview=True,
+            )
+        except Exception as exc:
+            logger.warning("Не удалось отправить отмену встречи в чат: %s", exc)
+
+
 def register_client_zone_handlers(dp):
     @dp.callback_query(F.data.startswith("cs:"))
     async def on_client_status(callback: types.CallbackQuery):
@@ -574,6 +633,22 @@ def register_client_zone_handlers(dp):
                 await _refresh_candidate_telegram_cards(callback.bot, candidate, vacancy)
             except Exception as exc:
                 logger.warning("Не удалось обновить карточки после подтверждения: %s", exc)
+
+    @dp.callback_query(F.data.startswith("iac:"))
+    async def on_attendance_confirmed(callback: types.CallbackQuery):
+        await _handle_interview_attendance_callback(callback, ATTENDANCE_CONFIRMED)
+
+    @dp.callback_query(F.data.startswith("iak:"))
+    async def on_attendance_cancelled_candidate(callback: types.CallbackQuery):
+        await _handle_interview_attendance_callback(
+            callback, ATTENDANCE_CANCELLED_CANDIDATE
+        )
+
+    @dp.callback_query(F.data.startswith("icl:"))
+    async def on_attendance_cancelled_client(callback: types.CallbackQuery):
+        await _handle_interview_attendance_callback(
+            callback, ATTENDANCE_CANCELLED_CLIENT
+        )
 
     @dp.callback_query(F.data.startswith("ivx:"))
     async def on_interview_cancel_meeting(callback: types.CallbackQuery):

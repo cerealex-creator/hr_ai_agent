@@ -52,6 +52,9 @@ def clear_client_meeting(candidate):
     candidate["remote_interview"] = False
     candidate["office_interview"] = False
     candidate["meeting_hr_confirmed"] = False
+    from interview_attendance import reset_interview_attendance
+
+    reset_interview_attendance(candidate)
     return True
 
 
@@ -352,12 +355,19 @@ def apply_client_update(
     if status_key is not None:
         old_status = candidate.get("client_status")
         if status_key != old_status:
-            candidate["status_updated_at"] = datetime.now().isoformat()
+            from models import record_client_status_change
+
+            record_client_status_change(
+                candidate,
+                status_key,
+                note=f"{actor}: {actor_note}" if actor_note else actor,
+            )
             if status_key == "think" and old_status != "think":
                 candidate["think_long_reminder_sent"] = False
             if old_status == "wait" and status_key != "wait":
                 candidate["feedback_reminder_last_sent_at"] = ""
-        candidate["client_status"] = status_key
+        else:
+            candidate["client_status"] = status_key
 
         if status_key == "reject":
             set_hr_stage(candidate, "rejected_client", f"отказ в клиентской зоне ({note})")

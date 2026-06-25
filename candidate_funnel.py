@@ -10,6 +10,9 @@ from models import (
     HR_STAGES,
     HR_STAGE_ORDER_UI,
     CLIENT_ZONE_ENTRY_STAGE,
+    OFFER_STAGE,
+    INTERNSHIP_STAGE,
+    STARTED_WORK_STAGE,
     set_hr_stage,
     CLIENT_STATUS_LABELS,
     sync_hr_stage_from_client_status,
@@ -44,6 +47,15 @@ from interview_schedule import (
     INTERVIEW_STAGE,
 )
 from vacancy_store import vacancy_show_portfolio_field
+from warranty import (
+    WARRANTY_MONTH_CHOICES,
+    WARRANTY_MONTH_LABELS,
+    WARRANTY_TRIGGER_STAGES,
+    apply_warranty_to_vacancy,
+    format_warranty_countdown,
+    migrate_vacancy_warranty,
+    warranty_date_field_label,
+)
 
 
 def new_candidate_template(vacancy_id):
@@ -565,6 +577,64 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     help="При смене этапа событие в календаре останется без изменений",
                 )
 
+            warranty_start_date = None
+            warranty_months = 3
+            show_warranty_fields = (
+                picked_stage in WARRANTY_TRIGGER_STAGES
+                or current_stage in WARRANTY_TRIGGER_STAGES
+            )
+            if show_warranty_fields:
+                migrate_vacancy_warranty(vacancy)
+                w = vacancy.get("warranty") or {}
+                w_cand_match = w.get("candidate_id") == cand.get("id")
+                w_start_raw = (w.get("start_date") or "")[:10] if w_cand_match else ""
+                try:
+                    w_start_default = (
+                        datetime.strptime(w_start_raw, "%Y-%m-%d").date()
+                        if w_start_raw
+                        else datetime.now().date()
+                    )
+                except ValueError:
+                    w_start_default = datetime.now().date()
+                if w_cand_match and w.get("months") in WARRANTY_MONTH_CHOICES:
+                    w_months_default = w.get("months")
+                else:
+                    w_months_default = 3
+                label_stage = (
+                    picked_stage
+                    if picked_stage in WARRANTY_TRIGGER_STAGES
+                    else current_stage
+                )
+                st.markdown("**Гарантия**")
+                st.caption(
+                    "Дата и срок фиксируются при этапах «Оффер», «Выход на стажировку» "
+                    "или «Выход на работу». Месяц = 30 дней."
+                )
+                if w_cand_match and w_start_raw and label_stage in (
+                    INTERNSHIP_STAGE,
+                    STARTED_WORK_STAGE,
+                ):
+                    st.caption(
+                        "Дата подставлена из предыдущего этапа — при необходимости "
+                        "скорректируйте; от неё считается срок гарантии."
+                    )
+                warranty_start_date = st.date_input(
+                    warranty_date_field_label(label_stage),
+                    value=w_start_default,
+                    key=k("warranty_start"),
+                    format="DD.MM.YYYY",
+                )
+                warranty_months = st.selectbox(
+                    "Срок гарантии",
+                    WARRANTY_MONTH_CHOICES,
+                    index=WARRANTY_MONTH_CHOICES.index(w_months_default),
+                    format_func=lambda m: WARRANTY_MONTH_LABELS.get(m, f"{m} мес"),
+                    key=k("warranty_months"),
+                )
+                active_countdown = format_warranty_countdown(vacancy)
+                if active_countdown:
+                    st.caption(active_countdown)
+
             if st.button("Зафиксировать этап", key=k("stage_btn")):
                 target_stage = picked_stage
                 if target_stage == INTERVIEW_STAGE:
@@ -576,32 +646,43 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         st.warning("Заполните поле: " + ", ".join(missing_sched))
                         target_stage = None
                 if target_stage and target_stage != cand.get("hr_stage"):
-                    prev_stage = cand.get("hr_stage")
-                    set_hr_stage(cand, target_stage, stage_note)
-                    if target_stage == INTERVIEW_STAGE:
-                        reset_reminders_if_schedule_changed(
+                    if target_stage in WARRANTY_TRIGGER_STAGES and not warranty_start_date:
+                        st.warning("Укажите дату начала отсчёта гарантии.")
+                    else:
+                        prev_stage = cand.get("hr_stage")
+                        set_hr_stage(cand, target_stage, stage_note)
+                        if target_stage in WARRANTY_TRIGGER_STAGES:
+                            apply_warranty_to_vacancy(
+                                vacancy,
+                                cand,
+                                warranty_start_date,
+                                warranty_months,
+                                target_stage,
+                            )
+                        if target_stage == INTERVIEW_STAGE:
+                            reset_reminders_if_schedule_changed(
+                                cand,
+                                cand.get("office_interview_date"),
+                                cand.get("office_interview_time"),
+                            )
+                        cal_ok, cal_msg = _apply_calendar_sync(
                             cand,
-                            cand.get("office_interview_date"),
-                            cand.get("office_interview_time"),
+                            vacancy,
+                            previous_stage=prev_stage,
+                            keep_calendar_event=keep_calendar_event,
                         )
-                    cal_ok, cal_msg = _apply_calendar_sync(
-                        cand,
-                        vacancy,
-                        previous_stage=prev_stage,
-                        keep_calendar_event=keep_calendar_event,
-                    )
-                    _persist_vacancy_candidates(vacancy, deps)
-                    if cal_msg:
-                        _set_cand_funnel_flash(
-                            cal_msg if cal_ok else f"Google Calendar: {cal_msg}",
-                            "success" if cal_ok else "warning",
-                        )
-                    if suggested and target_stage != suggested:
-                        st.session_state[stage_info_key] = (
-                            f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}"
-                        )
-                    st.session_state[collapse_key] = True
-                    _request_candidates_rerun()
+                        _persist_vacancy_candidates(vacancy, deps)
+                        if cal_msg:
+                            _set_cand_funnel_flash(
+                                cal_msg if cal_ok else f"Google Calendar: {cal_msg}",
+                                "success" if cal_ok else "warning",
+                            )
+                        if suggested and target_stage != suggested:
+                            st.session_state[stage_info_key] = (
+                                f"Рекомендуемый этап по статусу заказчика: {HR_STAGES[suggested]}"
+                            )
+                        st.session_state[collapse_key] = True
+                        _request_candidates_rerun()
                 elif target_stage:
                     if current_stage == INTERVIEW_STAGE:
                         reset_reminders_if_schedule_changed(
@@ -624,7 +705,23 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         st.session_state[collapse_key] = True
                         _request_candidates_rerun()
                     else:
-                        st.caption("Статус без изменений.")
+                        if (
+                            target_stage in WARRANTY_TRIGGER_STAGES
+                            and warranty_start_date
+                        ):
+                            apply_warranty_to_vacancy(
+                                vacancy,
+                                cand,
+                                warranty_start_date,
+                                warranty_months,
+                                target_stage,
+                            )
+                            _persist_vacancy_candidates(vacancy, deps)
+                            _set_cand_funnel_flash("Параметры гарантии сохранены.")
+                            st.session_state[collapse_key] = True
+                            _request_candidates_rerun()
+                        else:
+                            st.caption("Статус без изменений.")
 
             if suggested and cand.get("hr_stage") != suggested:
                 if st.button("↔ Применить этап по статусу заказчика", key=k("sync")):

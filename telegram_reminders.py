@@ -7,13 +7,17 @@ from datetime import datetime, timedelta
 from models import is_visible_in_client_zone
 from vacancy_store import migrate_candidate
 from interview_schedule import (
-    format_interview_display,
     get_timezone,
     parse_interview_datetime,
     validate_interview_schedule,
 )
 from client_actions import get_primary_telegram_post, find_vacancies_by_chat_id
 from telegram_notify import _esc
+from interview_attendance import (
+    build_interview_reminder_60_message,
+    collect_morning_attendance_jobs,
+    should_skip_group_reminder_60,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,20 +92,6 @@ def _overdue_days_label(days):
     return f"более {days} суток"
 
 
-def build_interview_reminder_60_message(candidate, vacancy_title):
-    name = _esc_local(candidate.get("name", "кандидатом"))
-    vac = _esc_local(vacancy_title)
-    when = format_interview_display(
-        candidate.get("office_interview_date"),
-        candidate.get("office_interview_time"),
-    )
-    return (
-        f"<b>⏰ Через час встреча</b>\n"
-        f"👤 <b>{name}</b> · 🏢 {vac}\n"
-        f"🕐 {when}"
-    )
-
-
 def build_feedback_overdue_message(candidate, vacancy_title, days):
     name = _esc_local(candidate.get("name", "кандидатом"))
     vac = _esc_local(vacancy_title)
@@ -141,6 +131,8 @@ def _apply_job_mark(data, job):
             mark = job.get("mark_type")
             if mark == "interview_60":
                 cand["interview_reminder_60_sent"] = True
+            elif mark == "attendance_morning":
+                cand["interview_attendance_morning_date"] = job.get("marked_at", "")
             elif mark == "feedback":
                 cand["feedback_reminder_last_sent_at"] = job.get("marked_at", datetime.now().isoformat())
             elif mark == "think_long":
@@ -158,6 +150,7 @@ def collect_reminder_jobs(now=None):
     quiet = is_reminder_day_off(now)
 
     jobs = []
+    jobs.extend(collect_morning_attendance_jobs(now, tz, data))
 
     for vacancy in data.get("vacancies", []):
         if not vacancy.get("active", True):
@@ -186,6 +179,16 @@ def collect_reminder_jobs(now=None):
                         REMINDER_60_WINDOW[0] <= minutes <= REMINDER_60_WINDOW[1]
                         and not cand.get("interview_reminder_60_sent")
                     ):
+                        if should_skip_group_reminder_60(cand):
+                            jobs.append({
+                                "chat_id": chat_id,
+                                "label": f"interview_60_skip:{cand_id}",
+                                "vacancy_id": vacancy_id,
+                                "candidate_id": cand_id,
+                                "mark_type": "interview_60",
+                                "skip_send": True,
+                            })
+                            continue
                         post = get_primary_telegram_post(
                             cand, chat_id, vacancy_id=vacancy_id
                         )
@@ -299,6 +302,24 @@ def collect_scheduled_digest_jobs(now=None):
     return jobs
 
 
+def _reply_markup_from_dict(markup_dict):
+    if not markup_dict:
+        return None
+    from aiogram.types import InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    for row in markup_dict.get("inline_keyboard", []):
+        buttons = [
+            InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"])
+            for btn in row
+            if btn.get("callback_data")
+        ]
+        if buttons:
+            builder.row(*buttons)
+    return builder.as_markup()
+
+
 async def run_reminder_tick(bot, *, dry_run=False):
     jobs, data = collect_reminder_jobs()
     digest_jobs = collect_scheduled_digest_jobs()
@@ -306,20 +327,33 @@ async def run_reminder_tick(bot, *, dry_run=False):
         {**j, "mark_type": None} for j in digest_jobs
     ]
     sent = 0
+    changed = False
     for job in jobs:
         if dry_run:
             logger.info("[dry-run] %s", job["label"])
             continue
-        try:
-            await bot.send_message(
-                job["chat_id"],
-                job["text"],
-                parse_mode="HTML",
-                reply_to_message_id=job.get("reply_to_message_id"),
-                disable_web_page_preview=True,
-            )
+        if job.get("skip_send"):
             if job.get("mark_type"):
                 _apply_job_mark(data, job)
+                changed = True
+            logger.info("Напоминание пропущено: %s", job["label"])
+            continue
+        try:
+            kwargs = {
+                "chat_id": job["chat_id"],
+                "text": job["text"],
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            }
+            if job.get("reply_to_message_id"):
+                kwargs["reply_to_message_id"] = job["reply_to_message_id"]
+            markup = _reply_markup_from_dict(job.get("reply_markup"))
+            if markup:
+                kwargs["reply_markup"] = markup
+            await bot.send_message(**kwargs)
+            if job.get("mark_type"):
+                _apply_job_mark(data, job)
+                changed = True
             elif job.get("slot_key"):
                 from telegram_scheduler_state import mark_digest_sent
 
@@ -329,7 +363,7 @@ async def run_reminder_tick(bot, *, dry_run=False):
         except Exception as exc:
             logger.warning("Не удалось отправить %s: %s", job["label"], exc)
 
-    if sent and not dry_run:
+    if (sent or changed) and not dry_run:
         from vacancy_store import save_vacancies
         save_vacancies(data)
 

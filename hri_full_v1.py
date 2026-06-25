@@ -31,7 +31,10 @@ from urllib.parse import quote
 from corporate_ui import apply_corporate_ui
 from eval_ui import render_ai_score_badge
 from vacancy_tab import render_vacancy_tab
+from stats_tab import render_stats_tab
 from models import migrate_candidate
+from vacancy_display import format_vacancy_search_period
+from warranty import default_warranty, migrate_vacancy_warranty
 
 # ============================================================
 # ОСНОВНЫЕ КОНСТАНТЫ
@@ -753,6 +756,12 @@ def load_vacancies():
         if "vacancy_summary" not in v:
             v["vacancy_summary"] = ""
             migrated = True
+        if migrate_vacancy_warranty(v):
+            migrated = True
+        from vacancy_close import migrate_vacancy_close
+
+        if migrate_vacancy_close(v):
+            migrated = True
         for candidate in v.get("candidates", []):
             if "task_link" not in candidate:
                 candidate["task_link"] = ""
@@ -827,6 +836,10 @@ def create_vacancy(title, chat_id, client_id=0, *, documents=None, show_portfoli
         "documents": docs,
         "candidates": [],
         "show_portfolio_field": bool(show_portfolio_field),
+        "search_mode": "normal",
+        "warranty_source_vacancy_id": None,
+        "warranty": default_warranty(),
+        "close_reason": None,
     }
     vacancies.append(new_vacancy)
     save_vacancies(vacancies)
@@ -1871,8 +1884,9 @@ with st.sidebar:
 
 
 # Вкладки
-tab_vacancies, tab6, tab_settings, tab5 = st.tabs([
+tab_vacancies, tab_stats, tab6, tab_settings, tab5 = st.tabs([
     "🏢 Вакансии",
+    "📊 Статистика",
     "📜 История",
     "⚙️ Настройки",
     "📖 Инструкции",
@@ -1882,6 +1896,9 @@ tab_vacancies, tab6, tab_settings, tab5 = st.tabs([
 
 with tab_vacancies:
     render_vacancy_tab(build_vacancy_deps())
+
+with tab_stats:
+    render_stats_tab(build_vacancy_deps(), create_vacancy_fn=create_vacancy)
 
 with tab5:
     st.header("Инструкции по работе с HR-помогатором")
@@ -1914,6 +1931,9 @@ with tab5:
 **История** — архив ранее сгенерированных пакетов. Нажмите «Загрузить» у нужного пакета,
 выберите вакансию и «Применить» — **прежние документы вакансии будут полностью заменены**
 пакетом из истории (поля, которых нет в пакете, очищаются).
+
+**Статистика** — настраиваемая сводка по этапам воронки, реестр вакансий «На гарантии»
+и детальная статистика по выбранной вакансии.
 
 **Настройки** — чаты Telegram по отделам, список всех вакансий, шаблоны,
 подключение Google Calendar. Удаление вакансии из общего списка — тоже здесь,
@@ -2258,12 +2278,13 @@ with tab_settings:
     else:
         for i, vac in enumerate(vacancies):
             status = "активна" if vac.get("active", True) else "в архиве"
+            period = format_vacancy_search_period(vac)
             vac_id = vac.get("id") or f"idx_{i}"
             confirm_key = f"settings_confirm_del_vac_{vac_id}"
             is_confirming = bool(st.session_state.get(confirm_key))
             col_a, col_b, col_c, col_d = st.columns([4, 2, 1, 1])
             col_a.write(f"**{vac['title']}**")
-            col_b.caption(f"Chat ID: {vac.get('chat_id', '—')}")
+            col_b.caption(f"{period} · {status}")
             if is_confirming:
                 col_c.caption("⚠️ подтвердите")
                 if col_d.button("Удалить", key=f"settings_del_vac_yes_{vac_id}", type="primary"):

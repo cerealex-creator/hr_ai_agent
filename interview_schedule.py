@@ -35,6 +35,9 @@ def reset_reminders_if_schedule_changed(cand, date_str, time_str):
         cand["interview_reminder_30_sent"] = False
         cand["interview_reminder_10_sent"] = False
         cand["interview_reminder_60_sent"] = False
+        from interview_attendance import reset_interview_attendance
+
+        reset_interview_attendance(cand)
 
 
 def sync_interview_calendar(

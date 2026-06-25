@@ -13,6 +13,7 @@ HR_STAGES = {
     "client_pause": "Пауза",
     "client_meeting": "Встреча с заказчиком",
     "offer": "Оффер",
+    "internship": "Выход на стажировку",
     "started_work": "Вышел на работу",
     "rejected": "Отказ",
     "archived": "Архив",
@@ -44,6 +45,7 @@ YELLOW_STAGES = frozenset({
 })
 
 OFFER_STAGE = "offer"
+INTERNSHIP_STAGE = "internship"
 STARTED_WORK_STAGE = "started_work"
 CLIENT_ZONE_ENTRY_STAGE = "client_review"
 CLIENT_PAUSE_STAGE = "client_pause"
@@ -65,20 +67,31 @@ CLIENT_STATUS_TO_HR_STAGE = {
 }
 
 
-def reached_hr_stage(candidate, target_stage):
-    """Был ли у кандидата указанный этап HR (текущий или в истории)."""
+def received_hr_stage(candidate, target_stage):
+    """Кандидат получал этот HR-этап (запись в hr_stage_history или текущий статус)."""
     if candidate.get("hr_stage") == target_stage:
         return True
-    if target_stage not in HR_STAGE_ORDER:
-        return False
-    target_idx = HR_STAGE_ORDER.index(target_stage)
-    current = candidate.get("hr_stage", "resume_screening")
-    if current in HR_STAGE_ORDER and HR_STAGE_ORDER.index(current) >= target_idx:
+    return any(
+        entry.get("stage") == target_stage
+        for entry in (candidate.get("hr_stage_history") or [])
+    )
+
+
+def reached_hr_stage(candidate, target_stage):
+    """Был ли у кандидата указанный этап HR (текущий, в истории или пройден по воронке)."""
+    if candidate.get("hr_stage") == target_stage:
         return True
     for entry in candidate.get("hr_stage_history", []):
         if entry.get("stage") == target_stage:
             return True
-    return False
+    if target_stage not in HR_STAGE_ORDER:
+        return False
+    current = candidate.get("hr_stage", "resume_screening")
+    if is_rejection_stage(current) or current in ("rejected", "archived"):
+        return False
+    if current not in HR_STAGE_ORDER:
+        return False
+    return HR_STAGE_ORDER.index(current) >= HR_STAGE_ORDER.index(target_stage)
 
 
 def is_visible_in_client_zone(candidate):
@@ -95,6 +108,7 @@ def is_visible_in_client_zone(candidate):
 LIST_DISPLAY_STAGE_ORDER = [
     "resume_screening",
     "started_work",
+    "internship",
     "offer",
     "client_meeting",
     "client_review",
@@ -137,7 +151,7 @@ def get_stage_tone(stage):
     """Тон подсветки строки кандидата: rejected, offer, green, yellow или None."""
     if stage in REJECTION_STAGES or stage == "rejected":
         return "rejected"
-    if stage in (OFFER_STAGE, STARTED_WORK_STAGE):
+    if stage in (OFFER_STAGE, INTERNSHIP_STAGE, STARTED_WORK_STAGE):
         return "offer"
     if stage in GREEN_STAGES:
         return "green"
@@ -151,6 +165,8 @@ def format_stage_option(stage):
     label = HR_STAGES.get(stage, stage)
     if stage == STARTED_WORK_STAGE:
         return f"👑 {label}"
+    if stage == INTERNSHIP_STAGE:
+        return f"🎓 {label}"
     if stage == OFFER_STAGE:
         return f"🟢 {label}"
     tone = get_stage_tone(stage)
@@ -259,6 +275,12 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if "meeting_hr_confirmation_post" not in candidate:
         candidate["meeting_hr_confirmation_post"] = None
         migrated = True
+    if "interview_attendance_status" not in candidate:
+        candidate["interview_attendance_status"] = ""
+        migrated = True
+    if "interview_attendance_morning_date" not in candidate:
+        candidate["interview_attendance_morning_date"] = ""
+        migrated = True
     if "client_final_verdict" not in candidate:
         candidate["client_final_verdict"] = ""
         migrated = True
@@ -306,8 +328,52 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if not candidate.get("id"):
         candidate["id"] = str(uuid.uuid4())
         migrated = True
+    if not isinstance(candidate.get("client_status_history"), list):
+        candidate["client_status_history"] = []
+        migrated = True
 
     return migrated
+
+
+def record_client_status_change(candidate, new_status, note=""):
+    """Фиксирует смену client_status для статистики и истории."""
+    old = candidate.get("client_status")
+    if old == new_status:
+        return
+    candidate["client_status"] = new_status
+    candidate["status_updated_at"] = datetime.now().isoformat()
+    history = candidate.setdefault("client_status_history", [])
+    history.append({
+        "status": new_status,
+        "at": datetime.now().isoformat(),
+        "note": note or "",
+    })
+
+
+def reached_client_status(candidate, target_status):
+    """Был ли у кандидата указанный статус заказчика (текущий или в истории)."""
+    if candidate.get("client_status") == target_status:
+        return True
+    for entry in candidate.get("client_status_history") or []:
+        if entry.get("status") == target_status:
+            return True
+    return False
+
+
+def reached_client_interview_invite(candidate):
+    """
+    Одобрены заказчиком: приглашение на встречу («Встреча») или сразу «Оффер».
+    Не путать с HR-этапом «Встреча с заказчиком».
+    """
+    if reached_client_status(candidate, "ready"):
+        return True
+    if reached_client_status(candidate, "offer"):
+        return True
+    for entry in candidate.get("hr_stage_history") or []:
+        note = entry.get("note") or ""
+        if "статус «Встреча»" in note or "статус «Оффер»" in note:
+            return True
+    return False
 
 
 def set_hr_stage(candidate, new_stage, note=""):
