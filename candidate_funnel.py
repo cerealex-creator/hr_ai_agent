@@ -408,10 +408,13 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     if ok:
                         set_hr_stage(cand, CLIENT_ZONE_ENTRY_STAGE, "отправка в Telegram")
                         _persist_vacancy_candidates(vacancy, deps)
-                        if "кнопками" in tg_msg:
-                            st.success(f"{tg_msg} Статус HR: «На оценке у заказчика».")
-                        else:
-                            st.warning(f"{tg_msg} Статус HR обновлён: «На оценке у заказчика».")
+                        flash_msg = f"{tg_msg} Статус HR: «На оценке у заказчика»."
+                        _set_cand_funnel_flash(
+                            flash_msg,
+                            "success" if "кнопками" in tg_msg else "warning",
+                        )
+                        st.session_state[collapse_key] = True
+                        _request_candidates_rerun()
                     else:
                         st.error(tg_msg)
 

@@ -218,7 +218,18 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
             suffix = f"{score}/10" if score > 4 else f"{score}/4"
             expander_label += f" — 🤖 {suffix}"
 
-        with st.expander(expander_label, expanded=False):
+        cand_id = cand.get("id", idx)
+        collapse_key = f"client_collapse_{key_prefix}_{vacancy_id}_{cand_id}"
+        expander_rev_key = f"client_exp_rev_{key_prefix}_{vacancy_id}_{cand_id}"
+        if st.session_state.pop(collapse_key, False):
+            st.session_state[expander_rev_key] = st.session_state.get(expander_rev_key, 0) + 1
+        expander_rev = st.session_state.get(expander_rev_key, 0)
+
+        with st.expander(
+            expander_label,
+            expanded=False,
+            key=f"client_exp_{key_prefix}_{vacancy_id}_{cand_id}_{expander_rev}",
+        ):
             st.markdown(render_compact_summary(cand), unsafe_allow_html=True)
             render_ai_evaluation_block(cand)
             st.markdown("---")
@@ -313,6 +324,7 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
                         v["candidates"] = selected_vacancy.get("candidates", [])
                         break
                 save_vacancies(fresh)
+                st.session_state[collapse_key] = True
                 st.success(f"Изменения для {cand.get('name', 'кандидата')} сохранены!")
                 st.rerun()
 
