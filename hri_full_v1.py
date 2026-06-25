@@ -32,6 +32,8 @@ from corporate_ui import apply_corporate_ui
 from eval_ui import render_ai_score_badge
 from vacancy_tab import render_vacancy_tab
 from models import migrate_candidate
+from hr_auth import require_hr_login
+from client_access import ensure_department_tokens, build_client_zone_href, build_master_zone_href
 
 # ============================================================
 # ОСНОВНЫЕ КОНСТАНТЫ
@@ -1803,23 +1805,24 @@ st.set_page_config(
     page_title=f"{config['app']['name']} v{config['app']['version']}",
     page_icon="🧠",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 apply_corporate_ui()
+require_hr_login()
 
 st.title(f"🧠 {config['app']['name']} v{config['app']['version']}")
-st.markdown("**Разработчик:** А.А. Крупин")
-st.caption("HR-платформа: подготовка вакансий, воронка кандидатов, оценка ИИ и клиентская зона.")
 
 # Боковая панель
-departments = load_departments()
+departments = ensure_department_tokens()
 with st.sidebar:
     st.markdown('<p class="sidebar-section-label">Клиентские зоны</p>', unsafe_allow_html=True)
     st.markdown(
-        '<a class="client-zone-btn" href="/master" target="_self">🏢 Мастер-зона (руководитель)</a>',
+        f'<a class="client-zone-btn" href="{build_master_zone_href()}" target="_self">'
+        f'🏢 Мастер-зона (руководитель)</a>',
         unsafe_allow_html=True,
     )
     client_zone_links = "".join(
-        f'<a class="client-zone-btn" href="/client?dept={quote(dept["name"])}" target="_self">'
+        f'<a class="client-zone-btn" href="{build_client_zone_href(dept)}" target="_self">'
         f'{"🧪 " if dept.get("id") == 99 or dept.get("slug") == "test" else ""}{dept["name"]}</a>'
         for dept in departments
     )
@@ -1842,7 +1845,7 @@ with st.sidebar:
         f"""
         <div class="sidebar-brand">
             <div class="sidebar-brand-title">{config['app']['name']}</div>
-            <div class="sidebar-brand-subtitle">v{config['app']['version']} · HR-платформа</div>
+            <div class="sidebar-brand-subtitle">v{config['app']['version']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1868,6 +1871,11 @@ with st.sidebar:
     if st.button("Перезагрузить конфиг"):
         config = load_config()
         st.rerun()
+
+    st.markdown(
+        '<p class="sidebar-footer-credit">Разработчик: А.А. Крупин</p>',
+        unsafe_allow_html=True,
+    )
 
 
 # Вкладки
@@ -2029,7 +2037,25 @@ with tab6:
 # ---------- ВКЛАДКА 7: НАСТРОЙКИ ----------
 with tab_settings:
     st.header("⚙️ Настройки")
-    st.caption("Telegram-чаты, список вакансий и служебная информация.")
+    st.caption("Telegram-чаты, ссылки клиентских зон, список вакансий и служебная информация.")
+
+    with st.expander("🔐 Ссылки клиентских зон", expanded=False):
+        st.caption(
+            "Доступ без пароля — только по секретной ссылке. "
+            "Разместите ссылку отдела в соответствующем Telegram-чате; "
+            "мастер-зону — собственникам в личку. "
+            "Для карточки кандидата добавьте `&vacancy_id=…&candidate_id=…` (ссылка есть в карточке кандидата в HR)."
+        )
+        st.markdown(f"**Мастер-зона:** `{build_master_zone_href()}`")
+        for dept in ensure_department_tokens():
+            prefix = "🧪 " if dept.get("id") == 99 or dept.get("slug") == "test" else ""
+            st.markdown(f"**{prefix}{dept['name']}:** `{build_client_zone_href(dept)}`")
+        base = (os.getenv("PUBLIC_APP_BASE_URL") or "").strip()
+        if not base:
+            st.info(
+                "Для полных URL в Telegram задайте `PUBLIC_APP_BASE_URL` в `.env` "
+                "(например, `https://hr.example.com`)."
+            )
 
     with st.expander("📂 Мои чаты Telegram", expanded=True):
         chats = load_chats()

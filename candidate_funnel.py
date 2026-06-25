@@ -35,6 +35,7 @@ from telegram_notify import (
     validate_task_message_fields,
 )
 import telegram_client as telegram_client_module
+from client_access import build_client_candidate_href, get_department_for_vacancy
 from interview_schedule import (
     build_time_options,
     validate_interview_schedule,
@@ -399,6 +400,12 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         else:
                             st.error(tg_msg)
 
+            if cand.get("id"):
+                dept = get_department_for_vacancy(vacancy)
+                if dept:
+                    card_href = build_client_candidate_href(dept, vacancy, cand)
+                    st.caption(f"Ссылка на карточку в client zone: `{card_href}`")
+
             if st.button("📨 Отправить в общий чат", key=k("tg_primary"), type="primary"):
                 missing = validate_primary_fields(cand)
                 if missing:
@@ -408,10 +415,10 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     if ok:
                         set_hr_stage(cand, CLIENT_ZONE_ENTRY_STAGE, "отправка в Telegram")
                         _persist_vacancy_candidates(vacancy, deps)
-                        if "кнопками" in tg_msg:
-                            st.success(f"{tg_msg} Статус HR: «На оценке у заказчика».")
-                        else:
-                            st.warning(f"{tg_msg} Статус HR обновлён: «На оценке у заказчика».")
+                        st.success(
+                            f"{tg_msg} Статус HR: «На оценке у заказчика». "
+                            "Заказчик оценивает в client zone по ссылке из сообщения."
+                        )
                     else:
                         st.error(tg_msg)
 
@@ -1060,7 +1067,7 @@ def render_add_candidate(vacancy, deps):
                 if v["id"] == vacancy["id"]:
                     v["candidates"] = vacancy["candidates"]
             deps["save_vacancies"](vacancies)
-            st.success("Кандидат добавлен! Отправьте в чат кнопкой «Отправить в общий чат» в карточке.")
+            st.success("Кандидат добавлен! Отправьте в чат кнопкой «Отправить в общий чат» — в сообщении будет ссылка на карточку.")
             st.rerun()
 
 

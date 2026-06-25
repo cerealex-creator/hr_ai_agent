@@ -1,5 +1,6 @@
 """Telegram-клиентская зона: кнопки статуса и отправка карточек."""
 
+import os
 from datetime import datetime, timedelta
 
 from client_actions import find_candidate_by_id, find_candidate_by_tg_callback_id
@@ -92,6 +93,7 @@ def build_candidate_card_html(
     locked=False,
     kind="primary",
     interview_prompt=None,
+    show_action_prompt=True,
 ):
     from vacancy_store import vacancy_show_portfolio_field
 
@@ -111,9 +113,31 @@ def build_candidate_card_html(
             text += f"\n<b>Комментарий:</b> {_esc(client_comment)}"
         if interview_prompt:
             text += f"\n\n{interview_prompt}"
-    elif not locked:
+    elif not locked and show_action_prompt:
         text += "\n\n👇 <i>Выберите статус кнопками ниже</i>"
     return text
+
+
+def _append_client_zone_link(text, vacancy, candidate):
+    from client_access import build_client_candidate_href, get_department_for_vacancy
+    from telegram_notify import _esc
+
+    dept = get_department_for_vacancy(vacancy)
+    if not dept:
+        return text
+    href = build_client_candidate_href(dept, vacancy, candidate)
+    if not href.startswith("http"):
+        base = (os.getenv("PUBLIC_APP_BASE_URL") or "").strip().rstrip("/")
+        if base:
+            href = f"{base}{href}"
+        else:
+            return (
+                text
+                + "\n\n<i>⚠️ Для ссылки на карточку задайте PUBLIC_APP_BASE_URL в .env</i>"
+            )
+    return text + (
+        f'\n\n<b>👥 Оценка кандидата:</b> <a href="{_esc(href)}">Открыть карточку</a>'
+    )
 
 
 def parse_interview_date_token(date_token):
@@ -439,7 +463,10 @@ def send_candidate_card_to_chat(
         status_key=status if locked else None,
         locked=locked,
         kind=kind,
+        show_action_prompt=with_actions,
     )
+    if kind == "primary" and not with_actions:
+        text = _append_client_zone_link(text, vacancy, candidate)
 
     if with_actions:
         keyboard = (
@@ -483,11 +510,16 @@ def send_candidate_card_to_chat(
             return True, "Кандидат отправлен в чат с кнопками статуса"
         return True, msg or "Сообщение отправлено, но кнопки не отобразились"
 
+    if ok and kind == "primary" and not with_actions:
+        return True, "Кандидат отправлен в чат со ссылкой на карточку"
+
     return ok, msg or "Ошибка отправки"
 
 
 def send_primary_candidate_to_chat(vacancy, candidate):
-    return send_candidate_card_to_chat(vacancy, candidate, with_actions=True, kind="primary")
+    return send_candidate_card_to_chat(
+        vacancy, candidate, with_actions=False, kind="primary"
+    )
 
 
 def _keyboard_for_candidate_card(candidate):

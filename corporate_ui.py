@@ -83,6 +83,41 @@ def apply_corporate_ui():
                 margin: 1rem 0;
             }}
 
+            [data-testid="stSidebarCollapseButton"],
+            [data-testid="collapsedControl"] {{
+                z-index: 999999 !important;
+            }}
+
+            [data-testid="stSidebarCollapseButton"] button,
+            [data-testid="collapsedControl"] button,
+            button[data-testid="stBaseButton-headerNoPadding"] {{
+                color: #ffffff !important;
+                background: rgba(255, 255, 255, 0.12) !important;
+                border: 1px solid rgba(255, 255, 255, 0.35) !important;
+                border-radius: 8px !important;
+                min-width: 2.5rem !important;
+                min-height: 2.5rem !important;
+                z-index: 999999 !important;
+            }}
+
+            [data-testid="stSidebarCollapseButton"] svg,
+            [data-testid="collapsedControl"] svg {{
+                width: 1.25rem !important;
+                height: 1.25rem !important;
+                stroke: #ffffff !important;
+                fill: #ffffff !important;
+            }}
+
+            .sidebar-footer-credit {{
+                margin-top: 1.5rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                font-size: 0.72rem;
+                color: {c["text_muted"]};
+                text-align: center;
+                line-height: 1.4;
+            }}
+
             .sidebar-brand {{
                 padding: 0.25rem 0 1.25rem;
                 margin-bottom: 0.5rem;
@@ -382,6 +417,33 @@ def apply_corporate_ui():
             .main .element-container:has(.cand-stage-yellow) + .element-container [data-testid="stExpander"] [data-testid="stExpanderDetails"],
             .main [data-testid="stVerticalBlock"]:has(.cand-stage-yellow) [data-testid="stExpander"] [data-testid="stExpanderDetails"] {{
                 background-color: #fffbeb !important;
+            }}
+
+            @media (max-width: 768px) {{
+                section.main .block-container {{
+                    max-width: 100%;
+                    padding-left: 0.75rem;
+                    padding-right: 0.75rem;
+                }}
+                [data-testid="stSidebar"] {{
+                    min-width: 0 !important;
+                }}
+                div[data-testid="column"] {{
+                    width: 100% !important;
+                    flex: 1 1 100% !important;
+                    min-width: 0 !important;
+                }}
+                div[data-testid="stHorizontalBlock"] {{
+                    flex-wrap: wrap !important;
+                    gap: 0.5rem !important;
+                }}
+                .stTabs [data-baseweb="tab-list"] {{
+                    flex-wrap: wrap !important;
+                    gap: 0.25rem !important;
+                }}
+                .stButton button {{
+                    width: 100%;
+                }}
             }}
         </style>
         """,

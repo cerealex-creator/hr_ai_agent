@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from corporate_ui import apply_corporate_ui
 from ui_helpers import selectbox_no_default
+from client_access import extract_access_token, verify_master_zone_token
 from client_zone import (
     apply_client_styles,
     load_departments,
@@ -15,12 +16,19 @@ from client_zone import (
     get_production_vacancies,
     vacancy_picker_label,
     render_candidates_section,
+    render_vacancy_profile_block,
 )
 from master_stats import render_master_dashboard
 
 st.set_page_config(page_title="Мастер-зона", page_icon="🏢", layout="wide")
 apply_corporate_ui()
 apply_client_styles()
+
+access_token = extract_access_token(st.query_params)
+if not verify_master_zone_token(access_token):
+    st.error("Ссылка недействительна или устарела.")
+    st.caption("Мастер-зона доступна только по персональной ссылке от HR.")
+    st.stop()
 
 st.title("🏢 Мастер-зона — сводка по всем вакансиям")
 st.caption(
@@ -57,6 +65,7 @@ if selected_label:
     )
     dept = dept_names.get(selected_vacancy.get("client_id"), "—")
     st.markdown(f"**{dept}** · {selected_vacancy['title']}")
+    render_vacancy_profile_block(selected_vacancy)
     render_candidates_section(data, selected_vacancy, key_prefix="master")
 else:
     st.info("Выберите вакансию из списка, чтобы работать с кандидатами.")

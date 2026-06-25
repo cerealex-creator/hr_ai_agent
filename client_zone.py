@@ -1,5 +1,6 @@
 """Общая логика клиентских зон (подразделение и мастер-зона)."""
 
+import html
 from datetime import datetime, time
 
 import streamlit as st
@@ -19,6 +20,7 @@ from vacancy_store import (
     migrate_vacancies_data,
     resolve_status_on_save,
     save_vacancies,
+    vacancy_show_portfolio_field,
 )
 
 TEST_DEPARTMENT_IDS = {99}
@@ -46,6 +48,21 @@ def sort_candidates(candidates):
     )
 
 
+def order_candidates_with_focus(candidates, focus_candidate_id=None):
+    """Сортировка как обычно, но кандидат из deep link — первым в списке."""
+    ordered = sort_candidates(candidates)
+    if not focus_candidate_id:
+        return ordered
+    focus_id = str(focus_candidate_id)
+    focus_cand = next(
+        (c for c in ordered if str(c.get("id")) == focus_id),
+        None,
+    )
+    if focus_cand is None:
+        return ordered
+    return [focus_cand] + [c for c in ordered if str(c.get("id")) != focus_id]
+
+
 def build_time_options():
     options = [""]
     current = time(9, 0)
@@ -61,6 +78,10 @@ def apply_client_styles():
     st.markdown(
         """
         <style>
+            section.main .block-container {
+                max-width: 920px;
+                padding-top: 1rem;
+            }
             .candidate-compact-row {
                 display: flex;
                 align-items: center;
@@ -72,6 +93,22 @@ def apply_client_styles():
                 font-size: 1.1rem;
                 font-weight: 700;
                 color: #0c2340;
+                line-height: 1.35;
+            }
+            .candidate-links-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.35rem;
+                width: 100%;
+            }
+            .hr-comment-block {
+                margin: 0.5rem 0 0;
+                padding: 0.55rem 0.75rem;
+                background: #f1f5f9;
+                border-radius: 8px;
+                font-size: 0.88rem;
+                color: #334155;
+                line-height: 1.45;
             }
             .status-badge {
                 display: inline-block;
@@ -91,17 +128,53 @@ def apply_client_styles():
                 display: inline-block;
                 background: #2563eb;
                 color: #ffffff !important;
-                padding: 0.25rem 0.6rem;
-                border-radius: 6px;
-                font-size: 0.78rem;
+                padding: 0.35rem 0.65rem;
+                border-radius: 8px;
+                font-size: 0.82rem;
                 font-weight: 500;
                 text-decoration: none !important;
-                margin-right: 0.25rem;
+                min-height: 2rem;
+                line-height: 1.2;
             }
             .link-btn-compact:hover { background: #1d4ed8; }
             .link-missing {
                 color: #94a3b8;
                 font-size: 0.78rem;
+            }
+            @media (max-width: 768px) {
+                section.main .block-container {
+                    max-width: 100%;
+                    padding-left: 0.75rem;
+                    padding-right: 0.75rem;
+                }
+                .candidate-name {
+                    font-size: 1rem;
+                    flex: 1 1 100%;
+                }
+                .link-btn-compact {
+                    flex: 1 1 calc(50% - 0.35rem);
+                    text-align: center;
+                    box-sizing: border-box;
+                }
+                [data-testid="stExpander"] summary {
+                    font-size: 0.92rem !important;
+                    line-height: 1.35 !important;
+                }
+                [data-testid="stExpander"] summary p {
+                    font-size: 0.92rem !important;
+                }
+                div[data-testid="column"] {
+                    width: 100% !important;
+                    flex: 1 1 100% !important;
+                    min-width: 0 !important;
+                }
+                div[data-testid="stHorizontalBlock"] {
+                    flex-wrap: wrap !important;
+                    gap: 0.5rem !important;
+                }
+                .stButton button {
+                    width: 100%;
+                }
             }
         </style>
         """,
@@ -125,21 +198,42 @@ def render_status_badge(status_key):
     )
 
 
-def render_compact_summary(cand):
-    links = " ".join([
+def render_compact_summary(cand, vacancy=None):
+    link_parts = [
         render_link_button(cand.get("resume_link", ""), "📄 Резюме"),
-        render_link_button(cand.get("video_link", ""), "🎥 Запись"),
-        render_link_button(cand.get("task_link", ""), "✅ Задание") if cand.get("task_link") else "",
-    ])
+        render_link_button(cand.get("video_link", ""), "🎙️ Собеседование"),
+    ]
+    if vacancy and vacancy_show_portfolio_field(vacancy):
+        link_parts.append(render_link_button(cand.get("portfolio_link", ""), "🎨 Портфолио"))
+    if (cand.get("task_link") or "").strip():
+        link_parts.append(render_link_button(cand.get("task_link", ""), "✅ Задание"))
+    links = " ".join(link_parts)
     ai_badge = render_ai_score_badge(cand["ai_score"]) if has_ai_evaluation(cand) else ""
+    hr_comment = (cand.get("hr_comment") or "").strip()
+    hr_block = ""
+    if hr_comment:
+        hr_block = (
+            f'<p class="hr-comment-block"><b>Комментарий HR:</b> '
+            f'{html.escape(hr_comment)}</p>'
+        )
     return (
         f'<div class="candidate-compact-row">'
-        f'<span class="candidate-name">👤 {cand.get("name", "Без имени")}</span>'
+        f'<span class="candidate-name">👤 {html.escape(cand.get("name", "Без имени"))}</span>'
         f'{render_status_badge(cand.get("client_status", "wait"))}'
         f'{ai_badge}'
-        f'{links}'
+        f'<div class="candidate-links-row">{links}</div>'
+        f'{hr_block}'
         f'</div>'
     )
+
+
+def render_vacancy_profile_block(vacancy):
+    """Профиль должности из documents.profile."""
+    profile = ((vacancy.get("documents") or {}).get("profile") or "").strip()
+    if not profile:
+        return
+    with st.expander("📋 Профиль должности", expanded=False):
+        st.markdown(profile)
 
 
 def format_client_status_date(cand):
@@ -174,10 +268,17 @@ def get_production_vacancies(vacancies, departments):
     return result
 
 
-def render_candidates_section(data, selected_vacancy, key_prefix="client"):
+def render_candidates_section(
+    data,
+    selected_vacancy,
+    key_prefix="client",
+    *,
+    focus_candidate_id=None,
+):
     all_candidates = selected_vacancy.get("candidates", [])
-    candidates = sort_candidates(
-        [c for c in all_candidates if is_visible_in_client_zone(c)]
+    candidates = order_candidates_with_focus(
+        [c for c in all_candidates if is_visible_in_client_zone(c)],
+        focus_candidate_id=focus_candidate_id,
     )
     if not candidates:
         if all_candidates:
@@ -218,8 +319,12 @@ def render_candidates_section(data, selected_vacancy, key_prefix="client"):
             suffix = f"{score}/10" if score > 4 else f"{score}/4"
             expander_label += f" — 🤖 {suffix}"
 
-        with st.expander(expander_label, expanded=False):
-            st.markdown(render_compact_summary(cand), unsafe_allow_html=True)
+        is_focus = focus_candidate_id and str(cand.get("id")) == str(focus_candidate_id)
+        with st.expander(expander_label, expanded=bool(is_focus)):
+            st.markdown(
+                render_compact_summary(cand, vacancy=selected_vacancy),
+                unsafe_allow_html=True,
+            )
             render_ai_evaluation_block(cand)
             st.markdown("---")
 
