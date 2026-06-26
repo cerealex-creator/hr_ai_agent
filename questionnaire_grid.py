@@ -127,8 +127,14 @@ def render_interview_questionnaire_list(cand, key_prefix):
 
         followups = q.get("уточняющие_вопросы", [])
         if followups:
-            with st.expander("Уточняющие вопросы", expanded=False):
+            with st.expander("Уточняющие вопросы (шаблон)", expanded=False):
                 for j, followup in enumerate(followups, 1):
+                    st.markdown(f"{j}. {followup}")
+
+        resume_followups = q.get("уточнения_по_резюме") or []
+        if resume_followups:
+            with st.expander("Уточнения по резюме кандидата", expanded=True):
+                for j, followup in enumerate(resume_followups, 1):
                     st.markdown(f"{j}. {followup}")
 
         if q.get("пример_ответа"):
@@ -160,7 +166,8 @@ def render_interview_questionnaire_grid(cand, key_prefix):
 
     with st.expander("Вопросы для собеседования", expanded=True):
         st.caption(
-            "Меняйте порядок стрелками ↑↓. Оценки ответов учитываются при «Оценить по интервью». "
-            "Сохраните карточку кнопкой «Сохранить изменения по кандидатам»."
+            "Основные вопросы одинаковы для всех кандидатов вакансии (шаблон). "
+            "«Уточнения по резюме» — персональные. Оценки учитываются при «Оценить по интервью». "
+            "Сохраните правки кнопкой «Сохранить изменения по кандидатам»."
         )
         return render_interview_questionnaire_list(cand, f"{key_prefix}_list")

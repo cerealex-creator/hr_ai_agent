@@ -207,6 +207,11 @@ def normalize_questionnaire_list(items):
             item = {
                 "вопрос": q.get("вопрос", q.get("question", "")),
                 "уточняющие_вопросы": [str(f) for f in followups] if isinstance(followups, list) else [],
+                "уточнения_по_резюме": [
+                    str(f)
+                    for f in (q.get("уточнения_по_резюме") or q.get("resume_followups") or [])
+                    if str(f).strip()
+                ],
                 "проверяет_требование": q.get("проверяет_требование", q.get("requirement", "")),
                 "категория": q.get("категория", q.get("category", "")),
                 "пример_ответа": q.get("пример_ответа", q.get("example", "")),
@@ -275,6 +280,139 @@ def enrich_questionnaire_with_resume_hints(resume_text, questionnaire, client, c
         elif not (item.get("в_резюме") or "").strip():
             item["в_резюме"] = "Нет данных в резюме"
     return items
+
+
+PERSONAL_FOLLOWUPS_SYSTEM = """Ты — HR-ассистент. Есть фиксированный опросник собеседования (основные вопросы менять нельзя) и резюме кандидата.
+
+Для КАЖДОГО основного вопроса предложи 0–3 персональных уточняющих вопроса, которые:
+- закрывают пробелы резюме по теме этого вопроса;
+- уточняют противоречия, общие формулировки или «красные флаги»;
+- НЕ повторяют дословно основной вопрос и не дублируют уже указанные в резюме факты;
+- помогают проверить то, чего в резюме нет или что сформулировано расплывчато.
+
+Если по теме вопроса резюме уже даёт полный ответ — верни пустой список [].
+
+Верни ТОЛЬКО JSON:
+{"уточнения_по_резюме": [["уточнение 1"], [], ...]}
+
+Число внутренних списков ДОЛЖНО совпадать с числом основных вопросов, порядок — тот же."""
+
+
+def copy_vacancy_questionnaire_template(base_questionnaire):
+    """Копия шаблона опросника вакансии — одинаковые основные вопросы для всех кандидатов."""
+    items = normalize_questionnaire_list(base_questionnaire or [])
+    for item in items:
+        item["уточнения_по_резюме"] = []
+    return items
+
+
+def _merge_personal_followups(items, followups_lists):
+    for i, item in enumerate(items):
+        raw = followups_lists[i] if i < len(followups_lists) else []
+        if not isinstance(raw, list):
+            raw = [raw] if raw else []
+        personal = []
+        for f in raw:
+            text = str(f).strip()
+            if text and text not in personal:
+                personal.append(text)
+        item["уточнения_по_резюме"] = personal[:5]
+    return items
+
+
+def enrich_questionnaire_with_personal_followups(
+    resume_text,
+    questionnaire,
+    client,
+    config,
+    *,
+    hr_comment="",
+    eval_comment="",
+    strengths=None,
+    weaknesses=None,
+):
+    """Добавляет персональные уточнения по резюме к каждому вопросу шаблона."""
+    items = normalize_questionnaire_list(questionnaire)
+    if not items or not (resume_text or "").strip():
+        return items
+
+    questions = [q.get("вопрос", "") for q in items]
+    q_block = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    resume_limit = get_char_limit(config, "resume", 8000)
+    eval_comment_limit = get_char_limit(config, "eval_comment", 1500)
+
+    user_parts = [
+        f"РЕЗЮМЕ:\n{trim_text(resume_text, resume_limit)}",
+        f"ОСНОВНЫЕ ВОПРОСЫ ОПРОСНИКА (не менять, только уточнения по резюме):\n{q_block}",
+    ]
+    if (eval_comment or "").strip():
+        user_parts.append(
+            f"КОММЕНТАРИЙ ИИ ПО РЕЗЮМЕ:\n{trim_text(eval_comment, eval_comment_limit)}"
+        )
+    if strengths:
+        user_parts.append("СИЛЬНЫЕ СТОРОНЫ:\n" + "\n".join(f"- {s}" for s in (strengths or [])[:10]))
+    if weaknesses:
+        user_parts.append(
+            "СЛАБЫЕ СТОРОНЫ / ПРОБЕЛЫ:\n" + "\n".join(f"- {w}" for w in (weaknesses or [])[:10])
+        )
+    hr_block = format_hr_comment_block(hr_comment, config)
+    if hr_block:
+        user_parts.append(hr_block.strip())
+    user_parts.append(
+        "Сформируй персональные уточняющие вопросы по резюме для каждого основного вопроса."
+    )
+
+    response = create_chat_completion(
+        client,
+        config,
+        "questionnaire",
+        messages=[
+            {"role": "system", "content": PERSONAL_FOLLOWUPS_SYSTEM},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=0.3,
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    followups = result.get("уточнения_по_резюме", result.get("уточняющие", []))
+    if not isinstance(followups, list):
+        followups = []
+    return _merge_personal_followups(items, followups)
+
+
+def build_candidate_questionnaire_from_template(
+    resume_text,
+    base_questionnaire,
+    client,
+    config,
+    *,
+    hr_comment="",
+    eval_comment="",
+    strengths=None,
+    weaknesses=None,
+):
+    """
+    Опросник кандидата: основные вопросы = шаблон вакансии (одинаковые для всех),
+    персонализация — колонка «В резюме» и блок «Уточнения по резюме».
+    """
+    questionnaire = copy_vacancy_questionnaire_template(base_questionnaire)
+    if not questionnaire:
+        raise ValueError(
+            "Шаблон опросника вакансии пуст — заполните опросник в «Документы по вакансии»."
+        )
+    questionnaire = enrich_questionnaire_with_resume_hints(
+        resume_text, questionnaire, client, config
+    )
+    questionnaire = enrich_questionnaire_with_personal_followups(
+        resume_text,
+        questionnaire,
+        client,
+        config,
+        hr_comment=hr_comment,
+        eval_comment=eval_comment,
+        strengths=strengths,
+        weaknesses=weaknesses,
+    )
+    return questionnaire
 
 
 def format_hr_comment_block(hr_comment, config=None):
@@ -425,6 +563,12 @@ def questionnaire_to_eval_prompt(questionnaire):
             parts.append(f"   Желательный ответ: {q['пример_ответа']}")
         if q.get("в_резюме"):
             parts.append(f"   Уже в резюме: {q['в_резюме']}")
+        resume_followups = q.get("уточнения_по_резюме") or []
+        if resume_followups:
+            parts.append(
+                "   Уточнения по резюме: "
+                + "; ".join(str(f) for f in resume_followups if str(f).strip())
+            )
         rating = normalize_hr_rating(q.get("оценка_hr", q.get("оценка", "")))
         if rating:
             parts.append(f"   Оценка HR по ответу: {HR_RATING_LABELS.get(rating, rating)}")
