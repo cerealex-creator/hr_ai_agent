@@ -248,6 +248,90 @@ def render_active_vacancy_workspace(vacancy, deps):
                 st.rerun()
 
 
+def render_archive_vacancy_picker(archived):
+    if "opened_archive_vacancy_id" not in st.session_state:
+        st.session_state.opened_archive_vacancy_id = None
+
+    cols_per_row = 3
+    for row_start in range(0, len(archived), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for col_idx, vacancy in enumerate(archived[row_start:row_start + cols_per_row]):
+            with cols[col_idx]:
+                cand_count = len(vacancy.get("candidates", []))
+                is_open = st.session_state.opened_archive_vacancy_id == vacancy["id"]
+                label = f"{vacancy['title']}\nКандидаты: {cand_count}"
+                period = format_vacancy_search_period(vacancy, precise=True)
+                if period and period != "период не указан":
+                    label += f"\n{period}"
+                label += "\n📦 архив"
+                btn_type = "primary" if is_open else "secondary"
+                if st.button(
+                    label,
+                    key=f"arch_vac_pick_{vacancy['id']}",
+                    type=btn_type,
+                    use_container_width=True,
+                ):
+                    if is_open:
+                        st.session_state.opened_archive_vacancy_id = None
+                    else:
+                        st.session_state.opened_archive_vacancy_id = vacancy["id"]
+                    st.rerun()
+
+
+def render_archive_vacancy_workspace(vacancy, deps):
+    migrate_vacancy_warranty(vacancy)
+    period = format_vacancy_search_period(vacancy, precise=True)
+    st.subheader(f"{vacancy['title']} · архив")
+    if period and period != "период не указан":
+        st.caption(f"Период поиска: {period}")
+
+    sub_cands, sub_docs = st.tabs([
+        "👥 Кандидаты",
+        "📄 Документы (только просмотр)",
+    ])
+
+    with sub_cands:
+        render_candidates_zone(vacancy, deps, archive_mode=True)
+
+    with sub_docs:
+        render_existing_documents_zone(vacancy, deps)
+
+
+def render_archived_vacancies(deps):
+    from vacancy_stats_filter import filter_vacancies_for_stats
+
+    all_vacancies = deps["load_vacancies"]()
+    archived = [
+        v for v in all_vacancies
+        if not v.get("active", True) and not v.get("is_test")
+    ]
+    archived.sort(
+        key=lambda v: (v.get("closed_at") or v.get("created_at") or ""),
+        reverse=True,
+    )
+
+    if not archived:
+        st.info("Архив пуст — закрытые вакансии появятся здесь после «Переместить в архив».")
+        return
+
+    st.markdown("Выберите архивную вакансию, чтобы посмотреть кандидатов или скопировать карточку в активную.")
+    render_archive_vacancy_picker(archived)
+
+    opened_id = st.session_state.get("opened_archive_vacancy_id")
+    if not opened_id:
+        st.caption("Вакансия не выбрана.")
+        return
+
+    vacancy = next((v for v in archived if v["id"] == opened_id), None)
+    if not vacancy:
+        st.session_state.opened_archive_vacancy_id = None
+        st.warning("Вакансия не найдена.")
+        return
+
+    st.divider()
+    render_archive_vacancy_workspace(vacancy, deps)
+
+
 def render_vacancies_in_work(deps):
     vacancies = deps["load_vacancies"]()
     active = [v for v in vacancies if v.get("active", True)]
@@ -335,14 +419,24 @@ def render_vacancy_tab(deps):
     st.header("🏢 Вакансии")
     st.caption("Вакансии в работе и создание новых — в одном месте.")
 
-    tab_work, tab_templates, tab_create = st.tabs([
+    tab_work, tab_archive, tab_search, tab_templates, tab_create = st.tabs([
         "📂 Вакансии в работе",
+        "📦 Архив",
+        "🔍 Поиск",
         "📌 Шаблоны",
         "➕ Создание новой вакансии",
     ])
 
     with tab_work:
         render_vacancies_in_work(deps)
+
+    with tab_archive:
+        render_archived_vacancies(deps)
+
+    with tab_search:
+        from candidate_search_ui import render_candidate_search_tab
+
+        render_candidate_search_tab(deps)
 
     with tab_templates:
         render_templates_library(deps)

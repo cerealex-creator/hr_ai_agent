@@ -766,6 +766,10 @@ def load_vacancies():
 
         if migrate_vacancy_yandex_disk(v):
             migrated = True
+        from vacancy_stats_filter import migrate_vacancy_is_test
+
+        if migrate_vacancy_is_test(v):
+            migrated = True
         for candidate in v.get("candidates", []):
             if "task_link" not in candidate:
                 candidate["task_link"] = ""
@@ -816,7 +820,7 @@ def _next_vacancy_id(vacancies):
     return max(v.get("id", 0) for v in vacancies) + 1
 
 
-def create_vacancy(title, chat_id, client_id=0, *, documents=None, show_portfolio_field=False):
+def create_vacancy(title, chat_id, client_id=0, *, documents=None, show_portfolio_field=False, is_test=False):
     from telegram_notify import normalize_chat_id
     vacancies = load_vacancies()
     title = (title or "").strip()
@@ -844,13 +848,14 @@ def create_vacancy(title, chat_id, client_id=0, *, documents=None, show_portfoli
         "warranty_source_vacancy_id": None,
         "warranty": default_warranty(),
         "close_reason": None,
+        "is_test": bool(is_test),
     }
     vacancies.append(new_vacancy)
     save_vacancies(vacancies)
     return True, new_vacancy
 
 
-def create_vacancy_from_template(template_id, title, chat_id=None, client_id=None):
+def create_vacancy_from_template(template_id, title, chat_id=None, client_id=None, *, is_test=False):
     import copy
 
     from vacancy_template_store import get_template
@@ -867,6 +872,7 @@ def create_vacancy_from_template(template_id, title, chat_id=None, client_id=Non
         resolved_chat,
         resolved_client,
         documents=documents,
+        is_test=is_test,
     )
 
 def update_vacancy_docs_by_id(vacancy_id, docs_dict, *, replace_documents=False):
@@ -1446,6 +1452,9 @@ def build_vacancy_deps():
         "get_vacancy_profile_text": get_vacancy_profile_text,
         "get_vacancy_questionnaire_text": get_vacancy_questionnaire_text,
         "evaluate_candidate_with_ai_v2": evaluate_candidate_with_ai_v2,
+        "get_history_index": get_history_index,
+        "load_generation_from_history": load_generation_from_history,
+        "delete_generation_from_history": delete_generation_from_history,
         "send_telegram_message": send_telegram_message,
         "default_ignore_flags": default_ignore_flags,
         "QUESTIONNAIRE_GENERATION_RULES": QUESTIONNAIRE_GENERATION_RULES,
@@ -1894,10 +1903,9 @@ with st.sidebar:
 
 
 # Вкладки
-tab_vacancies, tab_stats, tab6, tab_settings, tab5 = st.tabs([
+tab_vacancies, tab_stats, tab_settings, tab5 = st.tabs([
     "🏢 Вакансии",
     "📊 Статистика",
-    "📜 История",
     "⚙️ Настройки",
     "📖 Инструкции",
 ])
@@ -1920,7 +1928,7 @@ with tab5:
 
 **Вкладки приложения**
 
-**Вакансии** — основная работа. Внутри три раздела: «Вакансии в работе»,
+**Вакансии** — основная работа. Внутри: «Вакансии в работе», **«Архив»**, **«Поиск»** (кандидаты по ФИО и резюме),
 «Шаблоны» и «Создание новой вакансии». Откройте вакансию кнопкой в списке —
 увидите кандидатов, документы и статистику. Закрытую вакансию можно перенести
 в архив. Удаление — отдельным блоком внизу карточки, в два шага, с подтверждением.
@@ -1938,12 +1946,12 @@ with tab5:
 затем генерация или импорт документов. Расшифровка разговора с заказчиком —
 через загрузку аудио или видео (нужен установленный ffmpeg) или готовый текст.
 
-**История** — архив ранее сгенерированных пакетов. Нажмите «Загрузить» у нужного пакета,
-выберите вакансию и «Применить» — **прежние документы вакансии будут полностью заменены**
-пакетом из истории (поля, которых нет в пакете, очищаются).
+**Прошлые генерации** — сохраняются автоматически в `data/history`. Подставить пакет
+можно в «Документы по вакансии» → «Прошлые генерации» у открытой вакансии; при создании
+вакансии с похожим названием показывается подсказка.
 
-**Статистика** — настраиваемая сводка по этапам воронки, реестр вакансий «На гарантии»
-и детальная статистика по выбранной вакансии.
+**Статистика** — продуктивность за месяц/квартал/полугодие, сравнение с прошлым периодом
+и ИИ-анализ по кнопке; реестр «На гарантии» и детальная статистика по вакансии.
 
 **Настройки** — чаты Telegram по отделам, список всех вакансий, шаблоны,
 подключение Google Calendar. Удаление вакансии из общего списка — тоже здесь,
@@ -2050,18 +2058,7 @@ Telegram-ботом и клиентскими зонами.
 Свой Telegram user id: напишите боту в личку `/id`.
         """)
 
-# ---------- ВКЛАДКА 6: ИСТОРИЯ ГЕНЕРАЦИЙ ----------
-with tab6:
-    from vacancy_prep import render_history_tab
-
-    render_history_tab(
-        build_vacancy_deps(),
-        get_history_index=get_history_index,
-        load_generation_from_history=load_generation_from_history,
-        delete_generation_from_history=delete_generation_from_history,
-    )
-
-# ---------- ВКЛАДКА 7: НАСТРОЙКИ ----------
+# ---------- ВКЛАДКА: НАСТРОЙКИ ----------
 with tab_settings:
     st.header("⚙️ Настройки")
     st.caption("Telegram-чаты, список вакансий и служебная информация.")

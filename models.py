@@ -328,6 +328,17 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if not isinstance(candidate.get("interview_questionnaire"), list):
         candidate["interview_questionnaire"] = []
         migrated = True
+    else:
+        raw = candidate.get("interview_questionnaire") or []
+        needs_qids = any(
+            isinstance(q, str) or (isinstance(q, dict) and not (q.get("_qid") or "").strip())
+            for q in raw
+        )
+        if needs_qids and raw:
+            from resume_ai import normalize_questionnaire_list
+
+            candidate["interview_questionnaire"] = normalize_questionnaire_list(raw)
+            migrated = True
     if not candidate.get("id"):
         candidate["id"] = str(uuid.uuid4())
         migrated = True

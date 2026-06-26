@@ -102,7 +102,14 @@ def migrate():
                 print(f"Удалён дубликат кандидата: {c.get('name')} в вакансии {v['title']}")
         v["candidates"] = unique_candidates
     
-    # ---- 5. Сохраняем исправленные данные ----
+    # ---- 5. Тестовые вакансии (не в статистике продуктивности) ----
+    stats_ids = {1, 3, 4, 7, 11}
+    for v in new_vacancies:
+        if "is_test" not in v:
+            v["is_test"] = v.get("id") not in stats_ids
+            print(f"is_test={v['is_test']}: {v.get('title')} (id={v.get('id')})")
+    
+    # ---- 6. Сохраняем исправленные данные ----
     data["vacancies"] = new_vacancies
     with open(VACANCIES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

@@ -1002,6 +1002,19 @@ def render_existing_documents_zone(vacancy, deps):
     render_vacancy_candidate_settings(vacancy, deps)
     render_documents_editor(vacancy, deps, mode="vacancy")
 
+    get_history_index = deps.get("get_history_index")
+    if get_history_index:
+        with st.expander("📜 Прошлые генерации", expanded=False):
+            from vacancy_history_ui import render_vacancy_history_panel
+
+            render_vacancy_history_panel(
+                vacancy,
+                deps,
+                get_history_index=get_history_index,
+                load_generation_from_history=deps["load_generation_from_history"],
+                delete_generation_from_history=deps["delete_generation_from_history"],
+            )
+
     with st.expander("📌 Сохранить как шаблон", expanded=False):
         st.caption(
             "Копирует документы и привязку к чату в шаблоны. "
@@ -1492,6 +1505,16 @@ def render_new_vacancy_form(deps):
 
     new_title = st.text_input("Название должности", key="new_vac_title")
 
+    if deps.get("get_history_index"):
+        from vacancy_history_ui import render_create_vacancy_history_hint
+
+        render_create_vacancy_history_hint(
+            st.session_state.get("new_vac_title", ""),
+            deps,
+            get_history_index=deps["get_history_index"],
+            load_generation_from_history=deps.get("load_generation_from_history"),
+        )
+
     chat_id = ""
     client_id = 0
     if chats:
@@ -1518,6 +1541,12 @@ def render_new_vacancy_form(deps):
         key="new_vac_show_portfolio",
         help="Можно включить позже в настройках вакансии.",
     )
+    is_test_vacancy = st.checkbox(
+        "Тестовая вакансия",
+        value=False,
+        key="new_vac_is_test",
+        help="Не учитывается в статистике продуктивности на вкладке «Статистика».",
+    )
 
     if st.button("Создать вакансию", key="create_vac_btn", type="primary"):
         title = new_title.strip()
@@ -1537,6 +1566,7 @@ def render_new_vacancy_form(deps):
                         title,
                         chat_id=chat_id or None,
                         client_id=resolved_client if chat_id else None,
+                        is_test=is_test_vacancy,
                     )
                     if ok:
                         if show_portfolio_field:
@@ -1558,7 +1588,9 @@ def render_new_vacancy_form(deps):
             st.warning("Выберите чат Telegram.")
         else:
             ok, msg = deps["create_vacancy"](
-                title, chat_id, client_id, show_portfolio_field=show_portfolio_field
+                title, chat_id, client_id,
+                show_portfolio_field=show_portfolio_field,
+                is_test=is_test_vacancy,
             )
             if ok:
                 st.session_state.opened_vacancy_id = None

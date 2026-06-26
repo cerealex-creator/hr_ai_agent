@@ -368,7 +368,7 @@ def render_stage_badge(stage):
     )
 
 
-def render_candidate_card(vacancy, cand, idx, deps):
+def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
     _sync_candidate_link_widgets(vacancy, cand)
     k = lambda field: _card_key(vacancy, cand, field)
     current_stage = cand.get("hr_stage", "resume_screening")
@@ -405,10 +405,11 @@ def render_candidate_card(vacancy, cand, idx, deps):
     if st.session_state.get(stage_info_key):
         st.info(st.session_state.pop(stage_info_key))
 
+    exp_key = k(f"exp_{expander_rev}")
     with st.expander(
         " · ".join(title_parts),
         expanded=False,
-        key=k(f"exp_{expander_rev}"),
+        key=exp_key,
     ):
         c1, c2 = st.columns([3, 1])
         with c1:
@@ -550,14 +551,9 @@ def render_candidate_card(vacancy, cand, idx, deps):
                         for i, q in enumerate(interview_q, 1):
                             deps["render_questionnaire_item"](i, q)
                 else:
-                    updated_q = render_interview_questionnaire_grid(
-                        cand,
-                        k("iq"),
-                    )
-                    if updated_q is not None:
-                        cand["interview_questionnaire"] = updated_q
-                        _persist_vacancy_candidates(vacancy, deps)
-                        _request_candidates_rerun()
+                    if st.session_state.get(exp_key, False):
+                        if render_interview_questionnaire_grid(cand, k("iq")):
+                            _request_candidates_rerun()
 
             cand["transcript"] = st.text_area(
                 "Расшифровка интервью",
@@ -1081,6 +1077,12 @@ def render_candidate_card(vacancy, cand, idx, deps):
             if st.button("🗑️ Удалить", key=k("del")):
                 return "delete"
 
+        if archive_mode:
+            with st.expander("📋 Скопировать в активную вакансию", expanded=False):
+                from candidate_copy import render_copy_candidate_ui
+
+                render_copy_candidate_ui(cand, vacancy, deps, key_prefix=k("copy"))
+
         render_ai_evaluation_block(cand)
     return None
 
@@ -1443,11 +1445,22 @@ def render_add_candidate(vacancy, deps):
             st.rerun()
 
 
-def render_candidates_zone(vacancy, deps):
-    if not deps["vacancy_has_profile"](vacancy):
+def render_candidates_zone(vacancy, deps, *, archive_mode=False):
+    if not archive_mode and not deps["vacancy_has_profile"](vacancy):
         st.warning("Профиль должности не заполнен — оценка по интервью недоступна. Заполните в «Документы по вакансии».")
 
+    if archive_mode:
+        st.info(
+            "Архивная вакансия: кандидатов можно просматривать, править и **копировать** "
+            "в активную вакансию (этапы и оценка ИИ при копировании обнуляются)."
+        )
+
     _render_cand_funnel_flash()
+
+    if archive_mode:
+        _render_candidates_list(vacancy, deps, archive_mode=True)
+        _flush_candidates_rerun()
+        return
 
     tab_list, tab_bulk, tab_add = st.tabs(["Список", "Автозагрузка", "Ручное заполнение"])
 
@@ -1456,75 +1469,83 @@ def render_candidates_zone(vacancy, deps):
     with tab_add:
         render_add_candidate(vacancy, deps)
     with tab_list:
-        vacancies = deps["load_vacancies"]()
-        vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
-        all_candidates = sort_candidates_for_list(vacancy.get("candidates", []))
-        if not all_candidates:
-            st.info("Нет кандидатов.")
-        else:
-            rejected = [c for c in all_candidates if _is_rejected_candidate(c)]
-            active = [c for c in all_candidates if not _is_rejected_candidate(c)]
-            rejected_count = len(rejected)
-            show_rejected_key = f"show_rejected_{vacancy['id']}"
-            show_rejected = st.session_state.get(show_rejected_key, False)
-            visible = active + (rejected if show_rejected else [])
-
-            _ensure_candidates_snapshot(vacancy["id"], all_candidates)
-            pending_banner = st.empty()
-            banner_save_clicked = False
-
-            if not visible:
-                st.info("Нет кандидатов в работе.")
-            else:
-                to_delete_id = None
-                for idx, cand in enumerate(visible):
-                    migrate_candidate(cand, deps["default_ignore_flags"])
-                    action = render_candidate_card(vacancy, cand, idx, deps)
-                    if action == "delete":
-                        to_delete_id = cand.get("id")
-
-                if to_delete_id:
-                    vacancy["candidates"] = [
-                        c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
-                    ]
-                    for v in vacancies:
-                        if v["id"] == vacancy["id"]:
-                            v["candidates"] = vacancy["candidates"]
-                    deps["save_vacancies"](vacancies)
-                    _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
-                    _request_candidates_rerun()
-
-                if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
-                    from corporate_ui import render_pending_changes_banner
-
-                    with pending_banner.container():
-                        banner_save_clicked = render_pending_changes_banner(vacancy["id"])
-
-            save_col, reject_col = st.columns([1, 1])
-            with save_col:
-                save_clicked = st.button(
-                    "💾 Сохранить изменения по кандидатам",
-                    key=f"save_cands_{vacancy['id']}",
-                )
-            with reject_col:
-                if rejected_count:
-                    reject_label = (
-                        "Скрыть кандидатов с отказом"
-                        if show_rejected
-                        else f"Показать {rejected_count} кандидатов с отказом"
-                    )
-                    if st.button(reject_label, key=f"toggle_rejected_{vacancy['id']}"):
-                        st.session_state[show_rejected_key] = not show_rejected
-                        st.rerun()
-
-            if save_clicked or banner_save_clicked:
-                _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
-                pending_banner.empty()
-                _set_cand_funnel_flash(
-                    "Изменения по кандидатам сохранены!"
-                    if banner_save_clicked
-                    else "Сохранено!"
-                )
-                _request_candidates_rerun()
+        _render_candidates_list(vacancy, deps, archive_mode=False)
 
     _flush_candidates_rerun()
+
+
+def _render_candidates_list(vacancy, deps, *, archive_mode=False):
+    vacancies = deps["load_vacancies"]()
+    vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
+    all_candidates = sort_candidates_for_list(vacancy.get("candidates", []))
+    if not all_candidates:
+        st.info("Нет кандидатов.")
+        return
+
+    rejected = [c for c in all_candidates if _is_rejected_candidate(c)]
+    active = [c for c in all_candidates if not _is_rejected_candidate(c)]
+    rejected_count = len(rejected)
+    show_rejected_key = f"show_rejected_{vacancy['id']}"
+    show_rejected = st.session_state.get(show_rejected_key, False)
+    visible = active + (rejected if show_rejected else [])
+
+    _ensure_candidates_snapshot(vacancy["id"], all_candidates)
+    pending_banner = st.empty()
+    banner_save_clicked = False
+
+    if not visible:
+        st.info("Нет кандидатов в работе.")
+        return
+
+    to_delete_id = None
+    for idx, cand in enumerate(visible):
+        migrate_candidate(cand, deps["default_ignore_flags"])
+        action = render_candidate_card(
+            vacancy, cand, idx, deps, archive_mode=archive_mode
+        )
+        if action == "delete":
+            to_delete_id = cand.get("id")
+
+    if to_delete_id:
+        vacancy["candidates"] = [
+            c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
+        ]
+        for v in vacancies:
+            if v["id"] == vacancy["id"]:
+                v["candidates"] = vacancy["candidates"]
+        deps["save_vacancies"](vacancies)
+        _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
+        _request_candidates_rerun()
+
+    if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
+        from corporate_ui import render_pending_changes_banner
+
+        with pending_banner.container():
+            banner_save_clicked = render_pending_changes_banner(vacancy["id"])
+
+    save_col, reject_col = st.columns([1, 1])
+    with save_col:
+        save_clicked = st.button(
+            "💾 Сохранить изменения по кандидатам",
+            key=f"save_cands_{vacancy['id']}",
+        )
+    with reject_col:
+        if rejected_count:
+            reject_label = (
+                "Скрыть кандидатов с отказом"
+                if show_rejected
+                else f"Показать {rejected_count} кандидатов с отказом"
+            )
+            if st.button(reject_label, key=f"toggle_rejected_{vacancy['id']}"):
+                st.session_state[show_rejected_key] = not show_rejected
+                st.rerun()
+
+    if save_clicked or banner_save_clicked:
+        _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
+        pending_banner.empty()
+        _set_cand_funnel_flash(
+            "Изменения по кандидатам сохранены!"
+            if banner_save_clicked
+            else "Сохранено!"
+        )
+        _request_candidates_rerun()

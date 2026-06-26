@@ -1,6 +1,5 @@
 """Интерактивный список опросника для собеседования."""
 
-import json
 import uuid
 
 import streamlit as st
@@ -14,20 +13,6 @@ HR_RATING_OPTIONS = [
     ("doubtful", "Сомнительно"),
     ("no", "Нет"),
 ]
-
-
-def _item_signature(items):
-    order = [q.get("_qid", "") for q in items if isinstance(q, dict)]
-    return json.dumps(order, ensure_ascii=False)
-
-
-def _needs_question_ids(items):
-    for q in items or []:
-        if isinstance(q, str):
-            return True
-        if isinstance(q, dict) and not (q.get("_qid") or "").strip():
-            return True
-    return False
 
 
 def _ensure_question_ids(items):
@@ -79,6 +64,7 @@ def _render_hr_rating_row(key_prefix, q, rev):
     st.caption("Оценка ответа:")
     cols = st.columns(4)
     selected = current
+    clicked = False
     for col, (value, label) in zip(cols, HR_RATING_OPTIONS[1:]):
         with col:
             active = current == value
@@ -89,27 +75,26 @@ def _render_hr_rating_row(key_prefix, q, rev):
                 type="primary" if active else "secondary",
             ):
                 selected = "" if active else value
+                clicked = True
     selected = normalize_hr_rating(selected)
-    if selected != current:
-        q["оценка_hr"] = selected
-        q["оценка"] = selected
-        return True
     q["оценка_hr"] = selected
     q["оценка"] = selected
-    return False
+    return clicked and selected != current
 
 
-def render_interview_questionnaire_list(items, key_prefix):
-    """Интерактивный список вопросов. Возвращает обновлённый список или None."""
+def render_interview_questionnaire_list(cand, key_prefix):
+    """
+    Рисует список вопросов, правит cand['interview_questionnaire'] в памяти.
+    Возвращает True только если нужен rerun (перестановка / смена оценки).
+    """
+    items = _ensure_question_ids(cand.get("interview_questionnaire") or [])
     if not items:
-        return None
+        cand["interview_questionnaire"] = items
+        return False
 
-    if _needs_question_ids(items):
-        return _ensure_question_ids(items)
-
-    items = _ensure_question_ids(items)
+    cand["interview_questionnaire"] = items
     rev = st.session_state.get(_rev_key(key_prefix), 0)
-    changed = False
+    needs_rerun = False
 
     for index, q in enumerate(items):
         qid = q["_qid"]
@@ -118,16 +103,18 @@ def render_interview_questionnaire_list(items, key_prefix):
             if index > 0 and st.button("↑", key=f"{key_prefix}_up_{qid}_{rev}", help="Выше"):
                 swapped = _swap_by_qid(items, qid, -1)
                 if swapped:
+                    cand["interview_questionnaire"] = swapped
                     st.session_state[_rev_key(key_prefix)] = rev + 1
-                    return swapped
+                    return True
         with head_cols[1]:
             if index < len(items) - 1 and st.button(
                 "↓", key=f"{key_prefix}_down_{qid}_{rev}", help="Ниже"
             ):
                 swapped = _swap_by_qid(items, qid, 1)
                 if swapped:
+                    cand["interview_questionnaire"] = swapped
                     st.session_state[_rev_key(key_prefix)] = rev + 1
-                    return swapped
+                    return True
         with head_cols[2]:
             st.markdown(f"**{index + 1}. {q.get('вопрос', '')}**")
 
@@ -147,7 +134,7 @@ def render_interview_questionnaire_list(items, key_prefix):
         if q.get("пример_ответа"):
             st.caption(f"Желательный результат: {q['пример_ответа']}")
 
-        new_answer = st.text_area(
+        q["ответ"] = st.text_area(
             "Заметка по ответу",
             value=q.get("ответ", q.get("answer", "")),
             height=68,
@@ -155,31 +142,25 @@ def render_interview_questionnaire_list(items, key_prefix):
             label_visibility="collapsed",
             placeholder="Краткая заметка по ответу кандидата (необязательно)",
         )
-        if new_answer != q.get("ответ", ""):
-            q["ответ"] = new_answer
-            changed = True
 
         if _render_hr_rating_row(key_prefix, q, rev):
-            changed = True
+            needs_rerun = True
 
         st.divider()
 
-    if changed:
-        return items
-    return None
+    cand["interview_questionnaire"] = items
+    return needs_rerun
 
 
 def render_interview_questionnaire_grid(cand, key_prefix):
-    """
-    Опросник в карточке кандидата (только список).
-    Возвращает обновлённый список вопросов, если пользователь что-то изменил.
-    """
+    """Опросник в карточке. True = нужен один rerun (оценка / порядок)."""
     items = cand.get("interview_questionnaire") or []
     if not items:
-        return None
+        return False
 
     with st.expander("Вопросы для собеседования", expanded=True):
         st.caption(
-            "Меняйте порядок стрелками ↑↓. Оценки ответов учитываются при «Оценить по интервью»."
+            "Меняйте порядок стрелками ↑↓. Оценки ответов учитываются при «Оценить по интервью». "
+            "Сохраните карточку кнопкой «Сохранить изменения по кандидатам»."
         )
-        return render_interview_questionnaire_list(items, f"{key_prefix}_list")
+        return render_interview_questionnaire_list(cand, f"{key_prefix}_list")
