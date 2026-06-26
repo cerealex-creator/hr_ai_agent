@@ -11,12 +11,13 @@ ATTENDANCE_CANCELLED_CLIENT = "cancelled_client"
 
 MORNING_ATTENDANCE_HOUR = 9
 MORNING_ATTENDANCE_MINUTE = 0
-MORNING_ATTENDANCE_TOLERANCE_MIN = 12
+MORNING_ATTENDANCE_REPEAT_MIN = 30
 
 
 def reset_interview_attendance(candidate):
     candidate["interview_attendance_status"] = ""
     candidate["interview_attendance_morning_date"] = ""
+    candidate["interview_attendance_morning_last_sent_at"] = ""
 
 
 def _meeting_format_label(candidate):
@@ -51,6 +52,7 @@ def build_morning_attendance_message(
     *,
     resolved=False,
     status="",
+    repeat=False,
 ):
     name = _esc(candidate.get("name", "кандидатом"))
     vac = _esc(vacancy_title)
@@ -67,6 +69,8 @@ def build_morning_attendance_message(
         "",
         "Уточните у кандидата явку на встречу и выберите действие:",
     ]
+    if repeat:
+        lines.insert(0, "🔁 <b>Напоминание:</b> ответ по явке ещё не получен.\n")
     if resolved:
         lines = [
             f"<b>☀️ Собеседование сегодня</b>",
@@ -198,10 +202,47 @@ def apply_and_save_interview_attendance(
     return True, labels.get(status, "Сохранено"), candidate, vacancy, group_job
 
 
-def is_morning_attendance_window(now):
-    target = MORNING_ATTENDANCE_HOUR * 60 + MORNING_ATTENDANCE_MINUTE
-    current = now.hour * 60 + now.minute
-    return abs(current - target) <= MORNING_ATTENDANCE_TOLERANCE_MIN
+def _parse_iso_datetime(raw, tz):
+    if not raw:
+        return None
+    from datetime import datetime
+
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", ""))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz)
+    return dt.astimezone(tz)
+
+
+def is_morning_attendance_due(cand, now, tz):
+    """Нужно ли отправить (или повторить) утреннее напоминание в личку HR."""
+    status = (cand.get("interview_attendance_status") or "").strip()
+    if status:
+        return False
+    dt = parse_interview_datetime(
+        cand.get("office_interview_date"),
+        cand.get("office_interview_time"),
+        tz=tz,
+    )
+    if not dt or dt.date() != now.date():
+        return False
+    if now >= dt:
+        return False
+    day_start = now.replace(
+        hour=MORNING_ATTENDANCE_HOUR,
+        minute=MORNING_ATTENDANCE_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if now < day_start:
+        return False
+    last = _parse_iso_datetime(cand.get("interview_attendance_morning_last_sent_at"), tz)
+    if last is None or last.date() != now.date():
+        return True
+    elapsed_min = (now - last).total_seconds() / 60
+    return elapsed_min >= MORNING_ATTENDANCE_REPEAT_MIN
 
 
 def collect_morning_attendance_jobs(now, tz, data):
@@ -213,9 +254,6 @@ def collect_morning_attendance_jobs(now, tz, data):
         return []
 
     today_iso = now.date().isoformat()
-    if not is_morning_attendance_window(now):
-        return []
-
     jobs = []
     for vacancy in data.get("vacancies", []):
         if not vacancy.get("active", True):
@@ -229,31 +267,27 @@ def collect_morning_attendance_jobs(now, tz, data):
             migrate_candidate(cand)
             if not has_client_meeting_scheduled(cand):
                 continue
-            dt = parse_interview_datetime(
-                cand.get("office_interview_date"),
-                cand.get("office_interview_time"),
-                tz=tz,
-            )
-            if not dt or dt.date().isoformat() != today_iso:
-                continue
-            if cand.get("interview_attendance_morning_date") == today_iso:
+            if not is_morning_attendance_due(cand, now, tz):
                 continue
 
             status = (cand.get("interview_attendance_status") or "").strip()
-            resolved = bool(status)
+            last = _parse_iso_datetime(
+                cand.get("interview_attendance_morning_last_sent_at"), tz
+            )
+            repeat = last is not None and last.date() == now.date()
             jobs.append({
                 "chat_id": hr_chat_id,
                 "text": build_morning_attendance_message(
                     cand,
                     vac_title,
-                    resolved=resolved,
-                    status=status,
+                    repeat=repeat,
                 ),
-                "reply_markup": None if resolved else build_morning_attendance_keyboard(cand),
+                "reply_markup": build_morning_attendance_keyboard(cand),
                 "label": f"attendance_morning:{cand.get('id')}",
                 "vacancy_id": vacancy_id,
                 "candidate_id": cand.get("id"),
                 "mark_type": "attendance_morning",
-                "marked_at": today_iso,
+                "marked_at": now.isoformat(),
+                "marked_date": today_iso,
             })
     return jobs

@@ -40,6 +40,7 @@ TELEGRAM_MERGE_FIELDS = (
     "interview_reminder_60_sent",
     "interview_attendance_status",
     "interview_attendance_morning_date",
+    "interview_attendance_morning_last_sent_at",
     "feedback_reminder_last_sent_at",
     "think_long_reminder_sent",
 )
@@ -333,6 +334,8 @@ def migrate_candidate(cand):
         cand["interview_attendance_status"] = ""
     if "interview_attendance_morning_date" not in cand:
         cand["interview_attendance_morning_date"] = ""
+    if "interview_attendance_morning_last_sent_at" not in cand:
+        cand["interview_attendance_morning_last_sent_at"] = ""
     if "telegram_posts" not in cand or not isinstance(cand.get("telegram_posts"), list):
         cand["telegram_posts"] = []
     if not cand.get("id"):

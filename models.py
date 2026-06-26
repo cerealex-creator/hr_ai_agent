@@ -281,6 +281,9 @@ def migrate_candidate(candidate, default_ignore_flags_fn):
     if "interview_attendance_morning_date" not in candidate:
         candidate["interview_attendance_morning_date"] = ""
         migrated = True
+    if "interview_attendance_morning_last_sent_at" not in candidate:
+        candidate["interview_attendance_morning_last_sent_at"] = ""
+        migrated = True
     if "client_final_verdict" not in candidate:
         candidate["client_final_verdict"] = ""
         migrated = True

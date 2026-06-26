@@ -132,7 +132,10 @@ def _apply_job_mark(data, job):
             if mark == "interview_60":
                 cand["interview_reminder_60_sent"] = True
             elif mark == "attendance_morning":
-                cand["interview_attendance_morning_date"] = job.get("marked_at", "")
+                cand["interview_attendance_morning_date"] = job.get("marked_date", "")
+                cand["interview_attendance_morning_last_sent_at"] = job.get(
+                    "marked_at", datetime.now().isoformat()
+                )
             elif mark == "feedback":
                 cand["feedback_reminder_last_sent_at"] = job.get("marked_at", datetime.now().isoformat())
             elif mark == "think_long":
