@@ -331,14 +331,57 @@ def _extract_text_from_pdf_bytes(content):
     return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
 
 
-def get_yandex_public_meta(url):
+def parse_yandex_link(url):
+    """Разбирает ссылку yadisk:ROOT::/path или обычный public URL."""
     url = (url or "").strip()
-    if not ("disk.yandex" in url or "yadi.sk" in url):
+    if url.startswith("yadisk:"):
+        payload = url[7:]
+        if "::" in payload:
+            root, path = payload.split("::", 1)
+            return root.strip(), (path or "").strip()
+        return payload.strip(), ""
+    return url, ""
+
+
+def format_yandex_link(root_url, path=""):
+    """Внутренний формат ссылки на файл/папку в опубликованной директории."""
+    root = (root_url or "").strip()
+    rel = (path or "").strip()
+    if not root:
+        return ""
+    if not rel:
+        return root
+    if not rel.startswith("/"):
+        rel = "/" + rel
+    return f"yadisk:{root}::{rel}"
+
+
+def yandex_link_for_display(url):
+    """Ссылка для UI/Telegram: папка или yadisk → корень публикации."""
+    root, path = parse_yandex_link(url)
+    if not root:
+        return url or ""
+    if path:
+        return root
+    return root
+
+
+def get_yandex_public_meta(url, *, path=None):
+    public_key, parsed_path = parse_yandex_link(url)
+    use_path = path if path is not None else parsed_path
+    if not public_key:
         return None
+    if not ("disk.yandex" in public_key or "yadi.sk" in public_key):
+        return None
+    params = {"public_key": public_key}
+    if use_path:
+        if not use_path.startswith("/"):
+            use_path = "/" + use_path
+        params["path"] = use_path
     try:
         response = requests.get(
             "https://cloud-api.yandex.net/v1/disk/public/resources",
-            params={"public_key": url},
+            params=params,
             timeout=30,
         )
         if response.status_code == 200:
@@ -348,24 +391,41 @@ def get_yandex_public_meta(url):
     return None
 
 
-def get_yandex_download_url(url):
-    url = (url or "").strip()
-    meta = get_yandex_public_meta(url)
+def list_yandex_public_folder(public_key, path="", *, limit=200):
+    """Список файлов и папок в опубликованной директории."""
+    meta = get_yandex_public_meta(public_key, path=path or "")
+    if not meta:
+        return []
+    embedded = meta.get("_embedded") or {}
+    return embedded.get("items") or []
+
+
+def get_yandex_download_url(url, *, path=None):
+    public_key, parsed_path = parse_yandex_link(url)
+    use_path = path if path is not None else parsed_path
+    meta = get_yandex_public_meta(public_key, path=use_path) if public_key else None
     if meta and meta.get("file"):
         return meta["file"]
+    if not public_key:
+        return None
+    params = {"public_key": public_key}
+    if use_path:
+        if not use_path.startswith("/"):
+            use_path = "/" + use_path
+        params["path"] = use_path
     try:
         response = requests.get(
             "https://cloud-api.yandex.net/v1/disk/public/resources/download",
-            params={"public_key": url},
+            params=params,
             timeout=30,
         )
         if response.status_code == 200:
             return response.json().get("href")
     except requests.RequestException:
         pass
-    if "/i/" in url:
-        return url.replace("/i/", "/d/")
-    return url
+    if "/i/" in public_key:
+        return public_key.replace("/i/", "/d/")
+    return public_key
 
 
 def is_yandex_video_or_audio(meta):

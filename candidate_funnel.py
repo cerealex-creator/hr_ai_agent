@@ -988,9 +988,132 @@ def _append_bulk_candidate(
     return cand
 
 
+def _show_yandex_sync_result(result):
+    if result.errors:
+        for err in result.errors:
+            st.error(err)
+    if result.messages:
+        for msg in result.messages[:20]:
+            st.caption(f"• {msg}")
+        if len(result.messages) > 20:
+            st.caption(f"… и ещё {len(result.messages) - 20}")
+    if result.created or result.updated:
+        st.success(
+            f"Синхронизация: добавлено {result.created}, обновлено {result.updated}."
+        )
+    elif not result.errors:
+        st.info("Новых файлов для привязки не найдено.")
+
+
 def render_bulk_intake(vacancy, deps):
     st.markdown("##### Автозагрузка")
     vid = vacancy["id"]
+    from yandex_disk_ingest import (
+        migrate_vacancy_yandex_disk,
+        reset_yandex_disk_seen,
+        sync_vacancy_yandex_disk,
+    )
+
+    migrate_vacancy_yandex_disk(vacancy)
+    yd = vacancy["yandex_disk"]
+
+    with st.expander("📁 Папка на Яндекс.Диске (синхронизация с Mac)", expanded=True):
+        st.caption(
+            "Опубликуйте папку вакансии на Диске (доступ по ссылке). Структура: "
+            "«Резюме» — PDF, «Записи» — видео, «Задания» — папки по имени кандидата. "
+            "Файлы сопоставляются с кандидатами по имени в названии."
+        )
+        yd["root_url"] = st.text_input(
+            "Ссылка на корень папки вакансии",
+            value=yd.get("root_url", ""),
+            key=f"yd_root_{vid}",
+            placeholder="https://disk.yandex.ru/d/…",
+        )
+        c1, c2, c3 = st.columns(3)
+        subs = yd.setdefault("subfolders", {})
+        with c1:
+            subs["resume"] = st.text_input(
+                "Подпапка резюме",
+                value=subs.get("resume", "Резюме"),
+                key=f"yd_sub_res_{vid}",
+            )
+        with c2:
+            subs["video"] = st.text_input(
+                "Подпапка записей",
+                value=subs.get("video", "Записи"),
+                key=f"yd_sub_vid_{vid}",
+            )
+        with c3:
+            subs["task"] = st.text_input(
+                "Подпапка заданий",
+                value=subs.get("task", "Задания"),
+                key=f"yd_sub_task_{vid}",
+            )
+        yd["auto_sync"] = st.checkbox(
+            "Синхронизировать при открытии вкладки",
+            value=bool(yd.get("auto_sync", True)),
+            key=f"yd_auto_{vid}",
+        )
+        ingest_new = st.checkbox(
+            "Создавать новых кандидатов из новых PDF в «Резюме»",
+            value=True,
+            key=f"yd_new_{vid}",
+        )
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            do_sync = st.button("🔄 Синхронизировать с Диском", key=f"yd_sync_{vid}")
+        with b2:
+            do_save_cfg = st.button("💾 Сохранить настройки", key=f"yd_save_{vid}")
+        with b3:
+            do_reset = st.button(
+                "♻️ Сбросить историю",
+                key=f"yd_reset_{vid}",
+                help="Повторно проверить все файлы в папке",
+            )
+        if yd.get("last_sync_at"):
+            st.caption(f"Последняя синхронизация: {yd['last_sync_at']}")
+
+        if do_save_cfg:
+            _persist_vacancy_candidates(vacancy, deps)
+            st.success("Настройки папки сохранены.")
+
+        if do_reset:
+            reset_yandex_disk_seen(vacancy)
+            _persist_vacancy_candidates(vacancy, deps)
+            st.success("История синхронизации сброшена.")
+            st.rerun()
+
+        if do_sync:
+            with st.spinner("Сканируем папку на Яндекс.Диске…"):
+                result = sync_vacancy_yandex_disk(
+                    vacancy, deps, ingest_new_resumes=ingest_new
+                )
+            _persist_vacancy_candidates(vacancy, deps)
+            if result.changed:
+                _show_yandex_sync_result(result)
+                st.rerun()
+            _show_yandex_sync_result(result)
+
+        auto_key = f"yd_auto_done_{vid}"
+        if (
+            yd.get("auto_sync")
+            and (yd.get("root_url") or "").strip()
+            and not st.session_state.get(auto_key)
+            and not do_sync
+        ):
+            with st.spinner("Автосинхронизация с Яндекс.Диском…"):
+                result = sync_vacancy_yandex_disk(
+                    vacancy, deps, ingest_new_resumes=ingest_new
+                )
+            st.session_state[auto_key] = True
+            _persist_vacancy_candidates(vacancy, deps)
+            if result.changed:
+                st.rerun()
+            if result.messages or result.errors:
+                _show_yandex_sync_result(result)
+
+    st.markdown("---")
+    st.markdown("##### Загрузка по ссылкам вручную")
     success_key = f"bulk_success_{vid}"
     links_ver_key = f"bulk_links_v_{vid}"
     hh_links_ver_key = f"bulk_hh_links_v_{vid}"

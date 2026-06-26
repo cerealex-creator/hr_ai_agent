@@ -359,9 +359,15 @@ def migrate_candidate(cand):
 
 def migrate_vacancy(vacancy):
     """Дополняет вакансию недостающими полями настроек."""
+    migrated = False
     if "show_portfolio_field" not in vacancy:
         vacancy["show_portfolio_field"] = False
-    return vacancy
+        migrated = True
+    from yandex_disk_ingest import migrate_vacancy_yandex_disk
+
+    if migrate_vacancy_yandex_disk(vacancy):
+        migrated = True
+    return migrated
 
 
 def vacancy_show_portfolio_field(vacancy):

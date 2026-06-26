@@ -15,7 +15,9 @@ def _esc(text):
 
 
 def _link(url, label):
-    u = _esc(url)
+    from resume_ai import yandex_link_for_display
+
+    u = _esc(yandex_link_for_display(url))
     return f'<a href="{u}"><b>{label}</b></a>'
 
 

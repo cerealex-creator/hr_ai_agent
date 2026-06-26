@@ -762,6 +762,10 @@ def load_vacancies():
 
         if migrate_vacancy_close(v):
             migrated = True
+        from yandex_disk_ingest import migrate_vacancy_yandex_disk
+
+        if migrate_vacancy_yandex_disk(v):
+            migrated = True
         for candidate in v.get("candidates", []):
             if "task_link" not in candidate:
                 candidate["task_link"] = ""
