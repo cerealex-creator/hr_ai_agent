@@ -1464,10 +1464,10 @@ def evaluate_candidate_with_ai_v2(
     vacancy_profile,
     ignore_flags,
     interview_questionnaire="",
-    hr_comment="",
+    interview_eval_notes="",
 ):
     from ai_helpers import create_chat_completion, get_char_limit, trim_profile_for_eval, trim_text
-    from resume_ai import format_hr_comment_block
+    from resume_ai import format_interview_eval_notes_block, questionnaire_to_eval_prompt
 
     profile_block = trim_profile_for_eval(
         vacancy_profile,
@@ -1481,17 +1481,23 @@ def evaluate_candidate_with_ai_v2(
         get_char_limit(config, "transcript", 10000),
     )
     questionnaire_trimmed = trim_text(
-        interview_questionnaire or "",
+        questionnaire_to_eval_prompt(interview_questionnaire) or interview_questionnaire or "",
         get_char_limit(config, "questionnaire", 4000),
     )
 
     questionnaire_block = ""
     if questionnaire_trimmed.strip():
         questionnaire_block = f"""
-ОПРОСНИК ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ ДЛЯ ЭТОГО КАНДИДАТА (основные и уточняющие вопросы + примеры ответов):
+ОПРОСНИК ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ ДЛЯ ЭТОГО КАНДИДАТА (вопросы, эталоны ответов и оценки HR по каждому пункту):
 {questionnaire_trimmed}
 
-Сопоставь расшифровку интервью с КАЖДЫМ вопросом опросника: что кандидат раскрыл, что осталось неясным, насколько ответы соответствуют пример_ответа.
+Сопоставь расшифровку интервью с КАЖДЫМ вопросом опросника.
+Учитывай оценку HR по каждому вопросу как мнение рекрутера, присутствовавшего на интервью:
+- «Хорошо» — HR полностью удовлетворён; не занижай без веских причин в расшифровке.
+- «Удовлетворительно» — в целом ок с небольшими недочётами.
+- «Сомнительно» — HR не увидел однозначного соответствия или заметил тревожный фактор; можешь согласиться или мягко оспорить со ссылкой на расшифровку.
+- «Нет» — ответ неудовлетворителен.
+Если твоё мнение расходится с оценкой HR — явно укажи это в comment.
 """
 
     user_prompt = f"""Оцени кандидата на позицию: {job_title}
@@ -1508,13 +1514,13 @@ def evaluate_candidate_with_ai_v2(
 
 РАСШИФРОВКА ПЕРВИЧНОГО СОБЕСЕДОВАНИЯ (разговорная речь, ответы могут быть неполными):
 {transcript_block}
-{format_hr_comment_block(hr_comment, config)}
+{format_interview_eval_notes_block(interview_eval_notes, config)}
 Алгоритм:
 1. Составь чек-лист требований профиля; для каждого отметь: подтверждено интервью / подтверждено резюме / частично / не раскрыто.
 2. Отдельно разбери: причины ухода/поиска работы, пробелы в опыте, мотивацию, раздражители, обратную связь от работодателей — лояльность, адекватность, управляемость, конфликтность, требовательность.
 3. Разбери соответствие по категориям hard_skills / soft_skills / experience (проценты 0–100); soft_skills включает п.2.
-4. На основе процентов, стоп-факторов и рисков п.2 определи score 0–4.
-5. В comment: по каждой категории — что услышано на интервью; отдельный абзац про мотивацию/уход/управляемость; если есть комментарий HR — как он повлиял на оценку.
+4. На основе процентов, стоп-факторов, оценок HR по вопросам опросника и рисков п.2 определи score 0–4.
+5. В comment: по каждой категории — что услышано на интервью; отдельный абзац про мотивацию/уход/управляемость; если есть уточнения HR для оценки — как они повлияли; при расхождении с оценкой HR по вопросу — поясни почему.
 
 Верни JSON:
 {{

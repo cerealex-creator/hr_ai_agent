@@ -2,6 +2,7 @@
 
 import json
 import re
+import uuid
 from io import BytesIO
 from urllib.parse import quote
 
@@ -80,6 +81,27 @@ CANDIDATE_QUESTIONNAIRE_SYSTEM = (
     + QUESTIONNAIRE_ITEM_SCHEMA
     + """]}"""
 )
+
+HR_RATING_LABELS = {
+    "good": "Хорошо",
+    "satisfactory": "Удовлетворительно",
+    "doubtful": "Сомнительно",
+    "no": "Нет",
+}
+_LEGACY_HR_RATING_MAP = {
+    "ok": "satisfactory",
+    "doubt_ok": "doubtful",
+    "no": "no",
+}
+
+
+def normalize_hr_rating(value):
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if raw in _LEGACY_HR_RATING_MAP:
+        return _LEGACY_HR_RATING_MAP[raw]
+    return raw if raw in HR_RATING_LABELS else ""
 
 
 def format_phone(phone):
@@ -170,19 +192,89 @@ def normalize_questionnaire_list(items):
     result = []
     for q in items:
         if isinstance(q, str):
-            result.append({"вопрос": q, "уточняющие_вопросы": [], "проверяет_требование": "", "категория": "", "пример_ответа": ""})
+            item = {
+                "вопрос": q,
+                "уточняющие_вопросы": [],
+                "проверяет_требование": "",
+                "категория": "",
+                "пример_ответа": "",
+            }
         elif isinstance(q, dict):
             followups = q.get("уточняющие_вопросы", q.get("followups", []))
             if isinstance(followups, str):
                 followups = [followups] if followups.strip() else []
-            result.append({
+            rating = normalize_hr_rating(q.get("оценка_hr", q.get("оценка", q.get("rating", ""))))
+            item = {
                 "вопрос": q.get("вопрос", q.get("question", "")),
                 "уточняющие_вопросы": [str(f) for f in followups] if isinstance(followups, list) else [],
                 "проверяет_требование": q.get("проверяет_требование", q.get("requirement", "")),
                 "категория": q.get("категория", q.get("category", "")),
                 "пример_ответа": q.get("пример_ответа", q.get("example", "")),
-            })
+                "в_резюме": q.get("в_резюме", q.get("resume_hint", "")),
+                "ответ": q.get("ответ", q.get("answer", "")),
+                "оценка_hr": rating,
+                "оценка": rating,
+                "_qid": q.get("_qid", ""),
+            }
+        else:
+            continue
+        if not item.get("_qid"):
+            item["_qid"] = uuid.uuid4().hex[:8]
+        result.append(item)
     return [q for q in result if (q.get("вопрос") or "").strip()]
+
+
+RESUME_HINTS_SYSTEM = """Ты — HR-ассистент. По тексту резюме заполни для каждого вопроса опросника колонку «Что уже есть в резюме».
+
+Правила:
+- 1–3 коротких предложения: что резюме уже говорит по теме вопроса, с конкретными фактами из резюме.
+- Если в резюме нет ничего по теме — напиши «Нет данных в резюме».
+- Не выдумывай факты, которых нет в резюме.
+
+Верни ТОЛЬКО JSON:
+{"подсказки": ["текст для вопроса 1", "текст для вопроса 2", ...]}
+
+Число элементов в подсказках ДОЛЖНО совпадать с числом вопросов."""
+
+
+def enrich_questionnaire_with_resume_hints(resume_text, questionnaire, client, config):
+    """Заполняет поле «в_резюме» для каждого вопроса персонального опросника."""
+    items = normalize_questionnaire_list(questionnaire)
+    if not items or not (resume_text or "").strip():
+        return items
+
+    questions = [q.get("вопрос", "") for q in items]
+    q_block = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    resume_limit = get_char_limit(config, "resume", 8000)
+
+    response = create_chat_completion(
+        client,
+        config,
+        "questionnaire",
+        messages=[
+            {"role": "system", "content": RESUME_HINTS_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"РЕЗЮМЕ:\n{trim_text(resume_text, resume_limit)}\n\n"
+                    f"ВОПРОСЫ ОПРОСНИКА:\n{q_block}\n\n"
+                    "Заполни подсказки «Что уже есть в резюме» для каждого вопроса."
+                ),
+            },
+        ],
+        temperature=0.2,
+    )
+    result = parse_ai_json_response(response.choices[0].message.content)
+    hints = result.get("подсказки", [])
+    if not isinstance(hints, list):
+        hints = []
+
+    for i, item in enumerate(items):
+        if i < len(hints):
+            item["в_резюме"] = str(hints[i]).strip()
+        elif not (item.get("в_резюме") or "").strip():
+            item["в_резюме"] = "Нет данных в резюме"
+    return items
 
 
 def format_hr_comment_block(hr_comment, config=None):
@@ -310,7 +402,42 @@ def generate_candidate_interview_questionnaire(
     return questionnaire
 
 
+def format_interview_eval_notes_block(notes, config=None):
+    text = (notes or "").strip()
+    if not text:
+        return ""
+    limit = get_char_limit(config, "interview_eval_notes", 2000) if config else 2000
+    return (
+        "\nУТОЧНЕНИЯ HR ДЛЯ ОЦЕНКИ ПО ИНТЕРВЬЮ (обязательно учти — снимают ложные стоп-факторы и задают контекст):\n"
+        f"{text[:limit]}\n"
+    )
+
+
+def questionnaire_to_eval_prompt(questionnaire):
+    """Текст опросника с оценками HR для оценки по интервью."""
+    items = normalize_questionnaire_list(questionnaire)
+    if not items:
+        return ""
+    lines = []
+    for i, q in enumerate(items, 1):
+        parts = [f"{i}. {q.get('вопрос', '')}"]
+        if q.get("пример_ответа"):
+            parts.append(f"   Желательный ответ: {q['пример_ответа']}")
+        if q.get("в_резюме"):
+            parts.append(f"   Уже в резюме: {q['в_резюме']}")
+        rating = normalize_hr_rating(q.get("оценка_hr", q.get("оценка", "")))
+        if rating:
+            parts.append(f"   Оценка HR по ответу: {HR_RATING_LABELS.get(rating, rating)}")
+        if q.get("ответ"):
+            parts.append(f"   Заметка HR: {q['ответ']}")
+        lines.append("\n".join(parts))
+    return "\n\n".join(lines)
+
+
 def questionnaire_to_prompt_text(questionnaire):
+    eval_text = questionnaire_to_eval_prompt(questionnaire)
+    if eval_text:
+        return eval_text
     if not questionnaire:
         return ""
     if isinstance(questionnaire, str):

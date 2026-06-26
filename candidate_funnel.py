@@ -30,6 +30,7 @@ from resume_ai import (
     evaluate_resume_with_ai,
     fetch_resume_text_from_url,
     generate_candidate_interview_questionnaire,
+    enrich_questionnaire_with_resume_hints,
     questionnaire_to_prompt_text,
 )
 from eval_ui import render_ai_score_badge, render_ai_evaluation_block
@@ -38,6 +39,7 @@ from telegram_notify import (
     validate_task_message_fields,
 )
 import telegram_client as telegram_client_module
+from questionnaire_grid import render_interview_questionnaire_grid
 from interview_schedule import (
     build_time_options,
     validate_interview_schedule,
@@ -72,6 +74,7 @@ def new_candidate_template(vacancy_id):
         "task_link": "",
         "transcript": "",
         "hr_comment": "",
+        "interview_eval_notes": "",
         "client_status": "wait",
         "client_comment": "",
         "office_interview_date": "",
@@ -531,15 +534,30 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 if cand.get("ai_comment"):
                     st.info(cand["ai_comment"])
             interview_q = cand.get("interview_questionnaire") or []
+            legacy_focus = False
             if not interview_q and cand.get("interview_focus_questions"):
                 interview_q = [
                     {"вопрос": q, "уточняющие_вопросы": [], "пример_ответа": ""}
                     for q in cand["interview_focus_questions"]
                 ]
+                legacy_focus = True
             if interview_q:
-                with st.expander("Вопросы (от ИИ) для собеседования этого кандидата", expanded=False):
-                    for i, q in enumerate(interview_q, 1):
-                        deps["render_questionnaire_item"](i, q)
+                if legacy_focus:
+                    with st.expander(
+                        "Вопросы (от ИИ) для собеседования этого кандидата",
+                        expanded=False,
+                    ):
+                        for i, q in enumerate(interview_q, 1):
+                            deps["render_questionnaire_item"](i, q)
+                else:
+                    updated_q = render_interview_questionnaire_grid(
+                        cand,
+                        k("iq"),
+                    )
+                    if updated_q is not None:
+                        cand["interview_questionnaire"] = updated_q
+                        _persist_vacancy_candidates(vacancy, deps)
+                        _request_candidates_rerun()
 
             cand["transcript"] = st.text_area(
                 "Расшифровка интервью",
@@ -893,6 +911,14 @@ def render_candidate_card(vacancy, cand, idx, deps):
                                         ),
                                     )
                                 )
+                                cand["interview_questionnaire"] = (
+                                    enrich_questionnaire_with_resume_hints(
+                                        resume_text,
+                                        cand["interview_questionnaire"],
+                                        deps["client"],
+                                        deps["config"],
+                                    )
+                                )
                             _persist_vacancy_candidates(vacancy, deps)
                             q_count = len(cand.get("interview_questionnaire") or [])
                             st.session_state[q_ok_key] = (
@@ -904,6 +930,37 @@ def render_candidate_card(vacancy, cand, idx, deps):
                             st.error(f"Ошибка формирования опросника: {e}")
                     else:
                         st.warning("Нет текста резюме — опросник нельзя сформировать.")
+
+                questionnaire_count = len(cand.get("interview_questionnaire") or [])
+                if questionnaire_count and st.button(
+                    "🔄 Обновить «В резюме»",
+                    key=k("refresh_resume_hints"),
+                    help="Перезаполнить колонку «Что уже есть в резюме» по текущему резюме",
+                ):
+                    resume_text, err = _load_candidate_resume_text(cand, deps)
+                    if err:
+                        st.error(err)
+                    elif resume_text:
+                        try:
+                            with st.spinner("Обновление колонки «В резюме»…"):
+                                cand["interview_questionnaire"] = (
+                                    enrich_questionnaire_with_resume_hints(
+                                        resume_text,
+                                        cand.get("interview_questionnaire") or [],
+                                        deps["client"],
+                                        deps["config"],
+                                    )
+                                )
+                            _persist_vacancy_candidates(vacancy, deps)
+                            st.session_state[q_ok_key] = (
+                                f"Колонка «В резюме» обновлена для "
+                                f"«{cand.get('name', 'кандидат')}»."
+                            )
+                            _request_candidates_rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка обновления: {e}")
+                    else:
+                        st.warning("Нет текста резюме.")
 
             if st.session_state.get(eval_ok_key):
                 st.success(st.session_state.pop(eval_ok_key))
@@ -929,6 +986,15 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     "Нет расшифровки и ссылки на запись. "
                     "Укажите «Запись собеседования» или вставьте текст в «Расшифровка интервью»."
                 )
+
+            cand["interview_eval_notes"] = st.text_area(
+                "Уточнения для оценки по интервью",
+                value=cand.get("interview_eval_notes", ""),
+                height=72,
+                key=k("interview_eval_notes"),
+                placeholder='Например: «Возраст не критичен», «Опыт в Figma важнее Illustrator»',
+                help="ИИ учтёт эти уточнения при оценке расшифровки. Общий «Комментарий HR» на оценку по интервью не влияет.",
+            )
 
             if st.button(
                 "🤖 Оценить по интервью",
@@ -976,7 +1042,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                                     deps["get_vacancy_profile_text"](vacancy),
                                     cand.get("ignore_flags") or deps["default_ignore_flags"](),
                                     interview_q_text,
-                                    hr_comment=cand.get("hr_comment", ""),
+                                    interview_eval_notes=cand.get("interview_eval_notes", ""),
                                 )
                             if not ev.get("ok", True):
                                 st.error(

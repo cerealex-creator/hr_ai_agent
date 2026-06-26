@@ -69,6 +69,8 @@ def migrate():
             # Добавляем недостающие поля со значениями по умолчанию
             if "hr_comment" not in c:
                 c["hr_comment"] = ""
+            if "interview_eval_notes" not in c:
+                c["interview_eval_notes"] = ""
             if "task_link" not in c:
                 c["task_link"] = ""
             if "client_status" not in c:

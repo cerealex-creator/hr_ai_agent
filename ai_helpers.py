@@ -41,6 +41,7 @@ _DEFAULT_CHAR_LIMITS = {
     "transcript": 10000,
     "questionnaire": 4000,
     "hr_comment": 2000,
+    "interview_eval_notes": 2000,
     "eval_comment": 1500,
 }
 
