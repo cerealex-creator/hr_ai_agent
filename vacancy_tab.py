@@ -11,7 +11,11 @@ from vacancy_prep import (
     render_templates_library,
     try_push_vacancy_to_templates,
 )
-from candidate_funnel import render_candidates_zone
+from candidate_funnel import (
+    render_candidates_zone,
+    run_yandex_disk_sync,
+)
+from yandex_disk_ingest import migrate_vacancy_yandex_disk
 from vacancy_display import find_vacancy_by_id, format_vacancy_search_period
 from warranty import (
     format_vacancy_work_line,
@@ -267,7 +271,7 @@ def render_vacancies_in_work(deps):
         return
 
     st.divider()
-    head_l, head_m, head_r = st.columns([3, 1, 1])
+    head_l, head_sync, head_m, head_r = st.columns([3, 1, 1, 1])
     with head_l:
         title = vacancy["title"]
         period = format_vacancy_search_period(vacancy)
@@ -276,6 +280,23 @@ def render_vacancies_in_work(deps):
         if period and period != "период не указан":
             title += f" · {period}"
         st.subheader(title)
+    with head_sync:
+        st.write("")
+        migrate_vacancy_yandex_disk(vacancy)
+        yd = vacancy.get("yandex_disk") or {}
+        sync_help = "Подтянуть новые файлы из папки на Яндекс.Диске"
+        if not (yd.get("root_url") or "").strip():
+            sync_help += " (сначала укажите ссылку: Кандидаты → Автозагрузка)"
+        if st.button(
+            "🔄 Синхронизировать с Яндекс",
+            key=f"yd_sync_top_{vacancy['id']}",
+            use_container_width=True,
+            help=sync_help,
+        ):
+            with st.spinner("Сканируем папку на Яндекс.Диске…"):
+                run_yandex_disk_sync(vacancy, deps)
+        if yd.get("last_sync_at"):
+            st.caption(f"Синхр.: {yd['last_sync_at'][:16].replace('T', ' ')}")
     with head_m:
         st.write("")
         if st.button(

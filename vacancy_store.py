@@ -306,6 +306,8 @@ def merge_vacancy_candidates_from_disk(memory_vacancy, vacancies_list):
             if dc:
                 merge_candidate_from_disk(mc, dc)
         vacancy["candidates"] = memory_vacancy.get("candidates", [])
+        if isinstance(memory_vacancy.get("yandex_disk"), dict):
+            vacancy["yandex_disk"] = memory_vacancy["yandex_disk"]
         break
     return vacancies_list
 

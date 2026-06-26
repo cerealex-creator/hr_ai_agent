@@ -6,6 +6,7 @@ import streamlit as st
 
 from eval_ui import has_ai_evaluation, render_ai_score_badge, render_ai_evaluation_block
 from models import is_visible_in_client_zone
+from resume_ai import yandex_link_for_display
 
 from vacancy_store import (
     STATUS_CONFIG,
@@ -110,9 +111,10 @@ def apply_client_styles():
 
 
 def render_link_button(link, label):
-    if link and link.strip():
+    href = yandex_link_for_display((link or "").strip())
+    if href:
         return (
-            f'<a class="link-btn-compact" href="{link.strip()}" target="_blank">{label}</a>'
+            f'<a class="link-btn-compact" href="{href}" target="_blank">{label}</a>'
         )
     return f'<span class="link-missing">{label} —</span>'
 

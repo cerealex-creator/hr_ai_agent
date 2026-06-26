@@ -3,6 +3,7 @@
 import json
 import re
 from io import BytesIO
+from urllib.parse import quote
 
 import requests
 import PyPDF2
@@ -356,14 +357,40 @@ def format_yandex_link(root_url, path=""):
     return f"yadisk:{root}::{rel}"
 
 
+def yandex_public_view_url(root_url, path):
+    """Ссылка на просмотр файла в веб-интерфейсе опубликованной папки (/d/)."""
+    root = (root_url or "").strip().rstrip("/")
+    rel = (path or "").strip()
+    if not root:
+        return ""
+    if not rel:
+        return root
+    if not rel.startswith("/"):
+        rel = "/" + rel
+    segments = [quote(part, safe="") for part in rel.strip("/").split("/") if part]
+    if not segments:
+        return root
+    return f"{root}/{'/'.join(segments)}"
+
+
 def yandex_link_for_display(url):
-    """Ссылка для UI/Telegram: папка или yadisk → корень публикации."""
+    """Ссылка для открытия в браузере/Telegram — просмотр в Диске, не скачивание."""
+    url = (url or "").strip()
+    if not url:
+        return ""
     root, path = parse_yandex_link(url)
     if not root:
-        return url or ""
-    if path:
+        return url
+    if not path:
         return root
-    return root
+    if "/i/" in root:
+        return root
+    meta = get_yandex_public_meta(root, path=path)
+    if meta:
+        public_url = (meta.get("public_url") or "").strip()
+        if public_url:
+            return public_url
+    return yandex_public_view_url(root, path)
 
 
 def get_yandex_public_meta(url, *, path=None):
@@ -431,6 +458,9 @@ def get_yandex_download_url(url, *, path=None):
 def is_yandex_video_or_audio(meta):
     if not meta:
         return False
+    media = (meta.get("media_type") or "").lower()
+    if media in ("video", "audio"):
+        return True
     mime = (meta.get("mime_type") or "").lower()
     name = (meta.get("name") or "").lower()
     if mime.startswith(("video/", "audio/")):

@@ -57,6 +57,7 @@ from warranty import (
     warranty_date_field_label,
 )
 from app_settings import get_default_warranty_months
+from resume_ai import yandex_link_for_display
 
 
 def new_candidate_template(vacancy_id):
@@ -158,10 +159,53 @@ def _load_candidate_resume_text(cand, deps):
     return resume_text, err
 
 
+_LINK_WIDGET_FIELDS = ("resume_link", "video_link", "task_link", "hh_resume_link")
+
+
+def _link_widget_rev_key(vacancy_id):
+    return f"yd_widget_rev_{vacancy_id}"
+
+
+def bump_vacancy_link_widget_revision(vacancy_id):
+    key = _link_widget_rev_key(vacancy_id)
+    st.session_state[key] = int(st.session_state.get(key, 0) or 0) + 1
+
+
+def _reload_vacancy_from_disk(vacancy, deps):
+    fresh = next((v for v in deps["load_vacancies"]() if v["id"] == vacancy["id"]), None)
+    if not fresh:
+        return vacancy
+    vacancy["candidates"] = fresh.get("candidates", vacancy.get("candidates", []))
+    if isinstance(fresh.get("yandex_disk"), dict):
+        vacancy["yandex_disk"] = fresh["yandex_disk"]
+    return vacancy
+
+
+def _sync_candidate_link_widgets(vacancy, cand):
+    """Подставляет в поля карточки ссылки из базы (после синхронизации с Диском)."""
+    for field in _LINK_WIDGET_FIELDS:
+        db_val = (cand.get(field) or "").strip()
+        if not db_val:
+            continue
+        key = _card_key(vacancy, cand, field)
+        widget_val = str(st.session_state.get(key, "") or "").strip()
+        if widget_val != db_val:
+            st.session_state[key] = db_val
+
+
+def refresh_vacancy_link_widgets(vacancy):
+    for cand in vacancy.get("candidates", []):
+        _sync_candidate_link_widgets(vacancy, cand)
+
+
 def _card_key(vacancy, cand, field):
     """Уникальный ключ виджета: вакансия + кандидат (не индекс в списке)."""
     cid = cand.get("id") or "unknown"
-    return f"c_{vacancy['id']}_{cid}_{field}"
+    base = f"c_{vacancy['id']}_{cid}_{field}"
+    if field in _LINK_WIDGET_FIELDS:
+        rev = int(st.session_state.get(_link_widget_rev_key(vacancy["id"]), 0) or 0)
+        return f"{base}_r{rev}"
+    return base
 
 
 def _send_primary_candidate_to_chat(vacancy, cand):
@@ -263,7 +307,7 @@ def _render_candidate_resume_links(cand, k, vacancy, deps):
         with rcol2:
             st.write("")
             st.write("")
-            resume_open = (cand.get("resume_link") or "").strip()
+            resume_open = yandex_link_for_display((cand.get("resume_link") or "").strip())
             st.link_button(
                 "Открыть PDF резюме",
                 resume_open or "about:blank",
@@ -297,7 +341,7 @@ def _render_candidate_resume_links(cand, k, vacancy, deps):
 
     buttons = []
     if resume_url:
-        buttons.append(("resume", "Открыть PDF резюме", resume_url))
+        buttons.append(("resume", "Открыть PDF резюме", yandex_link_for_display(resume_url)))
     if hh_url:
         buttons.append(("hh", "Открыть резюме на HH.ru", hh_url))
     buttons.append(("edit", "Редактировать ссылки", None))
@@ -322,6 +366,7 @@ def render_stage_badge(stage):
 
 
 def render_candidate_card(vacancy, cand, idx, deps):
+    _sync_candidate_link_widgets(vacancy, cand)
     k = lambda field: _card_key(vacancy, cand, field)
     current_stage = cand.get("hr_stage", "resume_screening")
     stage_tone = get_stage_tone(current_stage)
@@ -376,11 +421,24 @@ def render_candidate_card(vacancy, cand, idx, deps):
                     "Желаемая з/п", value=cand.get("salary_expected", ""), key=k("salary")
                 )
             _render_candidate_resume_links(cand, k, vacancy, deps)
-            cand["video_link"] = st.text_input(
-                "Запись собеседования",
-                value=cand.get("video_link", ""),
-                key=k("video"),
-            )
+            vcol1, vcol2 = st.columns([3, 1])
+            with vcol1:
+                cand["video_link"] = st.text_input(
+                    "Запись собеседования",
+                    value=cand.get("video_link", ""),
+                    key=k("video"),
+                )
+            with vcol2:
+                st.write("")
+                st.write("")
+                video_open = yandex_link_for_display((cand.get("video_link") or "").strip())
+                st.link_button(
+                    "Открыть запись",
+                    video_open or "about:blank",
+                    disabled=not video_open,
+                    key=k("video_open"),
+                    use_container_width=True,
+                )
             if vacancy_show_portfolio_field(vacancy):
                 cand["portfolio_link"] = st.text_input(
                     "Портфолио",
@@ -401,6 +459,14 @@ def render_candidate_card(vacancy, cand, idx, deps):
             with tcol2:
                 st.write("")
                 st.write("")
+                task_open = yandex_link_for_display((cand.get("task_link") or "").strip())
+                st.link_button(
+                    "Открыть задание",
+                    task_open or "about:blank",
+                    disabled=not task_open,
+                    key=k("task_open"),
+                    use_container_width=True,
+                )
                 if st.button("Отправить в чат задание", key=k("task_tg"), use_container_width=True):
                     missing = validate_task_message_fields(cand)
                     if missing:
@@ -1005,13 +1071,64 @@ def _show_yandex_sync_result(result):
         st.info("Новых файлов для привязки не найдено.")
 
 
+show_yandex_sync_result = _show_yandex_sync_result
+
+
+def _flash_yandex_sync_result(result):
+    if result.errors:
+        _set_cand_funnel_flash(result.errors[0], "warning")
+    elif result.created or result.updated:
+        _set_cand_funnel_flash(
+            f"Синхронизация с Яндекс.Диском: добавлено {result.created}, "
+            f"обновлено {result.updated}.",
+            "success",
+        )
+    elif not result.errors:
+        _set_cand_funnel_flash("Новых файлов для привязки не найдено.", "info")
+
+
+def finalize_yandex_sync_ui(vacancy, result):
+    """Обновляет карточки после синхронизации без ручного F5."""
+    _flash_yandex_sync_result(result)
+    bump_vacancy_link_widget_revision(vacancy["id"])
+    _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
+    _request_candidates_rerun()
+
+
+def run_yandex_disk_sync(vacancy, deps, *, ingest_new_resumes=None):
+    """Синхронизирует папку на Диске и сохраняет настройки + seen_paths в базу."""
+    from yandex_disk_ingest import (
+        YandexSyncResult,
+        migrate_vacancy_yandex_disk,
+        sync_vacancy_yandex_disk,
+    )
+
+    migrate_vacancy_yandex_disk(vacancy)
+    yd = vacancy["yandex_disk"]
+    if ingest_new_resumes is None:
+        ingest_new_resumes = bool(yd.get("ingest_new_resumes", True))
+    root_url = (yd.get("root_url") or "").strip()
+    if not root_url:
+        result = YandexSyncResult()
+        result.errors.append(
+            "Не указана ссылка на папку. Задайте её в «Кандидаты» → «Автозагрузка»."
+        )
+        return result
+    result = sync_vacancy_yandex_disk(
+        vacancy, deps, ingest_new_resumes=ingest_new_resumes
+    )
+    _persist_vacancy_candidates(vacancy, deps)
+    _reload_vacancy_from_disk(vacancy, deps)
+    finalize_yandex_sync_ui(vacancy, result)
+    return result
+
+
 def render_bulk_intake(vacancy, deps):
     st.markdown("##### Автозагрузка")
     vid = vacancy["id"]
     from yandex_disk_ingest import (
         migrate_vacancy_yandex_disk,
         reset_yandex_disk_seen,
-        sync_vacancy_yandex_disk,
     )
 
     migrate_vacancy_yandex_disk(vacancy)
@@ -1049,14 +1166,9 @@ def render_bulk_intake(vacancy, deps):
                 value=subs.get("task", "Задания"),
                 key=f"yd_sub_task_{vid}",
             )
-        yd["auto_sync"] = st.checkbox(
-            "Синхронизировать при открытии вкладки",
-            value=bool(yd.get("auto_sync", True)),
-            key=f"yd_auto_{vid}",
-        )
-        ingest_new = st.checkbox(
+        yd["ingest_new_resumes"] = st.checkbox(
             "Создавать новых кандидатов из новых PDF в «Резюме»",
-            value=True,
+            value=bool(yd.get("ingest_new_resumes", True)),
             key=f"yd_new_{vid}",
         )
         b1, b2, b3 = st.columns(3)
@@ -1085,32 +1197,9 @@ def render_bulk_intake(vacancy, deps):
 
         if do_sync:
             with st.spinner("Сканируем папку на Яндекс.Диске…"):
-                result = sync_vacancy_yandex_disk(
-                    vacancy, deps, ingest_new_resumes=ingest_new
+                run_yandex_disk_sync(
+                    vacancy, deps, ingest_new_resumes=yd.get("ingest_new_resumes", True)
                 )
-            _persist_vacancy_candidates(vacancy, deps)
-            if result.changed:
-                _show_yandex_sync_result(result)
-                st.rerun()
-            _show_yandex_sync_result(result)
-
-        auto_key = f"yd_auto_done_{vid}"
-        if (
-            yd.get("auto_sync")
-            and (yd.get("root_url") or "").strip()
-            and not st.session_state.get(auto_key)
-            and not do_sync
-        ):
-            with st.spinner("Автосинхронизация с Яндекс.Диском…"):
-                result = sync_vacancy_yandex_disk(
-                    vacancy, deps, ingest_new_resumes=ingest_new
-                )
-            st.session_state[auto_key] = True
-            _persist_vacancy_candidates(vacancy, deps)
-            if result.changed:
-                st.rerun()
-            if result.messages or result.errors:
-                _show_yandex_sync_result(result)
 
     st.markdown("---")
     st.markdown("##### Загрузка по ссылкам вручную")
@@ -1292,6 +1381,8 @@ def render_candidates_zone(vacancy, deps):
     if not deps["vacancy_has_profile"](vacancy):
         st.warning("Профиль должности не заполнен — оценка по интервью недоступна. Заполните в «Документы по вакансии».")
 
+    _render_cand_funnel_flash()
+
     tab_list, tab_bulk, tab_add = st.tabs(["Список", "Автозагрузка", "Ручное заполнение"])
 
     with tab_bulk:
@@ -1299,77 +1390,75 @@ def render_candidates_zone(vacancy, deps):
     with tab_add:
         render_add_candidate(vacancy, deps)
     with tab_list:
-        _render_cand_funnel_flash()
         vacancies = deps["load_vacancies"]()
         vacancy = next((v for v in vacancies if v["id"] == vacancy["id"]), vacancy)
         all_candidates = sort_candidates_for_list(vacancy.get("candidates", []))
         if not all_candidates:
             st.info("Нет кандидатов.")
-            return
-
-        rejected = [c for c in all_candidates if _is_rejected_candidate(c)]
-        active = [c for c in all_candidates if not _is_rejected_candidate(c)]
-        rejected_count = len(rejected)
-        show_rejected_key = f"show_rejected_{vacancy['id']}"
-        show_rejected = st.session_state.get(show_rejected_key, False)
-        visible = active + (rejected if show_rejected else [])
-
-        _ensure_candidates_snapshot(vacancy["id"], all_candidates)
-        pending_banner = st.empty()
-        banner_save_clicked = False
-
-        if not visible:
-            st.info("Нет кандидатов в работе.")
         else:
-            to_delete_id = None
-            for idx, cand in enumerate(visible):
-                migrate_candidate(cand, deps["default_ignore_flags"])
-                action = render_candidate_card(vacancy, cand, idx, deps)
-                if action == "delete":
-                    to_delete_id = cand.get("id")
+            rejected = [c for c in all_candidates if _is_rejected_candidate(c)]
+            active = [c for c in all_candidates if not _is_rejected_candidate(c)]
+            rejected_count = len(rejected)
+            show_rejected_key = f"show_rejected_{vacancy['id']}"
+            show_rejected = st.session_state.get(show_rejected_key, False)
+            visible = active + (rejected if show_rejected else [])
 
-            if to_delete_id:
-                vacancy["candidates"] = [
-                    c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
-                ]
-                for v in vacancies:
-                    if v["id"] == vacancy["id"]:
-                        v["candidates"] = vacancy["candidates"]
-                deps["save_vacancies"](vacancies)
-                _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
+            _ensure_candidates_snapshot(vacancy["id"], all_candidates)
+            pending_banner = st.empty()
+            banner_save_clicked = False
+
+            if not visible:
+                st.info("Нет кандидатов в работе.")
+            else:
+                to_delete_id = None
+                for idx, cand in enumerate(visible):
+                    migrate_candidate(cand, deps["default_ignore_flags"])
+                    action = render_candidate_card(vacancy, cand, idx, deps)
+                    if action == "delete":
+                        to_delete_id = cand.get("id")
+
+                if to_delete_id:
+                    vacancy["candidates"] = [
+                        c for c in vacancy.get("candidates", []) if c.get("id") != to_delete_id
+                    ]
+                    for v in vacancies:
+                        if v["id"] == vacancy["id"]:
+                            v["candidates"] = vacancy["candidates"]
+                    deps["save_vacancies"](vacancies)
+                    _mark_candidates_snapshot(vacancy["id"], vacancy.get("candidates", []))
+                    _request_candidates_rerun()
+
+                if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
+                    from corporate_ui import render_pending_changes_banner
+
+                    with pending_banner.container():
+                        banner_save_clicked = render_pending_changes_banner(vacancy["id"])
+
+            save_col, reject_col = st.columns([1, 1])
+            with save_col:
+                save_clicked = st.button(
+                    "💾 Сохранить изменения по кандидатам",
+                    key=f"save_cands_{vacancy['id']}",
+                )
+            with reject_col:
+                if rejected_count:
+                    reject_label = (
+                        "Скрыть кандидатов с отказом"
+                        if show_rejected
+                        else f"Показать {rejected_count} кандидатов с отказом"
+                    )
+                    if st.button(reject_label, key=f"toggle_rejected_{vacancy['id']}"):
+                        st.session_state[show_rejected_key] = not show_rejected
+                        st.rerun()
+
+            if save_clicked or banner_save_clicked:
+                _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
+                pending_banner.empty()
+                _set_cand_funnel_flash(
+                    "Изменения по кандидатам сохранены!"
+                    if banner_save_clicked
+                    else "Сохранено!"
+                )
                 _request_candidates_rerun()
 
-            if _has_unsaved_candidate_changes(vacancy["id"], all_candidates):
-                from corporate_ui import render_pending_changes_banner
-
-                with pending_banner.container():
-                    banner_save_clicked = render_pending_changes_banner(vacancy["id"])
-
-        save_col, reject_col = st.columns([1, 1])
-        with save_col:
-            save_clicked = st.button(
-                "💾 Сохранить изменения по кандидатам",
-                key=f"save_cands_{vacancy['id']}",
-            )
-        with reject_col:
-            if rejected_count:
-                reject_label = (
-                    "Скрыть кандидатов с отказом"
-                    if show_rejected
-                    else f"Показать {rejected_count} кандидатов с отказом"
-                )
-                if st.button(reject_label, key=f"toggle_rejected_{vacancy['id']}"):
-                    st.session_state[show_rejected_key] = not show_rejected
-                    st.rerun()
-
-        if save_clicked or banner_save_clicked:
-            _persist_vacancy_candidates(vacancy, deps, candidates=all_candidates)
-            pending_banner.empty()
-            _set_cand_funnel_flash(
-                "Изменения по кандидатам сохранены!"
-                if banner_save_clicked
-                else "Сохранено!"
-            )
-            _request_candidates_rerun()
-
-        _flush_candidates_rerun()
+    _flush_candidates_rerun()

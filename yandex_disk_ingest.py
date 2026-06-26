@@ -21,6 +21,28 @@ DEFAULT_SUBFOLDERS = {
     "task": "Задания",
 }
 
+_MATCH_NOISE_WORDS = frozenset({
+    "задание",
+    "задания",
+    "task",
+    "tasks",
+    "папка",
+    "folder",
+    "видео",
+    "video",
+    "запись",
+    "записи",
+    "собеседование",
+    "собеседования",
+    "резюме",
+    "resume",
+    "cv",
+    "pdf",
+    "mp4",
+    "mov",
+    "avi",
+})
+
 
 def default_yandex_disk_config():
     return {
@@ -28,7 +50,7 @@ def default_yandex_disk_config():
         "subfolders": dict(DEFAULT_SUBFOLDERS),
         "seen_paths": [],
         "last_sync_at": "",
-        "auto_sync": True,
+        "ingest_new_resumes": True,
     }
 
 
@@ -63,26 +85,127 @@ def _normalize_name(text):
     return re.sub(r"[^0-9a-zа-яё]+", "", (text or "").lower())
 
 
+def _name_tokens(text):
+    """Значимые слова из имени файла/папки/ФИО для нечёткого сопоставления."""
+    tokens = []
+    for raw in re.split(r"[\s_\-–—.]+", (text or "").strip()):
+        token = _normalize_name(raw)
+        if len(token) < 3 or token in _MATCH_NOISE_WORDS:
+            continue
+        tokens.append(token)
+    return tokens
+
+
 def _filename_stem(name):
     return os.path.splitext(name or "")[0].strip()
+
+
+_MIN_MATCH_SCORE = 43
+
+
+def _file_matches_candidate(filename, candidate_name):
+    """Файл/папка относится к этому кандидату (фамилия или полное ФИО)."""
+    stem = _normalize_name(_filename_stem(filename))
+    file_tokens = _name_tokens(_filename_stem(filename))
+    cand_name = _normalize_name(candidate_name)
+    if not cand_name:
+        return False
+    if stem and (cand_name in stem or stem in cand_name):
+        return True
+    if file_tokens and file_tokens[0] in cand_name:
+        return True
+    return False
 
 
 def match_candidate_by_filename(filename, candidates):
     """Подбирает кандидата по имени файла или папки."""
     stem = _normalize_name(_filename_stem(filename))
-    if not stem:
+    file_tokens = _name_tokens(_filename_stem(filename))
+    if not stem and not file_tokens:
         return None
     best = None
-    best_len = 0
+    best_score = 0
     for cand in candidates:
         cand_name = _normalize_name(cand.get("name", ""))
         if not cand_name:
             continue
-        if cand_name in stem or stem in cand_name:
-            if len(cand_name) > best_len:
-                best = cand
-                best_len = len(cand_name)
+        score = 0
+        if stem and (cand_name in stem or stem in cand_name):
+            score = max(score, len(cand_name) + 200)
+        if file_tokens and file_tokens[0] in cand_name:
+            score = max(score, len(file_tokens[0]) + 150)
+        for ft in file_tokens:
+            if len(ft) >= 3 and ft in cand_name:
+                score = max(score, len(ft) + 50)
+        for ct in _name_tokens(cand.get("name", "")):
+            if len(ct) >= 4 and stem and ct in stem:
+                score = max(score, len(ct) + 40)
+        if score > best_score:
+            best_score = score
+            best = cand
+    if best_score < _MIN_MATCH_SCORE:
+        return None
     return best
+
+
+def _repair_mismatched_resume_links(vacancy, result):
+    """Убирает ошибочно привязанные резюме (другая фамилия в имени файла)."""
+    for cand in vacancy.get("candidates", []):
+        link = (cand.get("resume_link") or "").strip()
+        if not link:
+            continue
+        from resume_ai import parse_yandex_link
+
+        _, path = parse_yandex_link(link)
+        filename = (path or "").rsplit("/", 1)[-1]
+        if filename and not _file_matches_candidate(filename, cand.get("name", "")):
+            cand["resume_link"] = ""
+            result.messages.append(
+                f"Сброшена неверная ссылка на резюме у {cand.get('name', 'кандидата')}"
+            )
+
+
+def _resolve_subfolder_name(root_url, configured_name):
+    """
+    Находит реальную подпапку на Диске.
+    Если «Записи» в настройках, а на диске «Записи собеседований» — подберёт её.
+    """
+    configured = (configured_name or "").strip().strip("/")
+    if not configured:
+        return ""
+    exact_path = f"/{configured}"
+    try:
+        if list_yandex_public_folder(root_url, exact_path):
+            return configured
+    except Exception:
+        pass
+    norm_cfg = _normalize_name(configured)
+    if not norm_cfg:
+        return configured
+    try:
+        root_items = list_yandex_public_folder(root_url, "")
+    except Exception:
+        return configured
+    best_name = ""
+    best_score = 0
+    for item in root_items:
+        if item.get("type") != "dir":
+            continue
+        name = (item.get("name") or "").strip()
+        norm_name = _normalize_name(name)
+        if not norm_name:
+            continue
+        score = 0
+        if norm_name == norm_cfg:
+            score = 1000
+        elif norm_name.startswith(norm_cfg) or norm_cfg.startswith(norm_name):
+            score = 500 + len(norm_name)
+        elif norm_cfg in norm_name or norm_name in norm_cfg:
+            score = 200 + len(norm_name)
+        if score > best_score:
+            best_score = score
+            best_name = name
+    return best_name or configured
 
 
 def _join_disk_path(parent, name):
@@ -126,7 +249,16 @@ def _ingest_resume_file(vacancy, deps, root_url, item, result, *, ingest_new):
 
     link = format_yandex_link(root_url, item_path)
     candidates = vacancy.get("candidates", [])
+    for existing in candidates:
+        if (existing.get("resume_link") or "").strip() == link:
+            if _file_matches_candidate(name, existing.get("name", "")):
+                result.skipped += 1
+                return True
+            existing["resume_link"] = ""
     cand = match_candidate_by_filename(name, candidates)
+
+    if cand and not _file_matches_candidate(name, cand.get("name", "")):
+        cand = None
 
     if cand:
         if (cand.get("resume_link") or "").strip() == link:
@@ -176,13 +308,20 @@ def _ingest_video_file(vacancy, root_url, item, result):
     item_path = item.get("path") or ""
     if not is_yandex_video_or_audio(item):
         result.skipped += 1
-        return True
+        result.messages.append(f"Не видео/аудио, пропуск: {name}")
+        return False
+    link = format_yandex_link(root_url, item_path)
+    for existing in vacancy.get("candidates", []):
+        if (existing.get("video_link") or "").strip() == link:
+            if _file_matches_candidate(name, existing.get("name", "")):
+                result.skipped += 1
+                return True
+            existing["video_link"] = ""
     cand = match_candidate_by_filename(name, vacancy.get("candidates", []))
-    if not cand:
+    if not cand or not _file_matches_candidate(name, cand.get("name", "")):
         result.skipped += 1
         result.messages.append(f"Видео без пары: {name}")
         return False
-    link = format_yandex_link(root_url, item_path)
     if (cand.get("video_link") or "").strip() == link:
         result.skipped += 1
         return True
@@ -195,12 +334,18 @@ def _ingest_video_file(vacancy, root_url, item, result):
 def _ingest_task_folder(vacancy, root_url, item, result):
     name = item.get("name") or ""
     item_path = item.get("path") or ""
+    link = format_yandex_link(root_url, item_path)
+    for existing in vacancy.get("candidates", []):
+        if (existing.get("task_link") or "").strip() == link:
+            if _file_matches_candidate(name, existing.get("name", "")):
+                result.skipped += 1
+                return True
+            existing["task_link"] = ""
     cand = match_candidate_by_filename(name, vacancy.get("candidates", []))
-    if not cand:
+    if not cand or not _file_matches_candidate(name, cand.get("name", "")):
         result.skipped += 1
         result.messages.append(f"Папка задания без пары: {name}")
         return False
-    link = format_yandex_link(root_url, item_path)
     if (cand.get("task_link") or "").strip() == link:
         result.skipped += 1
         return True
@@ -208,6 +353,54 @@ def _ingest_task_folder(vacancy, root_url, item, result):
     result.updated += 1
     result.messages.append(f"Задание → {cand.get('name', name)}")
     return True
+
+
+def _guess_item_mode(path, name):
+    lower = (name or "").lower()
+    if lower.endswith(".pdf"):
+        return "resume"
+    if lower.endswith((".mp4", ".webm", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".ogg", ".m4a")):
+        return "video"
+    return "task"
+
+
+def _prune_unapplied_seen_paths(vacancy, root_url, cfg, result):
+    """Убирает из seen_paths файлы, которые так и не привязались к карточкам."""
+    kept = []
+    removed = 0
+    for path in list(cfg.get("seen_paths", [])):
+        name = path.rsplit("/", 1)[-1]
+        mode = _guess_item_mode(path, name)
+        item = {
+            "name": name,
+            "path": path,
+            "type": "dir" if mode == "task" else "file",
+        }
+        if _item_link_applied(vacancy, root_url, item, mode):
+            kept.append(path)
+        else:
+            removed += 1
+    if removed:
+        result.messages.append(f"Повторная проверка: {removed} файл(ов) без ссылки в карточке")
+    cfg["seen_paths"] = kept
+
+
+def _link_field_for_mode(mode):
+    return {"resume": "resume_link", "video": "video_link", "task": "task_link"}.get(mode)
+
+
+def _item_link_applied(vacancy, root_url, item, mode):
+    """Файл уже привязан к карточке кандидата (можно не обрабатывать повторно)."""
+    field = _link_field_for_mode(mode)
+    if not field:
+        return True
+    name = item.get("name") or ""
+    item_path = item.get("path") or ""
+    link = format_yandex_link(root_url, item_path)
+    cand = match_candidate_by_filename(name, vacancy.get("candidates", []))
+    if not cand or not _file_matches_candidate(name, cand.get("name", "")):
+        return False
+    return (cand.get(field) or "").strip() == link
 
 
 def _scan_folder(vacancy, deps, root_url, cfg, folder_name, result, *, mode, ingest_new):
@@ -224,7 +417,7 @@ def _scan_folder(vacancy, deps, root_url, cfg, folder_name, result, *, mode, ing
         item_type = item.get("type") or ""
         name = item.get("name") or ""
         item_path = item.get("path") or _join_disk_path(base_path, name)
-        if item_path in seen:
+        if item_path in seen and _item_link_applied(vacancy, root_url, item, mode):
             continue
         if mode == "task":
             if item_type != "dir":
@@ -257,37 +450,29 @@ def sync_vacancy_yandex_disk(vacancy, deps, *, ingest_new_resumes=True):
         result.errors.append("Не указана ссылка на папку вакансии на Яндекс.Диске")
         return result
 
+    _repair_mismatched_resume_links(vacancy, result)
+    _prune_unapplied_seen_paths(vacancy, root_url, cfg, result)
+
     subs = cfg.get("subfolders") or {}
-    _scan_folder(
-        vacancy,
-        deps,
-        root_url,
-        cfg,
-        (subs.get("resume") or "").strip(),
-        result,
-        mode="resume",
-        ingest_new=ingest_new_resumes,
+    folder_plan = (
+        ("resume", (subs.get("resume") or "").strip(), "resume", ingest_new_resumes),
+        ("video", (subs.get("video") or "").strip(), "video", False),
+        ("task", (subs.get("task") or "").strip(), "task", False),
     )
-    _scan_folder(
-        vacancy,
-        deps,
-        root_url,
-        cfg,
-        (subs.get("video") or "").strip(),
-        result,
-        mode="video",
-        ingest_new=False,
-    )
-    _scan_folder(
-        vacancy,
-        deps,
-        root_url,
-        cfg,
-        (subs.get("task") or "").strip(),
-        result,
-        mode="task",
-        ingest_new=False,
-    )
+    for kind, configured, mode, ingest_new in folder_plan:
+        resolved = _resolve_subfolder_name(root_url, configured)
+        if configured and resolved and resolved != configured:
+            result.messages.append(f"Подпапка «{configured}» → «{resolved}»")
+        _scan_folder(
+            vacancy,
+            deps,
+            root_url,
+            cfg,
+            resolved,
+            result,
+            mode=mode,
+            ingest_new=ingest_new,
+        )
 
     cfg["last_sync_at"] = datetime.now().isoformat(timespec="seconds")
     return result
