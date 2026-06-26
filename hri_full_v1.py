@@ -2136,6 +2136,26 @@ with tab_settings:
         else:
             st.info("Чаты не добавлены. Сохраните первый чат выше.")
 
+    with st.expander("🛡️ Гарантия", expanded=False):
+        from app_settings import get_default_warranty_months, set_default_warranty_months
+        from warranty import WARRANTY_MONTH_CHOICES, WARRANTY_MONTH_LABELS
+
+        st.caption(
+            "Срок по умолчанию подставляется при первом указании гарантии у кандидата. "
+            "Месяц = 30 дней."
+        )
+        current_months = get_default_warranty_months()
+        picked_months = st.selectbox(
+            "Срок гарантии по умолчанию",
+            WARRANTY_MONTH_CHOICES,
+            index=WARRANTY_MONTH_CHOICES.index(current_months),
+            format_func=lambda m: WARRANTY_MONTH_LABELS.get(m, f"{m} мес"),
+            key="settings_default_warranty_months",
+        )
+        if st.button("💾 Сохранить срок гарантии", key="settings_save_warranty_default"):
+            set_default_warranty_months(picked_months)
+            st.success(f"Сохранено: {WARRANTY_MONTH_LABELS.get(picked_months, picked_months)}")
+
     with st.expander("🤖 Telegram-бот", expanded=True):
         from telegram_notify import get_bot_status, get_hr_user_id, send_telegram_html
 

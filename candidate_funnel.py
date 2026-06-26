@@ -56,6 +56,7 @@ from warranty import (
     migrate_vacancy_warranty,
     warranty_date_field_label,
 )
+from app_settings import get_default_warranty_months
 
 
 def new_candidate_template(vacancy_id):
@@ -578,7 +579,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 )
 
             warranty_start_date = None
-            warranty_months = 3
+            warranty_months = get_default_warranty_months()
             show_warranty_fields = (
                 picked_stage in WARRANTY_TRIGGER_STAGES
                 or current_stage in WARRANTY_TRIGGER_STAGES
@@ -599,7 +600,7 @@ def render_candidate_card(vacancy, cand, idx, deps):
                 if w_cand_match and w.get("months") in WARRANTY_MONTH_CHOICES:
                     w_months_default = w.get("months")
                 else:
-                    w_months_default = 3
+                    w_months_default = get_default_warranty_months()
                 label_stage = (
                     picked_stage
                     if picked_stage in WARRANTY_TRIGGER_STAGES

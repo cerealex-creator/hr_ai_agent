@@ -17,10 +17,16 @@ SEARCH_MODE_WARRANTY = "warranty"
 
 
 def default_warranty():
+    try:
+        from app_settings import get_default_warranty_months
+
+        months = get_default_warranty_months()
+    except Exception:
+        months = 3
     return {
         "active": False,
         "start_date": "",
-        "months": 3,
+        "months": months,
         "candidate_id": "",
         "start_kind": "",
     }
@@ -46,7 +52,12 @@ def migrate_vacancy_warranty(vacancy):
             migrated = True
     months = warranty.get("months")
     if months not in WARRANTY_MONTH_CHOICES:
-        warranty["months"] = 3
+        try:
+            from app_settings import get_default_warranty_months
+
+            warranty["months"] = get_default_warranty_months()
+        except Exception:
+            warranty["months"] = 3
         migrated = True
     return migrated
 
