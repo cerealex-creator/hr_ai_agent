@@ -44,7 +44,7 @@
 
 **Файлы:** `questionnaire_grid.py`, `resume_ai.py`, `candidate_funnel.py`
 
-**Git:** незакоммичено
+**Git:** commit `56e0846`, push `feature/local-ux-improvements`
 
 ---
 
@@ -59,7 +59,7 @@
 
 **Файлы:** `questionnaire_grid.py`, `resume_ai.py`, `candidate_funnel.py`, `hri_full_v1.py`, `ai_helpers.py`, `migrate_data.py`
 
-**Git:** незакоммичено
+**Git:** commit `56e0846`
 
 **Следующий шаг:**
 - Проверить: расставить оценки → «Оценить по интервью» → вывод ИИ учитывает оценки и уточнения.
