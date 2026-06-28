@@ -33,6 +33,20 @@
 
 ---
 
+## 2026-06-28 — Merge feature/local-ux-improvements → main
+
+**Тип:** `decision`
+
+**Сделано:**
+- Fast-forward merge `3980981..ff07691` (11 коммитов): local UX, Яндекс.Диск, опросник, `/meetings`, стабильность карточек.
+
+**Git:** `main` @ `ff07691`; локально на 11 коммитов впереди `origin/main`
+
+**Следующий шаг:**
+- `git push origin main` и перезапуск Streamlit + `bot.py`.
+
+---
+
 ## 2026-06-28 — Yandex/карточки: анти-конвульсионные правки (без Platrum)
 
 **Тип:** `fix`
