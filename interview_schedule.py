@@ -121,6 +121,18 @@ def format_interview_display(date_str, time_str):
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
+def format_interview_mode(candidate):
+    """Формат встречи для сообщений: офис / онлайн."""
+    parts = []
+    if candidate.get("remote_interview"):
+        parts.append("онлайн")
+    if candidate.get("office_interview"):
+        parts.append("офис")
+    if not parts:
+        return "—"
+    return " / ".join(parts)
+
+
 def _esc(text):
     return html.escape(str(text or "").strip())
 

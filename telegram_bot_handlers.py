@@ -885,7 +885,7 @@ async def _send_candidate_navigator(target, vacancy, index=0):
 
 
 def register_group_chat_handlers(dp):
-    """Команды для групповых чатов: /pending, /help."""
+    """Команды для групповых чатов: /meetings, /pending, /candidates."""
 
     @dp.message(Command("candidates"), F.chat.type.in_({"group", "supergroup"}))
     async def cmd_candidates(message: types.Message):
@@ -1112,6 +1112,48 @@ def register_group_chat_handlers(dp):
         )
         await callback.answer()
 
+    @dp.message(Command("meetings"))
+    async def cmd_meetings(message: types.Message):
+        if message.chat.type not in ("group", "supergroup"):
+            return
+
+        from telegram_reminders import (
+            collect_upcoming_confirmed_meetings,
+            format_upcoming_meetings_html,
+        )
+
+        vacancies = find_vacancies_by_chat_id(message.chat.id)
+        if not vacancies:
+            await message.answer("В этом чате нет привязанных активных вакансий.")
+            return
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) > 1 and args[1].strip().lower() == "all":
+            items = collect_upcoming_confirmed_meetings(message.chat.id)
+            text = format_upcoming_meetings_html(items, show_vacancy=len(vacancies) > 1)
+            await _show_pending_on_message(message, text)
+            return
+
+        if len(vacancies) == 1:
+            items = collect_upcoming_confirmed_meetings(message.chat.id, vacancies[0]["id"])
+            text = format_upcoming_meetings_html(items, show_vacancy=False)
+            await _show_pending_on_message(message, text)
+            return
+
+        picker_rows = []
+        for vac in vacancies:
+            meeting_count = len(
+                collect_upcoming_confirmed_meetings(message.chat.id, vac["id"])
+            )
+            label = f"{vac['title']} ({meeting_count})"
+            picker_rows.append([{"text": label, "callback_data": f"mt:{vac['id']}"}])
+        picker_rows.append([{"text": "📋 Все вакансии", "callback_data": "mt:all"}])
+        await _show_pending_on_message(
+            message,
+            "<b>📅 Назначенные собеседования</b>\n\nВыберите вакансию:",
+            extra_keyboard={"inline_keyboard": picker_rows},
+        )
+
     @dp.message(Command("pending"))
     async def cmd_pending(message: types.Message):
         if message.chat.type not in ("group", "supergroup"):
@@ -1152,9 +1194,62 @@ def register_group_chat_handlers(dp):
     @dp.message(Command("menu"), F.chat.type.in_({"group", "supergroup"}))
     async def cmd_menu_group(message: types.Message):
         await message.answer(
-            "В группе: /candidates — карточки вакансии, /pending — ждут оценки.\n"
+            "В группе: /meetings — предстоящие встречи; "
+            "/candidates — карточки вакансии; /pending — ждут оценки.\n"
             "Сводка по кандидатам — автоматически вт 18:00 и пт 15:00."
         )
+
+    @dp.callback_query(F.data.startswith("mt:"))
+    async def on_meetings_vacancy_pick(callback: types.CallbackQuery):
+        from telegram_nav_session import (
+            arm_pending_ephemeral_delete,
+            pending_keyboard_with_close,
+            set_pending_response,
+        )
+        from telegram_reminders import (
+            collect_upcoming_confirmed_meetings,
+            format_upcoming_meetings_html,
+        )
+
+        token = callback.data.split(":", 1)[1]
+        chat_id = callback.message.chat.id
+        user_id = callback.from_user.id
+        vacancies = find_vacancies_by_chat_id(chat_id)
+        show_vacancy = len(vacancies) > 1
+
+        if token == "all":
+            items = collect_upcoming_confirmed_meetings(chat_id)
+        else:
+            try:
+                vacancy_id = int(token)
+            except ValueError:
+                await callback.answer("Некорректные данные", show_alert=True)
+                return
+            items = collect_upcoming_confirmed_meetings(chat_id, vacancy_id)
+
+        text = format_upcoming_meetings_html(
+            items,
+            show_vacancy=show_vacancy and token == "all",
+        )
+        markup = _keyboard_from_dict(pending_keyboard_with_close())
+        try:
+            await callback.message.edit_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=markup,
+            )
+            set_pending_response(chat_id, user_id, callback.message.message_id)
+        except TelegramBadRequest:
+            sent = await callback.message.answer(
+                text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=markup,
+            )
+            set_pending_response(chat_id, user_id, sent.message_id)
+        await arm_pending_ephemeral_delete(callback.bot, chat_id, user_id)
+        await callback.answer()
 
     @dp.callback_query(F.data.startswith("vp:"))
     async def on_pending_vacancy_pick(callback: types.CallbackQuery):

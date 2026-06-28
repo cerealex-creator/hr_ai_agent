@@ -165,6 +165,7 @@ def _load_candidate_resume_text(cand, deps):
 
 
 _LINK_WIDGET_FIELDS = ("resume_link", "video_link", "task_link", "hh_resume_link")
+_LINK_OPEN_WIDGET_FIELDS = ("resume_open", "video_open", "task_open")
 
 
 def _link_widget_rev_key(vacancy_id):
@@ -207,7 +208,7 @@ def _card_key(vacancy, cand, field):
     """Уникальный ключ виджета: вакансия + кандидат (не индекс в списке)."""
     cid = cand.get("id") or "unknown"
     base = f"c_{vacancy['id']}_{cid}_{field}"
-    if field in _LINK_WIDGET_FIELDS:
+    if field in _LINK_WIDGET_FIELDS or field in _LINK_OPEN_WIDGET_FIELDS:
         rev = int(st.session_state.get(_link_widget_rev_key(vacancy["id"]), 0) or 0)
         return f"{base}_r{rev}"
     return base

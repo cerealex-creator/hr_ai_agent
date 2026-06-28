@@ -6,7 +6,10 @@ from datetime import datetime, timedelta
 
 from models import is_visible_in_client_zone
 from vacancy_store import migrate_candidate
+from client_actions import has_client_meeting_scheduled
 from interview_schedule import (
+    format_interview_display,
+    format_interview_mode,
     get_timezone,
     parse_interview_datetime,
     validate_interview_schedule,
@@ -413,6 +416,76 @@ def format_pending_list_html(items, *, show_vacancy=False):
             lines.append(f"{idx}. <b>{name}</b> — 🏢 {_esc(vac['title'])}")
         else:
             lines.append(f"{idx}. <b>{name}</b>")
+        if post and post.get("message_id"):
+            link = telegram_message_link(post.get("chat_id"), post["message_id"])
+            lines.append(f'   <a href="{link}">Перейти к карточке</a>')
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def collect_upcoming_confirmed_meetings(chat_id, vacancy_id=None):
+    """Встречи, назначенные заказчиком, подтверждённые HR, ещё не прошедшие."""
+    tz = get_timezone()
+    now = datetime.now(tz)
+    vacancies = find_vacancies_by_chat_id(chat_id)
+    if vacancy_id is not None:
+        vacancies = [v for v in vacancies if v.get("id") == vacancy_id]
+
+    result = []
+    for vacancy in vacancies:
+        for cand in vacancy.get("candidates", []):
+            migrate_candidate(cand)
+            if not has_client_meeting_scheduled(cand):
+                continue
+            if not cand.get("meeting_hr_confirmed"):
+                continue
+            dt = parse_interview_datetime(
+                cand.get("office_interview_date"),
+                cand.get("office_interview_time"),
+                tz=tz,
+            )
+            if not dt or dt < now:
+                continue
+            from telegram_chat_id import resolve_vacancy_chat_id
+
+            post = get_primary_telegram_post(
+                cand,
+                resolve_vacancy_chat_id(vacancy, chat_id),
+                vacancy_id=vacancy.get("id"),
+            )
+            result.append({
+                "vacancy": vacancy,
+                "candidate": cand,
+                "post": post,
+                "when": dt,
+            })
+
+    result.sort(key=lambda item: item["when"])
+    return result
+
+
+def format_upcoming_meetings_html(items, *, show_vacancy=False):
+    from telegram_workflow import telegram_message_link
+
+    if not items:
+        return "✅ Нет предстоящих подтверждённых собеседований."
+
+    lines = ["<b>📅 Назначенные собеседования</b>", ""]
+    for idx, item in enumerate(items, 1):
+        cand = item["candidate"]
+        vac = item["vacancy"]
+        name = _esc(cand.get("name", "Без имени"))
+        when = format_interview_display(
+            cand.get("office_interview_date"),
+            cand.get("office_interview_time"),
+        )
+        mode = _esc(format_interview_mode(cand))
+        if show_vacancy and vac.get("title"):
+            lines.append(f"{idx}. <b>{name}</b> — 🏢 {_esc(vac['title'])}")
+        else:
+            lines.append(f"{idx}. <b>{name}</b>")
+        lines.append(f"   🕐 {when} · {mode}")
+        post = item.get("post")
         if post and post.get("message_id"):
             link = telegram_message_link(post.get("chat_id"), post["message_id"])
             lines.append(f'   <a href="{link}">Перейти к карточке</a>')

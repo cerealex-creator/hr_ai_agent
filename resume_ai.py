@@ -644,6 +644,15 @@ def yandex_public_view_url(root_url, path):
     return f"{root}/{'/'.join(segments)}"
 
 
+def yandex_path_is_valid(public_key, path):
+    """Проверяет, что файл/папка существует в опубликованной директории."""
+    if not public_key:
+        return False
+    if not (path or "").strip():
+        return True
+    return get_yandex_public_meta(public_key, path=path) is not None
+
+
 def yandex_link_for_display(url):
     """Ссылка для открытия в браузере/Telegram — просмотр в Диске, не скачивание."""
     url = (url or "").strip()
@@ -661,6 +670,8 @@ def yandex_link_for_display(url):
         public_url = (meta.get("public_url") or "").strip()
         if public_url:
             return public_url
+    if "/d/" in root:
+        return yandex_public_view_url(root, path)
     return yandex_public_view_url(root, path)
 
 
@@ -721,9 +732,9 @@ def get_yandex_download_url(url, *, path=None):
             return response.json().get("href")
     except requests.RequestException:
         pass
-    if "/i/" in public_key:
-        return public_key.replace("/i/", "/d/")
-    return public_key
+    if "/i/" in public_key and not use_path:
+        return public_key
+    return None
 
 
 def is_yandex_video_or_audio(meta):

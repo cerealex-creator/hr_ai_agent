@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import SequenceMatcher
 
 from resume_ai import (
     fetch_resume_text_from_url,
@@ -13,6 +14,8 @@ from resume_ai import (
     is_yandex_pdf,
     is_yandex_video_or_audio,
     list_yandex_public_folder,
+    parse_yandex_link,
+    yandex_path_is_valid,
 )
 
 DEFAULT_SUBFOLDERS = {
@@ -100,6 +103,12 @@ def _filename_stem(name):
     return os.path.splitext(name or "")[0].strip()
 
 
+def _name_similarity(a, b):
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
 _MIN_MATCH_SCORE = 43
 
 
@@ -154,8 +163,6 @@ def _repair_mismatched_resume_links(vacancy, result):
         link = (cand.get("resume_link") or "").strip()
         if not link:
             continue
-        from resume_ai import parse_yandex_link
-
         _, path = parse_yandex_link(link)
         filename = (path or "").rsplit("/", 1)[-1]
         if filename and not _file_matches_candidate(filename, cand.get("name", "")):
@@ -165,26 +172,60 @@ def _repair_mismatched_resume_links(vacancy, result):
             )
 
 
+def _repair_broken_yandex_links(vacancy, root_url, result):
+    """Сбрасывает yadisk-ссылки с несуществующим путём (папку переименовали и т.п.)."""
+    root_norm = (root_url or "").strip().rstrip("/")
+    for cand in vacancy.get("candidates", []):
+        for field, label in (
+            ("resume_link", "резюме"),
+            ("video_link", "запись"),
+            ("task_link", "задание"),
+        ):
+            link = (cand.get(field) or "").strip()
+            if not link.startswith("yadisk:"):
+                continue
+            public_key, path = parse_yandex_link(link)
+            if public_key.rstrip("/") != root_norm:
+                continue
+            if not path:
+                continue
+            if yandex_path_is_valid(public_key, path):
+                continue
+            cand[field] = ""
+            result.messages.append(
+                f"Сброшена устаревшая ссылка ({label}) у {cand.get('name', 'кандидата')}"
+            )
+
+
 def _resolve_subfolder_name(root_url, configured_name):
     """
     Находит реальную подпапку на Диске.
     Если «Записи» в настройках, а на диске «Записи собеседований» — подберёт её.
+    Учитывает опечатки в названии (например «собесдований» вместо «собеседований»).
     """
     configured = (configured_name or "").strip().strip("/")
     if not configured:
         return ""
     exact_path = f"/{configured}"
     try:
-        if list_yandex_public_folder(root_url, exact_path):
+        exact_items = list_yandex_public_folder(root_url, exact_path)
+        if exact_items:
             return configured
     except Exception:
-        pass
+        exact_items = None
     norm_cfg = _normalize_name(configured)
     if not norm_cfg:
         return configured
     try:
         root_items = list_yandex_public_folder(root_url, "")
     except Exception:
+        return configured
+    root_dir_names = {
+        (item.get("name") or "").strip()
+        for item in root_items
+        if item.get("type") == "dir"
+    }
+    if configured in root_dir_names:
         return configured
     best_name = ""
     best_score = 0
@@ -202,6 +243,10 @@ def _resolve_subfolder_name(root_url, configured_name):
             score = 500 + len(norm_name)
         elif norm_cfg in norm_name or norm_name in norm_cfg:
             score = 200 + len(norm_name)
+        else:
+            ratio = _name_similarity(norm_name, norm_cfg)
+            if ratio >= 0.82:
+                score = int(ratio * 900) + len(norm_name)
         if score > best_score:
             best_score = score
             best_name = name
@@ -322,7 +367,13 @@ def _ingest_video_file(vacancy, root_url, item, result):
         result.skipped += 1
         result.messages.append(f"Видео без пары: {name}")
         return False
-    if (cand.get("video_link") or "").strip() == link:
+    current = (cand.get("video_link") or "").strip()
+    if current and current != link:
+        pk, old_path = parse_yandex_link(current)
+        if old_path and not yandex_path_is_valid(pk, old_path):
+            cand["video_link"] = ""
+            current = ""
+    if current == link:
         result.skipped += 1
         return True
     cand["video_link"] = link
@@ -400,7 +451,12 @@ def _item_link_applied(vacancy, root_url, item, mode):
     cand = match_candidate_by_filename(name, vacancy.get("candidates", []))
     if not cand or not _file_matches_candidate(name, cand.get("name", "")):
         return False
-    return (cand.get(field) or "").strip() == link
+    stored = (cand.get(field) or "").strip()
+    if stored != link:
+        return False
+    if not item_path:
+        return True
+    return yandex_path_is_valid(root_url, item_path)
 
 
 def _scan_folder(vacancy, deps, root_url, cfg, folder_name, result, *, mode, ingest_new):
@@ -451,6 +507,7 @@ def sync_vacancy_yandex_disk(vacancy, deps, *, ingest_new_resumes=True):
         return result
 
     _repair_mismatched_resume_links(vacancy, result)
+    _repair_broken_yandex_links(vacancy, root_url, result)
     _prune_unapplied_seen_paths(vacancy, root_url, cfg, result)
 
     subs = cfg.get("subfolders") or {}
