@@ -48,6 +48,30 @@ def _rev_key(key_prefix):
     return f"{key_prefix}_widget_rev"
 
 
+def _items_cache_key(key_prefix):
+    return f"{key_prefix}_items"
+
+
+def invalidate_interview_questionnaire_cache(card_iq_key):
+    """Сброс кэша опросника в session_state (после перегенерации)."""
+    list_prefix = f"{card_iq_key}_list"
+    st.session_state.pop(_items_cache_key(list_prefix), None)
+    st.session_state.pop(_rev_key(list_prefix), None)
+
+
+def _load_questionnaire_items(cand, key_prefix):
+    cache_key = _items_cache_key(key_prefix)
+    if cache_key in st.session_state:
+        return _ensure_question_ids(st.session_state[cache_key])
+    return _ensure_question_ids(cand.get("interview_questionnaire") or [])
+
+
+def _store_questionnaire_items(cand, key_prefix, items):
+    cache_key = _items_cache_key(key_prefix)
+    st.session_state[cache_key] = items
+    cand["interview_questionnaire"] = items
+
+
 def _render_question_meta(q):
     meta = []
     if q.get("проверяет_требование"):
@@ -76,6 +100,7 @@ def _render_hr_rating_row(key_prefix, q, rev):
             ):
                 selected = "" if active else value
                 clicked = True
+                st.session_state[_rev_key(key_prefix)] = rev + 1
     selected = normalize_hr_rating(selected)
     q["оценка_hr"] = selected
     q["оценка"] = selected
@@ -87,12 +112,11 @@ def render_interview_questionnaire_list(cand, key_prefix):
     Рисует список вопросов, правит cand['interview_questionnaire'] в памяти.
     Возвращает True только если нужен rerun (перестановка / смена оценки).
     """
-    items = _ensure_question_ids(cand.get("interview_questionnaire") or [])
+    items = _load_questionnaire_items(cand, key_prefix)
     if not items:
-        cand["interview_questionnaire"] = items
+        _store_questionnaire_items(cand, key_prefix, items)
         return False
 
-    cand["interview_questionnaire"] = items
     rev = st.session_state.get(_rev_key(key_prefix), 0)
     needs_rerun = False
 
@@ -103,7 +127,7 @@ def render_interview_questionnaire_list(cand, key_prefix):
             if index > 0 and st.button("↑", key=f"{key_prefix}_up_{qid}_{rev}", help="Выше"):
                 swapped = _swap_by_qid(items, qid, -1)
                 if swapped:
-                    cand["interview_questionnaire"] = swapped
+                    _store_questionnaire_items(cand, key_prefix, swapped)
                     st.session_state[_rev_key(key_prefix)] = rev + 1
                     return True
         with head_cols[1]:
@@ -112,7 +136,7 @@ def render_interview_questionnaire_list(cand, key_prefix):
             ):
                 swapped = _swap_by_qid(items, qid, 1)
                 if swapped:
-                    cand["interview_questionnaire"] = swapped
+                    _store_questionnaire_items(cand, key_prefix, swapped)
                     st.session_state[_rev_key(key_prefix)] = rev + 1
                     return True
         with head_cols[2]:
@@ -154,7 +178,7 @@ def render_interview_questionnaire_list(cand, key_prefix):
 
         st.divider()
 
-    cand["interview_questionnaire"] = items
+    _store_questionnaire_items(cand, key_prefix, items)
     return needs_rerun
 
 

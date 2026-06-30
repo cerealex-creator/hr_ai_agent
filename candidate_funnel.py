@@ -41,7 +41,10 @@ from telegram_notify import (
     validate_task_message_fields,
 )
 import telegram_client as telegram_client_module
-from questionnaire_grid import render_interview_questionnaire_grid
+from questionnaire_grid import (
+    invalidate_interview_questionnaire_cache,
+    render_interview_questionnaire_grid,
+)
 from interview_schedule import (
     build_time_options,
     validate_interview_schedule,
@@ -905,6 +908,7 @@ def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
                                 with st.spinner(
                                     "Опросник: шаблон вакансии + уточнения по резюме… (до 2 мин)"
                                 ):
+                                    invalidate_interview_questionnaire_cache(k("iq"))
                                     cand["interview_questionnaire"] = (
                                         build_candidate_questionnaire_from_template(
                                             resume_text,
@@ -946,6 +950,7 @@ def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
                             )
                             with st.spinner("Обновление по резюме…"):
                                 if base_q:
+                                    invalidate_interview_questionnaire_cache(k("iq"))
                                     cand["interview_questionnaire"] = (
                                         copy_vacancy_questionnaire_template(base_q)
                                     )
