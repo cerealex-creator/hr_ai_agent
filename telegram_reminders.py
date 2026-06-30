@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from models import is_visible_in_client_zone
 from vacancy_store import migrate_candidate
-from client_actions import has_client_meeting_scheduled
+from client_actions import has_client_meeting_scheduled, is_client_confirmed_group_meeting
 from interview_schedule import (
     format_interview_display,
     format_interview_mode,
@@ -185,6 +185,16 @@ def collect_reminder_jobs(now=None):
                         REMINDER_60_WINDOW[0] <= minutes <= REMINDER_60_WINDOW[1]
                         and not cand.get("interview_reminder_60_sent")
                     ):
+                        if not is_client_confirmed_group_meeting(cand):
+                            jobs.append({
+                                "chat_id": chat_id,
+                                "label": f"interview_60_skip_primary:{cand_id}",
+                                "vacancy_id": vacancy_id,
+                                "candidate_id": cand_id,
+                                "mark_type": "interview_60",
+                                "skip_send": True,
+                            })
+                            continue
                         if should_skip_group_reminder_60(cand):
                             jobs.append({
                                 "chat_id": chat_id,

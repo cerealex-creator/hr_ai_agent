@@ -40,6 +40,13 @@ def has_client_meeting_scheduled(candidate):
     )
 
 
+def is_client_confirmed_group_meeting(candidate):
+    """Встреча с заказчиком, подтверждённая HR — уведомления в общий чат."""
+    return bool(candidate.get("meeting_hr_confirmed")) and has_client_meeting_scheduled(
+        candidate
+    )
+
+
 def clear_client_meeting(candidate):
     """Сбрасывает дату/время/формат клиентской встречи. Возвращает True, если встреча была."""
     if not has_client_meeting_scheduled(candidate):

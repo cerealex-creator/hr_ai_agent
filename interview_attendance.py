@@ -1,4 +1,4 @@
-"""Утреннее подтверждение явки кандидата и напоминание за час в общий чат."""
+"""Утреннее подтверждение явки кандидата (личка HR) и напоминание за час в общий чат (только встречи с заказчиком, подтверждённые HR)."""
 
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def apply_and_save_interview_attendance(
     candidate_id,
     status,
 ):
-    """Сохраняет ответ HR по явке. В общий чат — только отмена кандидатом (сразу)."""
+    """Сохраняет ответ HR по явке. В общий чат — отмена кандидатом только для встреч с заказчиком (подтверждённых HR)."""
     from client_actions import has_client_meeting_scheduled
     from telegram_chat_id import resolve_vacancy_chat_id
     from client_actions import get_primary_telegram_post
@@ -179,19 +179,22 @@ def apply_and_save_interview_attendance(
         candidate["interview_reminder_60_sent"] = True
 
     if status == ATTENDANCE_CANCELLED_CANDIDATE:
-        chat_id = resolve_vacancy_chat_id(vacancy)
-        if chat_id:
-            post = get_primary_telegram_post(
-                candidate, chat_id, vacancy_id=vacancy.get("id")
-            )
-            group_job = {
-                "chat_id": chat_id,
-                "text": build_candidate_cancelled_group_message(
-                    candidate, vacancy.get("title", "")
-                ),
-                "reply_to_message_id": (post or {}).get("message_id"),
-                "label": f"attendance_cancel_candidate:{candidate.get('id')}",
-            }
+        from client_actions import is_client_confirmed_group_meeting
+
+        if is_client_confirmed_group_meeting(candidate):
+            chat_id = resolve_vacancy_chat_id(vacancy)
+            if chat_id:
+                post = get_primary_telegram_post(
+                    candidate, chat_id, vacancy_id=vacancy.get("id")
+                )
+                group_job = {
+                    "chat_id": chat_id,
+                    "text": build_candidate_cancelled_group_message(
+                        candidate, vacancy.get("title", "")
+                    ),
+                    "reply_to_message_id": (post or {}).get("message_id"),
+                    "label": f"attendance_cancel_candidate:{candidate.get('id')}",
+                }
 
     save_vacancies(data)
     labels = {
