@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -85,7 +86,11 @@ def migrate_vacancy_yandex_disk(vacancy):
 
 
 def _normalize_name(text):
-    return re.sub(r"[^0-9a-zа-яё]+", "", (text or "").lower())
+    return re.sub(
+        r"[^0-9a-zа-яё]+",
+        "",
+        unicodedata.normalize("NFC", (text or "")).lower(),
+    )
 
 
 def _name_tokens(text):
@@ -117,12 +122,19 @@ def _file_matches_candidate(filename, candidate_name):
     stem = _normalize_name(_filename_stem(filename))
     file_tokens = _name_tokens(_filename_stem(filename))
     cand_name = _normalize_name(candidate_name)
+    cand_tokens = _name_tokens(candidate_name)
     if not cand_name:
         return False
     if stem and (cand_name in stem or stem in cand_name):
         return True
     if file_tokens and file_tokens[0] in cand_name:
         return True
+    if cand_tokens:
+        surname = cand_tokens[0]
+        if len(surname) >= 3 and (
+            surname in file_tokens or (stem and surname in stem)
+        ):
+            return True
     return False
 
 
@@ -260,11 +272,17 @@ def _join_disk_path(parent, name):
     return f"{parent}/{name}"
 
 
+def _normalize_disk_path(path):
+    """Единый вид пути для seen_paths (только сравнение, не для API)."""
+    return unicodedata.normalize("NFC", (path or "").strip())
+
+
 def _seen_set(cfg):
-    return {str(p) for p in (cfg.get("seen_paths") or [])}
+    return {_normalize_disk_path(p) for p in (cfg.get("seen_paths") or [])}
 
 
 def _mark_seen(cfg, path):
+    path = (path or "").strip()
     paths = cfg.setdefault("seen_paths", [])
     if path not in paths:
         paths.append(path)
@@ -382,6 +400,31 @@ def _ingest_video_file(vacancy, root_url, item, result):
     return True
 
 
+def _ingest_task_file(vacancy, root_url, item, result):
+    """PDF/файл задания в подпапке «Задания» (не только папка на кандидата)."""
+    name = item.get("name") or ""
+    item_path = item.get("path") or ""
+    link = format_yandex_link(root_url, item_path)
+    for existing in vacancy.get("candidates", []):
+        if (existing.get("task_link") or "").strip() == link:
+            if _file_matches_candidate(name, existing.get("name", "")):
+                result.skipped += 1
+                return True
+            existing["task_link"] = ""
+    cand = match_candidate_by_filename(name, vacancy.get("candidates", []))
+    if not cand or not _file_matches_candidate(name, cand.get("name", "")):
+        result.skipped += 1
+        result.messages.append(f"Файл задания без пары: {name}")
+        return False
+    if (cand.get("task_link") or "").strip() == link:
+        result.skipped += 1
+        return True
+    cand["task_link"] = link
+    result.updated += 1
+    result.messages.append(f"Задание → {cand.get('name', name)}")
+    return True
+
+
 def _ingest_task_folder(vacancy, root_url, item, result):
     name = item.get("name") or ""
     item_path = item.get("path") or ""
@@ -408,6 +451,10 @@ def _ingest_task_folder(vacancy, root_url, item, result):
 
 def _guess_item_mode(path, name):
     lower = (name or "").lower()
+    norm_path = _normalize_name(path or "")
+    if "задания" in norm_path or "задание" in norm_path:
+        if lower.endswith((".pdf", ".zip", ".rar", ".7z")):
+            return "task"
     if lower.endswith(".pdf"):
         return "resume"
     if lower.endswith((".mp4", ".webm", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".ogg", ".m4a")):
@@ -473,12 +520,17 @@ def _scan_folder(vacancy, deps, root_url, cfg, folder_name, result, *, mode, ing
         item_type = item.get("type") or ""
         name = item.get("name") or ""
         item_path = item.get("path") or _join_disk_path(base_path, name)
-        if item_path in seen and _item_link_applied(vacancy, root_url, item, mode):
+        if _normalize_disk_path(item_path) in seen and _item_link_applied(
+            vacancy, root_url, item, mode
+        ):
             continue
         if mode == "task":
-            if item_type != "dir":
+            if item_type == "dir":
+                remember = _ingest_task_folder(vacancy, root_url, item, result)
+            elif item_type == "file":
+                remember = _ingest_task_file(vacancy, root_url, item, result)
+            else:
                 continue
-            remember = _ingest_task_folder(vacancy, root_url, item, result)
         elif mode == "resume":
             if item_type != "file":
                 continue
@@ -493,7 +545,7 @@ def _scan_folder(vacancy, deps, root_url, cfg, folder_name, result, *, mode, ing
             remember = True
         if remember:
             _mark_seen(cfg, item_path)
-            seen.add(item_path)
+            seen.add(_normalize_disk_path(item_path))
 
 
 def sync_vacancy_yandex_disk(vacancy, deps, *, ingest_new_resumes=True):
