@@ -20,6 +20,10 @@ backups/
 *.log
 .DS_Store
 
+# Локальный фоновый запуск (PID, логи)
+run/
+scripts/macos/build/
+
 # Тестовые скрипты
 generate_profile.py
 get_direct_link_simple.py
