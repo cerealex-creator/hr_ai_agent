@@ -44,7 +44,7 @@
 
 **Файлы:** `scripts/`, `.gitignore` (`run/`), `ARCHITECTURE.md`
 
-**Git:** commit `d9702c4`, push `origin/main`
+**Git:** commit `31b61da`, push `origin/main`
 
 **Следующий шаг:**
 - После `git pull` снова `./scripts/install_mac_launcher.sh`; двойной клик Start HR Agent.
