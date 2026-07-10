@@ -559,6 +559,82 @@ def send_task_completed_to_chat(vacancy, candidate):
     return True, f"Сообщение о задании отправлено, но карточка не обновлена: {card_msg}"
 
 
+def send_extra_material_to_chat(vacancy, candidate, title, url):
+    """
+    Reply на основную карточку + сохранение материала + правка primary-сообщения.
+    """
+    import uuid
+
+    from client_actions import get_primary_telegram_post
+    from telegram_chat_id import resolve_vacancy_chat_id
+    from telegram_notify import (
+        build_extra_material_notice_html,
+        validate_extra_material_fields,
+    )
+
+    missing = validate_extra_material_fields(title, url)
+    if missing:
+        return False, "Заполните: " + ", ".join(missing)
+
+    title = (title or "").strip()
+    url = (url or "").strip()
+
+    chat_id = resolve_vacancy_chat_id(vacancy)
+    if not chat_id:
+        return False, "У вакансии не указан Chat ID"
+
+    migrate_candidate(candidate)
+    post = get_primary_telegram_post(
+        candidate, chat_id, kind="primary", vacancy_id=vacancy.get("id")
+    )
+    if not post or not post.get("message_id"):
+        return False, "Нет карточки кандидата в чате — сначала отправьте кандидата"
+
+    material = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "url": url,
+        "sent_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    materials = candidate.setdefault("extra_materials", [])
+    if not isinstance(materials, list):
+        candidate["extra_materials"] = []
+        materials = candidate["extra_materials"]
+    materials.append(material)
+
+    data = load_vacancies()
+    for v in data.get("vacancies", []):
+        if v.get("id") != vacancy.get("id"):
+            continue
+        for c in v.get("candidates", []):
+            if c.get("id") == candidate.get("id"):
+                migrate_candidate(c)
+                c_mats = c.setdefault("extra_materials", [])
+                if not isinstance(c_mats, list):
+                    c["extra_materials"] = []
+                    c_mats = c["extra_materials"]
+                c_mats.append(dict(material))
+                break
+        break
+    save_vacancies(data)
+
+    text = build_extra_material_notice_html(candidate, title, url)
+    ok, msg, _ = send_telegram_html(
+        chat_id,
+        text,
+        reply_to_message_id=post["message_id"],
+    )
+    if not ok:
+        return False, msg or "Не удалось отправить сообщение в чат"
+
+    card_ok, card_msg = refresh_primary_candidate_card_in_chat(vacancy, candidate)
+    if card_ok:
+        return True, "Материал отправлен, основная карточка обновлена"
+    if card_msg == "Нет основной карточки кандидата в чате":
+        return True, "Материал отправлен (основная карточка не найдена для правки)"
+    return True, f"Материал отправлен, но карточка не обновлена: {card_msg}"
+
+
 def send_vacancy_digest_to_chat(vacancy):
     """Ручная отправка сводки по одной вакансии в её Telegram-чат."""
     from telegram_chat_stats import format_vacancy_digest_html

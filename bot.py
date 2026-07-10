@@ -71,19 +71,22 @@ if not TOKEN:
 
 
 def _create_bot(token: str) -> Bot:
-    """На VPS с битым IPv6: TELEGRAM_FORCE_IPV4=1 в .env."""
+    """На VPS с битым IPv6: TELEGRAM_FORCE_IPV4=1 в .env. Прокси: TELEGRAM_PROXY."""
     force_ipv4 = os.getenv("TELEGRAM_FORCE_IPV4", "").strip().lower() in ("1", "true", "yes")
-    if not force_ipv4:
+    proxy = (os.getenv("TELEGRAM_PROXY") or "").strip() or None
+    if not force_ipv4 and not proxy:
         return Bot(token=token)
     import socket
 
     from aiogram.client.session.aiohttp import AiohttpSession
 
+    session_kwargs = {}
+    if force_ipv4:
+        session_kwargs["connector_kwargs"] = {"family": socket.AF_INET}
+    if proxy:
+        session_kwargs["proxy"] = proxy
     try:
-        return Bot(
-            token=token,
-            session=AiohttpSession(connector_kwargs={"family": socket.AF_INET}),
-        )
+        return Bot(token=token, session=AiohttpSession(**session_kwargs))
     except TypeError:
         return Bot(token=token)
 
@@ -513,8 +516,32 @@ async def reminder_loop():
 
 
 # ---------- Запуск ----------
+def _acquire_bot_singleton_lock():
+    """Не даёт запустить два polling-процесса с одним токеном."""
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    lock_dir = os.path.join(_ROOT, "run")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, "bot.lock")
+    handle = open(lock_path, "w", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise SystemExit(
+            "Бот уже запущен (другой процесс bot.py). "
+            "Остановите: ./scripts/stop_local.sh"
+        )
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
 async def main():
     logging.basicConfig(level=logging.INFO)
+    _bot_lock = _acquire_bot_singleton_lock()
     from vacancy_store import prune_stale_telegram_posts, sync_vacancy_chat_ids_from_chats
 
     if sync_vacancy_chat_ids_from_chats():

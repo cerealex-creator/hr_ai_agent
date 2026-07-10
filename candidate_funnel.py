@@ -38,7 +38,6 @@ from resume_ai import (
 from eval_ui import render_ai_score_badge, render_ai_evaluation_block
 from telegram_notify import (
     validate_primary_fields,
-    validate_task_message_fields,
 )
 import telegram_client as telegram_client_module
 from questionnaire_grid import (
@@ -77,6 +76,7 @@ def new_candidate_template(vacancy_id):
         "portfolio_link": "",
         "video_link": "",
         "task_link": "",
+        "extra_materials": [],
         "transcript": "",
         "hr_comment": "",
         "interview_eval_notes": "",
@@ -221,8 +221,8 @@ def _send_primary_candidate_to_chat(vacancy, cand):
     return telegram_client_module.send_primary_candidate_to_chat(vacancy, cand)
 
 
-def _send_task_completed_to_chat(vacancy, cand):
-    return telegram_client_module.send_task_completed_to_chat(vacancy, cand)
+def _send_extra_material_to_chat(vacancy, cand, title, url):
+    return telegram_client_module.send_extra_material_to_chat(vacancy, cand, title, url)
 
 
 def _candidates_snapshot_key(vacancy_id):
@@ -477,16 +477,62 @@ def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
                     key=k("task_open"),
                     use_container_width=True,
                 )
-                if st.button("Отправить в чат задание", key=k("task_tg"), use_container_width=True):
-                    missing = validate_task_message_fields(cand)
-                    if missing:
-                        st.warning("Заполните поле: " + ", ".join(missing))
-                    else:
-                        ok, tg_msg = _send_task_completed_to_chat(vacancy, cand)
-                        if ok:
-                            st.success(tg_msg)
-                        else:
-                            st.error(tg_msg)
+
+            st.markdown("##### Доп. материал в чат")
+            st.caption(
+                "Запись онлайн-встречи, повторное задание и т.п. — reply на карточку кандидата "
+                "и обновление основной карточки в Telegram."
+            )
+            mat_form_rev_key = k("extra_mat_form_rev")
+            mat_form_rev = int(st.session_state.get(mat_form_rev_key, 0) or 0)
+            mat_title = st.text_input(
+                "Название материала",
+                value="",
+                key=k(f"extra_mat_title_r{mat_form_rev}"),
+                placeholder="Например: запись собеседования с Викторией",
+            )
+            mat_url = st.text_input(
+                "Ссылка на материал",
+                value="",
+                key=k(f"extra_mat_url_r{mat_form_rev}"),
+                placeholder="https://… или yadisk:…",
+            )
+            if st.button(
+                "📎 Отправить материал в чат",
+                key=k("extra_mat_send"),
+                use_container_width=True,
+            ):
+                ok, tg_msg = _send_extra_material_to_chat(
+                    vacancy, cand, mat_title, mat_url
+                )
+                if ok:
+                    _persist_vacancy_candidates(vacancy, deps)
+                    st.session_state[mat_form_rev_key] = mat_form_rev + 1
+                    _set_cand_funnel_flash(tg_msg, "success")
+                    _request_candidates_rerun()
+                else:
+                    st.error(tg_msg)
+
+            materials = cand.get("extra_materials") or []
+            if isinstance(materials, list) and materials:
+                st.caption("Уже отправлено:")
+                for idx, item in enumerate(materials):
+                    if not isinstance(item, dict):
+                        continue
+                    title = (item.get("title") or "Материал").strip()
+                    url = yandex_link_for_display((item.get("url") or "").strip())
+                    sent = (item.get("sent_at") or "")[:16].replace("T", " ")
+                    mcol1, mcol2 = st.columns([3, 1])
+                    with mcol1:
+                        st.markdown(f"• **{title}**" + (f" · {sent}" if sent else ""))
+                    with mcol2:
+                        st.link_button(
+                            "Открыть",
+                            url or "about:blank",
+                            disabled=not url,
+                            key=k(f"extra_mat_open_{idx}"),
+                            use_container_width=True,
+                        )
 
             if st.button("📨 Отправить в общий чат", key=k("tg_primary"), type="primary"):
                 missing = validate_primary_fields(cand)

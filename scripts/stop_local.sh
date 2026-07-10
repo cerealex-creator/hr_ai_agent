@@ -38,4 +38,13 @@ stop_pid_file() {
 stop_pid_file "Streamlit" "$STREAMLIT_PID_FILE"
 stop_pid_file "Бот" "$BOT_PID_FILE"
 
+# На случай ручного запуска python bot.py в терминале — убрать все копии в проекте
+for pid in $(pgrep -f "${ROOT}/.*bot\\.py" 2>/dev/null || true); do
+    if local_run_pid_alive "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        echo "Дополнительный bot.py остановлен (PID $pid)"
+    fi
+done
+rm -f "$RUN_DIR/bot.lock"
+
 local_run_notify_mac "HR Agent" "Приложение остановлено."

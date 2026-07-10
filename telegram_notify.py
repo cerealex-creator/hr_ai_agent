@@ -154,6 +154,53 @@ def validate_task_message_fields(cand):
     return missing
 
 
+def validate_extra_material_fields(title, url):
+    missing = []
+    if not (title or "").strip():
+        missing.append("Название материала")
+    if not (url or "").strip():
+        missing.append("Ссылка на материал")
+    return missing
+
+
+def _extra_materials_list(cand):
+    items = cand.get("extra_materials") or []
+    if not isinstance(items, list):
+        return []
+    return [m for m in items if isinstance(m, dict)]
+
+
+def format_extra_materials_block(cand):
+    """Блок ссылок для основной карточки в Telegram."""
+    materials = _extra_materials_list(cand)
+    if not materials:
+        return ""
+    lines = ["", "📎 <b>Доп. материалы:</b>"]
+    for item in materials:
+        title = (item.get("title") or "Материал").strip()
+        url = (item.get("url") or "").strip()
+        if not url:
+            continue
+        lines.append(f"• {_link(url, title)}")
+    if len(lines) <= 2:
+        return ""
+    return "\n".join(lines)
+
+
+def build_extra_material_notice_html(cand, title, url):
+    """Reply-сообщение: добавлен материал по кандидату."""
+    name = (cand.get("name") or "кандидату").strip()
+    resume = (cand.get("resume_link") or "").strip()
+    if resume:
+        name_html = _link(resume, _esc(name))
+    else:
+        name_html = f"<b>{_esc(name)}</b>"
+    return (
+        f"📎 <b>Добавлены материалы по кандидату</b> {name_html}:\n"
+        f"{_link(url, (title or 'Материал').strip())}"
+    )
+
+
 def build_primary_candidate_message(cand, vacancy_title, *, show_portfolio=False):
     name = _esc(cand.get("name", ""))
     vac = _esc(vacancy_title)
@@ -175,6 +222,9 @@ def build_primary_candidate_message(cand, vacancy_title, *, show_portfolio=False
     task = (cand.get("task_link") or "").strip()
     if task:
         lines.extend(["", f"✅ {_link(task, 'Выполненное задание')}"])
+    materials_block = format_extra_materials_block(cand)
+    if materials_block:
+        lines.append(materials_block)
     hr_comment = (cand.get("hr_comment") or "").strip()
     if hr_comment:
         lines.extend(["", "<b>Комментарий HR:</b>", _esc(hr_comment)])

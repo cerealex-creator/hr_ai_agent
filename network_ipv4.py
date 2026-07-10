@@ -1,5 +1,6 @@
 """Исходящие HTTP-запросы только через IPv4 (на Timeweb IPv6 до Telegram часто недоступен)."""
 
+import os
 import socket
 
 import requests
@@ -33,6 +34,9 @@ def get_requests_session() -> requests.Session:
     force_requests_ipv4()
     if _session is None:
         _session = requests.Session()
+        proxy = (os.getenv("TELEGRAM_PROXY") or "").strip()
+        if proxy:
+            _session.proxies.update({"http": proxy, "https": proxy})
     return _session
 
 

@@ -346,6 +346,8 @@ def migrate_candidate(cand):
         cand["tg_callback_id"] = cand["id"].replace("-", "")[:8]
     if "portfolio_link" not in cand:
         cand["portfolio_link"] = ""
+    if "extra_materials" not in cand or not isinstance(cand.get("extra_materials"), list):
+        cand["extra_materials"] = []
     status = cand.get("client_status", "wait")
     if status == "new" or status not in STATUS_CONFIG:
         cand["client_status"] = "wait"

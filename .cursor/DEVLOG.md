@@ -33,6 +33,47 @@
 
 ---
 
+## 2026-07-10 — Доп. материалы кандидата в Telegram
+
+**Тип:** `feature`
+
+**Сделано:**
+- В карточке: поля «Название» + «Ссылка» и кнопка «Отправить материал в чат» (замена «Отправить в чат задание»).
+- Reply на primary-карточку: «Добавлены материалы по кандидату ФИО: [ссылка]».
+- Primary-сообщение в чате обновляется блоком «Доп. материалы»; список хранится в `extra_materials`.
+- Сброс полей после отправки через revision ключа (без правки session_state у живого виджета).
+- Клиентскую веб-зону не трогали.
+
+**Файлы:** `candidate_funnel.py`, `telegram_client.py`, `telegram_notify.py`, `models.py`, `vacancy_store.py`
+
+**Данные / конфиг:** поле кандидата `extra_materials: [{id, title, url, sent_at}]`
+
+**Git:** этот коммит, push `origin/main`
+
+**Следующий шаг:**
+- Проверить отправку материала при доступном Telegram API.
+
+---
+
+## 2026-07-10 — Бот: один экземпляр, proxy, диагностика
+
+**Тип:** `fix`
+
+**Сделано:**
+- `bot.lock` — нельзя запустить два `bot.py` с одним токеном.
+- `TELEGRAM_PROXY` в `.env` / `bot.py` / `network_ipv4.py`.
+- `scripts/status_local.sh` — статус процессов и доступность `api.telegram.org`.
+- `stop_local.sh` гасит лишние `bot.py`.
+
+**Файлы:** `bot.py`, `network_ipv4.py`, `.env.example`, `scripts/stop_local.sh`, `scripts/status_local.sh`
+
+**Git:** этот коммит, push `origin/main`
+
+**Следующий шаг:**
+- При недоступности API — VPN или бот только на VPS.
+
+---
+
 ## 2026-07-06 — Локальный запуск с рабочего стола (macOS)
 
 **Тип:** `feature`
