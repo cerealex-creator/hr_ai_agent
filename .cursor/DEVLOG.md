@@ -48,7 +48,7 @@
 
 **Данные / конфиг:** поле кандидата `extra_materials: [{id, title, url, sent_at}]`
 
-**Git:** этот коммит, push `origin/main`
+**Git:** commit `5433920`, push `origin/main`
 
 **Следующий шаг:**
 - Проверить отправку материала при доступном Telegram API.
@@ -67,7 +67,7 @@
 
 **Файлы:** `bot.py`, `network_ipv4.py`, `.env.example`, `scripts/stop_local.sh`, `scripts/status_local.sh`
 
-**Git:** этот коммит, push `origin/main`
+**Git:** commit `5433920`, push `origin/main`
 
 **Следующий шаг:**
 - При недоступности API — VPN или бот только на VPS.
