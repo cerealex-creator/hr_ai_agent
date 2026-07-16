@@ -49,7 +49,7 @@
 
 **Данные / конфиг:** `server.maxUploadSize = 600`; пакет в `data/history/` (gitignore)
 
-**Git:** этот коммит, push `origin/main`
+**Git:** commit `454277f`, push `origin/main`
 
 **Риски/регрессии:** большие видео — долгая расшифровка; нужен перезапуск Streamlit после обновления.
 
