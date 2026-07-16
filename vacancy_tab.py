@@ -287,14 +287,14 @@ def render_archive_vacancy_workspace(vacancy, deps):
 
     sub_cands, sub_docs = st.tabs([
         "👥 Кандидаты",
-        "📄 Документы (только просмотр)",
+        "📄 Документы",
     ])
 
     with sub_cands:
         render_candidates_zone(vacancy, deps, archive_mode=True)
 
     with sub_docs:
-        render_existing_documents_zone(vacancy, deps)
+        render_existing_documents_zone(vacancy, deps, archive_mode=True)
 
 
 def render_archived_vacancies(deps):

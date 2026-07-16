@@ -27,6 +27,31 @@ VACANCY_WIZARD_SYSTEM = """Ты — HR-директор. На основе от�
 VACANCY_CLARIFY_SYSTEM = """Ты — HR-консультант. По черновику анкеты вакансии задай 3–5 уточняющих вопросов HR.
 Верни JSON: {"questions": ["вопрос 1", "вопрос 2", ...]}"""
 
+MULTI_SOURCE_VACANCY_SYSTEM = """Ты — HR-директор. Создай согласованный пакет документов по вакансии из нескольких источников.
+
+Приоритет источников:
+1. Явные указания HR — высший приоритет.
+2. Письменный профиль заказчика — основной источник истины.
+3. Записи обсуждений, дополнительные документы и заметки — дополняют и уточняют профиль, но не заменяют его молча.
+
+Правила:
+- Не выдумывай факты, которых нет в источниках.
+- Если дополнительный материал противоречит письменному профилю и указания HR не разрешают конфликт, сохрани данные письменного профиля.
+- Все найденные противоречия перечисли отдельно, чтобы HR мог проверить их перед сохранением.
+- Опросник должен проверять требования итогового профиля.
+- Текст вакансии и ключевые слова должны соответствовать итоговому профилю.
+- Верни ТОЛЬКО валидный JSON без markdown.
+
+Формат:
+{
+  "должность": "...",
+  "профиль": {...},
+  "текст_вакансии": "...",
+  "опросник": [{"вопрос": "...", "уточняющие_вопросы": [], "проверяет_требование": "...", "категория": "...", "пример_ответа": "..."}],
+  "ключевые_слова": ["..."],
+  "противоречия_источников": ["..."]
+}"""
+
 
 def _vac_key(vacancy_id, suffix):
     return f"prep_{vacancy_id}_{suffix}"
@@ -203,6 +228,46 @@ def _wizard_max_tokens(deps):
     return max(int(deps["config"]["model"].get("max_tokens", 4000)), 12000)
 
 
+def vacancy_documents_as_generated(vacancy):
+    """Текущий пакет вакансии в формате генератора/истории."""
+    docs = vacancy.get("documents") or {}
+    profile = parse_profile_input(docs.get("profile", ""))
+    questions_raw = docs.get("questions", "")
+    try:
+        questions = json.loads(questions_raw) if questions_raw else []
+    except (json.JSONDecodeError, TypeError):
+        questions = questions_raw
+    keywords_raw = docs.get("keywords", "")
+    if isinstance(keywords_raw, list):
+        keywords = keywords_raw
+    else:
+        keywords = [
+            item.strip()
+            for item in str(keywords_raw or "").replace("\n", ",").split(",")
+            if item.strip()
+        ]
+    return {
+        "должность": vacancy.get("title", ""),
+        "профиль": profile,
+        "текст_вакансии": docs.get("vacancy_text", ""),
+        "опросник": questions,
+        "ключевые_слова": keywords,
+    }
+
+
+def _save_current_documents_to_history(vacancy, deps):
+    """Снимок перед заменой, если в вакансии уже есть документы."""
+    current = vacancy_documents_as_generated(vacancy)
+    if not describe_history_package(current):
+        return False
+    deps["save_generation_to_history"](
+        current,
+        None,
+        vacancy_title=vacancy.get("title", ""),
+    )
+    return True
+
+
 def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fields=None):
     flags = doc_flags or {
         "profile": True,
@@ -241,12 +306,18 @@ def apply_generated_to_vacancy(vacancy, generated, deps, doc_flags=None, only_fi
     if not saved_labels:
         return False, []
 
-    saved = deps["update_vacancy_docs"](vacancy["title"], {
+    payload = {
         "profile": updates.get("profile", ""),
         "vacancy_text": updates.get("vacancy_text", ""),
         "questions": updates.get("questions", ""),
         "keywords": updates.get("keywords", ""),
-    })
+    }
+    if deps.get("update_vacancy_docs_by_id"):
+        saved = deps["update_vacancy_docs_by_id"](vacancy["id"], payload)
+    else:
+        saved = deps["update_vacancy_docs"](vacancy["title"], payload)
+    if saved:
+        vacancy.setdefault("documents", {}).update(payload)
     return saved, saved_labels
 
 
@@ -327,6 +398,89 @@ def generate_package_from_wizard(answers, deps, doc_flags, *, vacancy_title=None
     return _prepare_generated_for_save(result)
 
 
+def generate_package_from_multiple_sources(
+    vacancy_title,
+    profile_text,
+    supplemental_blocks,
+    hr_instructions,
+    deps,
+    doc_flags,
+):
+    """Единый пакет: официальный профиль + уточняющие материалы."""
+    from ai_helpers import create_chat_completion, trim_text
+
+    requested = []
+    if doc_flags.get("profile"):
+        requested.append("профиль")
+    if doc_flags.get("questionnaire"):
+        requested.append("опросник")
+    if doc_flags.get("vacancy_text"):
+        requested.append("текст вакансии")
+    if doc_flags.get("keywords"):
+        requested.append("ключевые слова")
+    if not requested:
+        raise ValueError("Не выбран ни один документ для генерации.")
+
+    profile_block = trim_text(profile_text, 14000)
+    supplements = []
+    remaining = 18000
+    for label, text in supplemental_blocks:
+        clean = (text or "").strip()
+        if not clean or remaining <= 0:
+            continue
+        chunk = trim_text(clean, min(remaining, 8000))
+        supplements.append(f"### {label}\n{chunk}")
+        remaining -= len(chunk)
+
+    user_parts = [
+        f"Должность: {vacancy_title}",
+        f"Создай документы: {', '.join(requested)}.",
+        "ОСНОВНОЙ ПИСЬМЕННЫЙ ПРОФИЛЬ ЗАКАЗЧИКА:\n" + profile_block,
+    ]
+    if supplements:
+        user_parts.append(
+            "ДОПОЛНИТЕЛЬНЫЕ МАТЕРИАЛЫ "
+            "(только дополняют/уточняют основной профиль):\n\n"
+            + "\n\n".join(supplements)
+        )
+    if (hr_instructions or "").strip():
+        user_parts.append(
+            "УКАЗАНИЯ HR (высший приоритет):\n"
+            + trim_text(hr_instructions, 4000)
+        )
+
+    system = (
+        MULTI_SOURCE_VACANCY_SYSTEM
+        + "\n\n"
+        + deps.get("QUESTIONNAIRE_GENERATION_RULES", "")
+    )
+    response = create_chat_completion(
+        deps["client"],
+        deps["config"],
+        "questionnaire",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=0.2,
+        max_tokens=_wizard_max_tokens(deps),
+        response_format={"type": "json_object"},
+    )
+    result = deps["parse_ai_json_response"](
+        response.choices[0].message.content
+    )
+    result = _normalize_generated_doc_keys(result)
+    result = deps["normalize_docs"](result)
+    result["должность"] = vacancy_title
+    conflicts = result.get("противоречия_источников", [])
+    if isinstance(conflicts, str):
+        conflicts = [conflicts] if conflicts.strip() else []
+    result["противоречия_источников"] = [
+        str(item).strip() for item in conflicts if str(item).strip()
+    ]
+    return _prepare_generated_for_save(result)
+
+
 def get_clarify_questions(answers, deps):
     response = deps["client"].chat.completions.create(
         model=deps["config"]["model"]["name"],
@@ -351,7 +505,7 @@ def refine_documents_with_ai(current_generated, corrections, deps):
             {"role": "user", "content": refine_msg},
         ],
         temperature=deps["config"]["model"]["temperature"],
-        max_tokens=deps["config"]["model"]["max_tokens"],
+        max_tokens=_wizard_max_tokens(deps),
     )
     result = deps["parse_ai_json_response"](response.choices[0].message.content)
     return deps["normalize_docs"](result)
@@ -997,9 +1151,13 @@ def render_vacancy_candidate_settings(vacancy, deps):
             st.rerun()
 
 
-def render_existing_documents_zone(vacancy, deps):
-    """Подзона «Документы по вакансии» — только просмотр и редактирование."""
+def render_existing_documents_zone(vacancy, deps, *, archive_mode=False):
+    """Документы существующей вакансии: создание, обновление и ручной редактор."""
+    _render_doc_gen_flash()
     render_vacancy_candidate_settings(vacancy, deps)
+    render_existing_document_builder(vacancy, deps, archive_mode=archive_mode)
+    st.divider()
+    st.markdown("##### Текущие документы")
     render_documents_editor(vacancy, deps, mode="vacancy")
 
     get_history_index = deps.get("get_history_index")
@@ -1171,8 +1329,8 @@ def render_transcript_source(vacancy, deps, key_prefix):
                     st.error("Не удалось получить текст.")
     elif source == "Готовый файл":
         f = st.file_uploader(
-            "Файл с расшифровкой",
-            type=["txt", "docx", "pdf"],
+            "Файл с материалами по вакансии",
+            type=["txt", "docx", "pdf", "xlsx"],
             key=f"tr_file_{key_prefix}_{vacancy['id']}",
         )
         if f:
@@ -1198,7 +1356,10 @@ def _import_form_version(key_prefix):
 def _read_import_source(uploaded_file, url, deps, label):
     if uploaded_file:
         try:
-            text = deps["extract_text"](uploaded_file)
+            if (uploaded_file.name or "").lower().endswith(".json"):
+                text = uploaded_file.getvalue().decode("utf-8-sig")
+            else:
+                text = deps["extract_text"](uploaded_file)
         except Exception as e:
             return None, f"{label}: ошибка чтения файла — {e}"
         text = (text or "").strip()
@@ -1364,7 +1525,7 @@ def render_transcript_mode(vacancy, deps, doc_flags, key_prefix):
                     st.error(f"Ошибка генерации: {e}")
 
 
-def render_wizard_mode(vacancy, deps, doc_flags, key_prefix):
+def render_wizard_mode(vacancy, deps, doc_flags, key_prefix, *, preview_key=None):
     st.markdown("##### Анкета HR")
     clarify_key = _vac_key(vacancy["id"], f"clarify_q_{key_prefix}")
     if clarify_key not in st.session_state:
@@ -1409,6 +1570,21 @@ def render_wizard_mode(vacancy, deps, doc_flags, key_prefix):
                     doc_flags,
                     vacancy_title=vacancy.get("title"),
                 )
+                if preview_key:
+                    _stage_documents_preview(
+                        preview_key,
+                        gen,
+                        doc_flags,
+                        source_text=None,
+                    )
+                    status.update(
+                        label="Черновик готов — проверьте его ниже",
+                        state="complete",
+                        expanded=False,
+                    )
+                    st.rerun()
+                    return
+
                 status.write("Сохраняем результат в вакансию…")
                 saved, saved_labels = apply_generated_to_vacancy(
                     vacancy, gen, deps, doc_flags
@@ -1432,6 +1608,616 @@ def render_wizard_mode(vacancy, deps, doc_flags, key_prefix):
             except Exception as e:
                 status.update(label="Ошибка генерации", state="error", expanded=True)
                 st.error(f"Ошибка генерации: {e}")
+
+
+def get_update_doc_flags_from_ui(vacancy, key_prefix):
+    """Выбор полей для существующей вакансии — ни одно не перезаписывается молча."""
+    docs = vacancy.get("documents") or {}
+    st.markdown("**Какие документы подготовить или обновить**")
+    c1, c2 = st.columns(2)
+    with c1:
+        profile = st.checkbox(
+            "Профиль должности",
+            value=not _profile_has_content(docs.get("profile")),
+            key=f"{key_prefix}_upd_profile",
+        )
+        questionnaire = st.checkbox(
+            "Опросник для собеседования",
+            value=not _questionnaire_has_content(docs.get("questions")),
+            key=f"{key_prefix}_upd_questionnaire",
+        )
+    with c2:
+        vacancy_text = st.checkbox(
+            "Текст вакансии",
+            value=not bool((docs.get("vacancy_text") or "").strip()),
+            key=f"{key_prefix}_upd_vacancy_text",
+        )
+        keywords = st.checkbox(
+            "Ключевые слова",
+            value=not bool((docs.get("keywords") or "").strip()),
+            key=f"{key_prefix}_upd_keywords",
+        )
+    return {
+        "profile": profile,
+        "questionnaire": questionnaire,
+        "vacancy_text": vacancy_text,
+        "keywords": keywords,
+    }
+
+
+def _stage_documents_preview(
+    preview_key,
+    generated,
+    flags,
+    *,
+    source_text=None,
+    source_names=None,
+):
+    revision_key = f"{preview_key}_revision"
+    revision = int(st.session_state.get(revision_key, 0) or 0) + 1
+    st.session_state[revision_key] = revision
+    st.session_state[preview_key] = {
+        "generated": _prepare_generated_for_save(generated),
+        "flags": dict(flags),
+        "source_text": source_text,
+        "source_names": list(source_names or []),
+        "revision": revision,
+    }
+
+
+def _render_documents_preview(vacancy, deps, preview_key, key_prefix):
+    preview = st.session_state.get(preview_key)
+    if not isinstance(preview, dict):
+        return
+    generated = preview.get("generated") or {}
+    initial_flags = preview.get("flags") or {}
+    revision = int(preview.get("revision", 0) or 0)
+
+    st.divider()
+    st.markdown("##### Предпросмотр перед сохранением")
+    st.warning(
+        "Проверьте результат. В базу попадут только отмеченные документы; "
+        "остальные поля вакансии останутся без изменений."
+    )
+    source_names = preview.get("source_names") or []
+    if source_names:
+        st.caption("Использованы источники: " + ", ".join(source_names))
+    conflicts = generated.get("противоречия_источников") or []
+    if isinstance(conflicts, str):
+        conflicts = [conflicts]
+    if conflicts:
+        st.error("ИИ обнаружил противоречия между источниками:")
+        for conflict in conflicts:
+            st.markdown(f"- {conflict}")
+    elif "противоречия_источников" in generated:
+        st.success("Явных противоречий между источниками не обнаружено.")
+
+    final_flags = {}
+    sections = (
+        ("profile", "Профиль должности", "профиль"),
+        ("questionnaire", "Опросник", "опросник"),
+        ("vacancy_text", "Текст вакансии", "текст_вакансии"),
+        ("keywords", "Ключевые слова", "ключевые_слова"),
+    )
+    for flag_key, label, generated_key in sections:
+        value = generated.get(generated_key)
+        has_content = (
+            _profile_has_content(value)
+            if flag_key == "profile"
+            else _questionnaire_has_content(value)
+            if flag_key == "questionnaire"
+            else bool(value)
+        )
+        final_flags[flag_key] = st.checkbox(
+            f"Применить: {label}",
+            value=bool(initial_flags.get(flag_key) and has_content),
+            disabled=not has_content,
+            key=f"{key_prefix}_preview_r{revision}_apply_{flag_key}",
+        )
+        if has_content:
+            with st.expander(f"Посмотреть: {label}", expanded=False):
+                if isinstance(value, (dict, list)):
+                    st.code(json.dumps(value, ensure_ascii=False, indent=2), language="json")
+                else:
+                    st.text(str(value))
+
+    with st.expander("💾 Сохранить пакет отдельно, не применяя к вакансии", expanded=False):
+        st.caption(
+            "Пакет появится в «Прошлых генерациях». Затем создайте нужную вакансию "
+            "и примените к ней этот пакет из истории."
+        )
+        package_title = st.text_input(
+            "Название должности для сохранённого пакета",
+            value=generated.get("должность") or vacancy.get("title", ""),
+            key=f"{key_prefix}_preview_r{revision}_package_title",
+        )
+        if st.button(
+            "Сохранить пакет в историю",
+            key=f"{key_prefix}_preview_r{revision}_save_history",
+            use_container_width=True,
+        ):
+            if not package_title.strip():
+                st.warning("Введите название должности.")
+            elif not describe_history_package(generated):
+                st.error("В черновике нет документов для сохранения.")
+            else:
+                history_package = dict(generated)
+                history_package["должность"] = package_title.strip()
+                record = deps["save_generation_to_history"](
+                    history_package,
+                    preview.get("source_text"),
+                    vacancy_title=package_title.strip(),
+                )
+                st.success(
+                    f"Пакет «{package_title.strip()}» сохранён отдельно"
+                    + (
+                        f" ({record.get('datetime')})."
+                        if isinstance(record, dict)
+                        else "."
+                    )
+                )
+
+    apply_col, cancel_col = st.columns(2)
+    with apply_col:
+        if st.button(
+            "💾 Применить выбранные документы",
+            key=f"{key_prefix}_preview_r{revision}_save",
+            type="primary",
+            use_container_width=True,
+        ):
+            if not any(final_flags.values()):
+                st.warning("Отметьте хотя бы один документ.")
+            else:
+                try:
+                    _save_current_documents_to_history(vacancy, deps)
+                    saved, labels = apply_generated_to_vacancy(
+                        vacancy, generated, deps, final_flags
+                    )
+                    if not saved or not labels:
+                        st.error("Не удалось сохранить выбранные документы.")
+                    else:
+                        deps["save_generation_to_history"](
+                            generated,
+                            preview.get("source_text"),
+                            vacancy_title=vacancy.get("title", ""),
+                        )
+                        invalidate_doc_session_state(vacancy["id"])
+                        st.session_state.pop(preview_key, None)
+                        _set_doc_gen_flash(
+                            f"✅ Документы вакансии «{vacancy.get('title', '')}» обновлены: "
+                            f"{', '.join(labels)}."
+                        )
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка сохранения документов: {e}")
+    with cancel_col:
+        if st.button(
+            "Отменить черновик",
+            key=f"{key_prefix}_preview_r{revision}_cancel",
+            use_container_width=True,
+        ):
+            st.session_state.pop(preview_key, None)
+            st.rerun()
+
+
+def _render_existing_materials_mode(vacancy, deps, flags, key_prefix, preview_key):
+    st.markdown("##### Сформировать из материалов")
+    transcript = render_transcript_source(vacancy, deps, key_prefix)
+    corrections = st.text_area(
+        "Дополнительные указания для ИИ",
+        placeholder="Например: сохранить текущие условия, добавить требования из записи, сделать опросник короче.",
+        height=90,
+        key=f"{key_prefix}_materials_corrections",
+    )
+    if st.button("✨ Подготовить черновик", key=f"{key_prefix}_materials_generate"):
+        if not transcript.strip():
+            st.warning("Загрузите материал, расшифруйте запись или вставьте текст.")
+        elif not any(flags.values()):
+            st.warning("Отметьте хотя бы один документ.")
+        else:
+            with st.spinner("Формируем пакет документов…"):
+                try:
+                    generated = deps["generate_from_transcript"](
+                        transcript,
+                        vacancy["title"],
+                        doc_flags=flags,
+                    )
+                    generated = _prepare_generated_for_save(generated)
+                    if corrections.strip():
+                        generated = refine_documents_with_ai(
+                            generated, corrections, deps
+                        )
+                    _stage_documents_preview(
+                        preview_key,
+                        generated,
+                        flags,
+                        source_text=transcript,
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка генерации: {e}")
+
+
+def _render_multi_source_mode(vacancy, deps, flags, key_prefix, preview_key):
+    st.markdown("##### Полный комплект из профиля и дополнительных материалов")
+    st.caption(
+        "Письменный профиль считается основным источником. Записи, другие файлы "
+        "и заметки только дополняют и уточняют его."
+    )
+
+    current_profile = vacancy_documents_as_generated(vacancy).get("профиль") or {}
+    has_current_profile = _profile_has_content(current_profile)
+    use_current_profile = False
+    if has_current_profile:
+        use_current_profile = st.checkbox(
+            "Использовать профиль, уже сохранённый в вакансии",
+            value=True,
+            key=f"{key_prefix}_multi_use_current",
+        )
+
+    profile_file = st.file_uploader(
+        "Основной профиль заказчика",
+        type=["txt", "docx", "pdf", "xlsx"],
+        key=f"{key_prefix}_multi_profile",
+        help="Если файл загружен, он имеет приоритет над профилем из карточки вакансии.",
+    )
+    audio_files = st.file_uploader(
+        "Записи обсуждения (можно несколько)",
+        type=["mp3", "mp4", "wav", "webm", "mkv", "ogg", "m4a", "mov"],
+        accept_multiple_files=True,
+        key=f"{key_prefix}_multi_audio",
+    )
+    extra_files = st.file_uploader(
+        "Дополнительные документы (можно несколько)",
+        type=["txt", "docx", "pdf", "xlsx"],
+        accept_multiple_files=True,
+        key=f"{key_prefix}_multi_docs",
+    )
+    notes = st.text_area(
+        "Дополнительные заметки HR",
+        height=100,
+        key=f"{key_prefix}_multi_notes",
+        placeholder="Факты, которых нет в профиле или записи.",
+    )
+    instructions = st.text_area(
+        "Корректирующие указания",
+        height=100,
+        key=f"{key_prefix}_multi_instructions",
+        placeholder=(
+            "Например: профиль считать основным; из записи взять уточнения по условиям; "
+            "профиль не переписывать, создать только опросник, вакансию и ключевые слова."
+        ),
+    )
+
+    if st.button(
+        "✨ Расшифровать и подготовить весь комплект",
+        key=f"{key_prefix}_multi_generate",
+        type="primary",
+    ):
+        if not any(flags.values()):
+            st.warning("Отметьте хотя бы один документ.")
+            return
+
+        profile_text = ""
+        source_names = []
+        errors = []
+
+        if profile_file:
+            profile_text, err = _read_import_source(
+                profile_file, "", deps, "Основной профиль"
+            )
+            if err:
+                errors.append(err)
+            elif profile_text:
+                source_names.append(f"профиль: {profile_file.name}")
+        elif use_current_profile and has_current_profile:
+            profile_text = (
+                json.dumps(current_profile, ensure_ascii=False, indent=2)
+                if isinstance(current_profile, dict)
+                else str(current_profile)
+            )
+            source_names.append("профиль из вакансии")
+
+        if not (profile_text or "").strip():
+            st.warning(
+                "Загрузите основной профиль заказчика или выберите профиль из вакансии."
+            )
+            return
+
+        supplemental_blocks = []
+        status = st.status(
+            "Обрабатываем дополнительные материалы…", expanded=True
+        )
+        try:
+            for audio in audio_files or []:
+                status.write(f"Расшифровываем: {audio.name}")
+                text, err = transcribe_uploaded_audio(
+                    audio, "Яндекс (SpeechKit)", deps
+                )
+                if err:
+                    errors.append(f"{audio.name}: {err}")
+                elif (text or "").strip():
+                    supplemental_blocks.append(
+                        (f"Расшифровка записи «{audio.name}»", text)
+                    )
+                    source_names.append(f"запись: {audio.name}")
+
+            for file_obj in extra_files or []:
+                status.write(f"Читаем документ: {file_obj.name}")
+                text, err = _read_import_source(
+                    file_obj, "", deps, file_obj.name
+                )
+                if err:
+                    errors.append(err)
+                elif text:
+                    supplemental_blocks.append(
+                        (f"Дополнительный документ «{file_obj.name}»", text)
+                    )
+                    source_names.append(f"документ: {file_obj.name}")
+
+            if (notes or "").strip():
+                supplemental_blocks.append(("Заметки HR", notes))
+                source_names.append("заметки HR")
+
+            if errors:
+                status.update(
+                    label="Не все источники удалось обработать",
+                    state="error",
+                    expanded=True,
+                )
+                for error in errors:
+                    st.error(error)
+                return
+
+            status.update(
+                label="Генерируем согласованный пакет…",
+                state="running",
+                expanded=True,
+            )
+            generated = generate_package_from_multiple_sources(
+                vacancy.get("title", ""),
+                profile_text,
+                supplemental_blocks,
+                instructions,
+                deps,
+                flags,
+            )
+            combined_source = "\n\n".join(
+                [
+                    "ОСНОВНОЙ ПРОФИЛЬ:\n" + profile_text,
+                    *[
+                        f"{label}:\n{text}"
+                        for label, text in supplemental_blocks
+                    ],
+                ]
+            )
+            _stage_documents_preview(
+                preview_key,
+                generated,
+                flags,
+                source_text=combined_source,
+                source_names=source_names,
+            )
+            status.update(
+                label="Черновик готов — проверьте документы ниже",
+                state="complete",
+                expanded=False,
+            )
+            st.rerun()
+        except Exception as e:
+            status.update(
+                label="Ошибка подготовки комплекта",
+                state="error",
+                expanded=True,
+            )
+            st.error(f"Ошибка подготовки комплекта: {e}")
+
+
+def _render_existing_import_mode(vacancy, deps, flags, key_prefix, preview_key):
+    st.markdown("##### Загрузить готовые документы")
+    st.caption("TXT, DOCX, PDF, XLSX; для опросника также JSON.")
+    col1, col2 = st.columns(2)
+    with col1:
+        profile_file = st.file_uploader(
+            "Профиль", type=["txt", "docx", "pdf", "xlsx"], key=f"{key_prefix}_ready_profile"
+        )
+        questions_file = st.file_uploader(
+            "Опросник",
+            type=["txt", "docx", "pdf", "xlsx", "json"],
+            key=f"{key_prefix}_ready_questions",
+        )
+    with col2:
+        vacancy_file = st.file_uploader(
+            "Текст вакансии",
+            type=["txt", "docx", "pdf", "xlsx"],
+            key=f"{key_prefix}_ready_vacancy",
+        )
+        keywords_file = st.file_uploader(
+            "Ключевые слова",
+            type=["txt", "docx", "pdf", "xlsx"],
+            key=f"{key_prefix}_ready_keywords",
+        )
+    corrections = st.text_area(
+        "Корректирующие указания после импорта (необязательно)",
+        height=90,
+        key=f"{key_prefix}_ready_corrections",
+    )
+    if st.button("📥 Подготовить импорт", key=f"{key_prefix}_ready_prepare"):
+        files = {
+            "profile": profile_file,
+            "questions": questions_file,
+            "vacancy_text": vacancy_file,
+            "keywords": keywords_file,
+        }
+        imported = {}
+        errors = []
+        for field, file_obj in files.items():
+            if not file_obj:
+                continue
+            text, err = _read_import_source(file_obj, "", deps, field)
+            if err:
+                errors.append(err)
+            elif text:
+                imported[field] = text
+        if errors:
+            for err in errors:
+                st.error(err)
+        elif not imported:
+            st.warning("Загрузите хотя бы один документ.")
+        else:
+            generated = vacancy_documents_as_generated(vacancy)
+            if "profile" in imported:
+                try:
+                    generated["профиль"] = json.loads(imported["profile"])
+                except json.JSONDecodeError:
+                    generated["профиль"] = {"raw": imported["profile"]}
+            if "questions" in imported:
+                try:
+                    generated["опросник"] = json.loads(imported["questions"])
+                except json.JSONDecodeError:
+                    generated["опросник"] = [
+                        {"вопрос": imported["questions"], "пример_ответа": ""}
+                    ]
+            if "vacancy_text" in imported:
+                generated["текст_вакансии"] = imported["vacancy_text"]
+            if "keywords" in imported:
+                generated["ключевые_слова"] = [
+                    item.strip()
+                    for item in imported["keywords"].replace("\n", ",").split(",")
+                    if item.strip()
+                ]
+            try:
+                generated = deps["normalize_docs"](generated)
+                if corrections.strip():
+                    with st.spinner("Применяем корректировки ИИ…"):
+                        generated = refine_documents_with_ai(
+                            generated, corrections, deps
+                        )
+                imported_flags = {
+                    "profile": "profile" in imported and flags.get("profile"),
+                    "questionnaire": "questions" in imported
+                    and flags.get("questionnaire"),
+                    "vacancy_text": "vacancy_text" in imported
+                    and flags.get("vacancy_text"),
+                    "keywords": "keywords" in imported and flags.get("keywords"),
+                }
+                _stage_documents_preview(preview_key, generated, imported_flags)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка подготовки импорта: {e}")
+
+
+def _render_existing_refine_mode(vacancy, deps, flags, key_prefix, preview_key):
+    st.markdown("##### Скорректировать существующие документы")
+    st.caption(
+        "Можно дать только текстовые указания или дополнить их новым файлом/записью."
+    )
+    source = render_transcript_source(vacancy, deps, f"{key_prefix}_refine")
+    corrections = st.text_area(
+        "Что изменить",
+        placeholder="Например: добавить требования по 1С ERP, убрать возраст, обновить условия и вопросы.",
+        height=120,
+        key=f"{key_prefix}_refine_corrections",
+    )
+    if st.button("🔄 Подготовить обновление", key=f"{key_prefix}_refine_prepare"):
+        if not corrections.strip() and not source.strip():
+            st.warning("Добавьте корректирующие указания или новый материал.")
+        elif not any(flags.values()):
+            st.warning("Отметьте хотя бы один документ.")
+        else:
+            instruction = corrections.strip()
+            if source.strip():
+                instruction += (
+                    "\n\nДОПОЛНИТЕЛЬНЫЙ МАТЕРИАЛ ПО ВАКАНСИИ "
+                    "(используй только относящиеся к роли факты):\n"
+                    + source.strip()
+                )
+            with st.spinner("Готовим обновлённый пакет…"):
+                try:
+                    generated = refine_documents_with_ai(
+                        vacancy_documents_as_generated(vacancy),
+                        instruction,
+                        deps,
+                    )
+                    _stage_documents_preview(
+                        preview_key,
+                        generated,
+                        flags,
+                        source_text=source or None,
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка корректировки: {e}")
+
+
+def render_existing_document_builder(vacancy, deps, *, archive_mode=False):
+    """Полный мастер документов внутри уже созданной вакансии."""
+    key_prefix = f"existing_docs_{vacancy['id']}"
+    preview_key = _vac_key(vacancy["id"], "existing_builder_preview")
+    docs = vacancy.get("documents") or {}
+    is_empty = not any(
+        (
+            _profile_has_content(docs.get("profile")),
+            _questionnaire_has_content(docs.get("questions")),
+            bool((docs.get("vacancy_text") or "").strip()),
+            bool((docs.get("keywords") or "").strip()),
+        )
+    )
+
+    if archive_mode:
+        st.warning(
+            "Вакансия находится в архиве. Документы можно обновить; "
+            "кандидаты и этапы воронки не изменятся."
+        )
+    elif is_empty:
+        st.info(
+            "Документы ещё не созданы. Сформируйте пакет из файла или записи, "
+            "заполните анкету HR либо импортируйте готовые документы."
+        )
+
+    expanded = bool(is_empty or st.session_state.get(preview_key))
+    with st.expander("✨ Создать или обновить документы", expanded=expanded):
+        if st.session_state.get(preview_key):
+            _render_documents_preview(vacancy, deps, preview_key, key_prefix)
+            return
+
+        flags = get_update_doc_flags_from_ui(vacancy, key_prefix)
+        mode = st.radio(
+            "Способ подготовки",
+            (
+                "Профиль + дополнения",
+                "Из материалов",
+                "Готовые документы",
+                "Скорректировать существующие",
+                "Анкета HR",
+            ),
+            horizontal=True,
+            key=f"{key_prefix}_mode",
+        )
+        if mode == "Профиль + дополнения":
+            _render_multi_source_mode(
+                vacancy, deps, flags, key_prefix, preview_key
+            )
+        elif mode == "Из материалов":
+            _render_existing_materials_mode(
+                vacancy, deps, flags, key_prefix, preview_key
+            )
+        elif mode == "Готовые документы":
+            _render_existing_import_mode(
+                vacancy, deps, flags, key_prefix, preview_key
+            )
+        elif mode == "Скорректировать существующие":
+            _render_existing_refine_mode(
+                vacancy, deps, flags, key_prefix, preview_key
+            )
+        else:
+            render_wizard_mode(
+                vacancy,
+                deps,
+                flags,
+                key_prefix,
+                preview_key=preview_key,
+            )
 
 
 def render_creation_zone(vacancy, deps):

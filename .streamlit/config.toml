@@ -12,4 +12,4 @@ showSidebarNavigation = false
 headless = true
 fileWatcherType = "none"
 enableCORS = false
-maxUploadSize = 200
+maxUploadSize = 600

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from ast import literal_eval
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,34 @@ def parse_ai_json_response(content):
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if match:
             content = match.group(0)
-    return json.loads(content.strip())
+    content = content.strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as original_error:
+        # Модели иногда возвращают почти валидный JSON: с запятой перед
+        # закрывающей скобкой, одинарными кавычками или ключом без кавычек.
+        repaired = re.sub(r",\s*([}\]])", r"\1", content)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            parsed = literal_eval(repaired)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except (SyntaxError, ValueError):
+            pass
+
+        repaired = re.sub(
+            r'([{,]\s*)([A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё-]*)(\s*:)',
+            r'\1"\2"\3',
+            repaired,
+        )
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            raise original_error
 
 
 def create_chat_completion(client, config, task, messages, *, temperature=None, max_tokens=None, **kwargs):
@@ -150,17 +178,27 @@ def create_chat_completion(client, config, task, messages, *, temperature=None, 
         create_kwargs["extra_body"] = {"reasoning": {"enabled": False}}
 
     started = time.time()
-    try:
-        response = client.chat.completions.create(**create_kwargs)
-    except Exception as exc:
-        if disable_thinking and "extra_body" in create_kwargs:
+    while True:
+        try:
+            response = client.chat.completions.create(**create_kwargs)
+            break
+        except Exception as exc:
             err = str(exc).lower()
-            if "reasoning" in err or "extra" in err or "unknown" in err:
+            if "extra_body" in create_kwargs and (
+                "reasoning" in err or "extra" in err or "unknown" in err
+            ):
                 create_kwargs.pop("extra_body", None)
-                response = client.chat.completions.create(**create_kwargs)
-            else:
-                raise
-        else:
+                continue
+            if "response_format" in create_kwargs and (
+                "response_format" in err
+                or "json mode" in err
+                or "unsupported" in err
+                or "unknown" in err
+            ):
+                # Не все OpenAI-совместимые провайдеры поддерживают JSON mode.
+                # В этом случае остаётся промпт «только JSON» и локальный repair.
+                create_kwargs.pop("response_format", None)
+                continue
             raise
 
     elapsed = time.time() - started

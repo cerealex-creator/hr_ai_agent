@@ -9,6 +9,7 @@ import time
 import requests
 import boto3
 import subprocess
+import shutil
 from dotenv import load_dotenv
 from openai import OpenAI
 from docx import Document
@@ -530,13 +531,34 @@ def upload_to_s3_and_get_url(local_path, bucket, access_key, secret_key):
             f"Детали: {type(e).__name__}: {e}"
         ) from e
 
+def resolve_ffmpeg_binary():
+    """Находит ffmpeg также при запуске macOS-приложением с урезанным PATH."""
+    configured = (os.getenv("FFMPEG_BINARY") or "").strip()
+    candidates = (
+        configured,
+        shutil.which("ffmpeg") or "",
+        "/opt/homebrew/bin/ffmpeg",  # Apple Silicon Homebrew
+        "/usr/local/bin/ffmpeg",     # Intel Homebrew
+        "/usr/bin/ffmpeg",
+    )
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
 def convert_to_pcm(input_path, output_path=None):
     if output_path is None:
         output_path = os.path.splitext(input_path)[0] + "_speechkit.pcm"
+    ffmpeg_binary = resolve_ffmpeg_binary()
+    if not ffmpeg_binary:
+        raise RuntimeError(
+            "Не найден `ffmpeg`. Установите ffmpeg и повторите попытку."
+        )
     try:
         subprocess.run(
             [
-                "ffmpeg",
+                ffmpeg_binary,
                 "-y",
                 "-i",
                 input_path,
@@ -555,7 +577,7 @@ def convert_to_pcm(input_path, output_path=None):
         )
     except FileNotFoundError as e:
         raise RuntimeError(
-            "Не найден `ffmpeg`. Установите ffmpeg и повторите попытку."
+            f"Не удалось запустить ffmpeg: {ffmpeg_binary}"
         ) from e
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or b"").decode("utf-8", errors="ignore").strip()
@@ -972,23 +994,9 @@ def get_vacancy_profile_text(vacancy):
 
 
 def parse_ai_json_response(content):
-    content = str(content or "").strip()
-    content = re.sub(
-        r"<(?:think|thinking|redacted_thinking)>.*?</(?:think|thinking|redacted_thinking)>",
-        "",
-        content,
-        flags=re.DOTALL | re.IGNORECASE,
-    ).strip()
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-    content = content.strip()
-    if not content.startswith("{") and not content.startswith("["):
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if match:
-            content = match.group(0)
-    return json.loads(content.strip())
+    from ai_helpers import parse_ai_json_response as _parse_ai_json_response
+
+    return _parse_ai_json_response(content)
 
 
 def build_ignore_flags_prompt(ignore_flags):

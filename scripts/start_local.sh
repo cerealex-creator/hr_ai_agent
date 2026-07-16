@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+# Finder/AppleScript запускает приложение с урезанным PATH без Homebrew.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=local_run_common.sh
 source "$SCRIPT_DIR/local_run_common.sh"

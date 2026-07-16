@@ -268,6 +268,7 @@ def enrich_questionnaire_with_resume_hints(resume_text, questionnaire, client, c
             },
         ],
         temperature=0.2,
+        response_format={"type": "json_object"},
     )
     result = parse_ai_json_response(response.choices[0].message.content)
     hints = result.get("подсказки", [])
@@ -371,6 +372,7 @@ def enrich_questionnaire_with_personal_followups(
             {"role": "user", "content": "\n\n".join(user_parts)},
         ],
         temperature=0.3,
+        response_format={"type": "json_object"},
     )
     result = parse_ai_json_response(response.choices[0].message.content)
     followups = result.get("уточнения_по_резюме", result.get("уточняющие", []))
