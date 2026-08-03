@@ -31,7 +31,7 @@ _PROFILE_SECTION_MARKERS = (
 
 _DEFAULT_TASK_MAX_TOKENS = {
     "extract": 500,
-    "resume_eval": 1500,
+    "resume_eval": 2500,
     "questionnaire": 2000,
     "interview_eval": 2000,
 }
@@ -103,7 +103,7 @@ def with_no_think(system_content, config):
     return f"{system_content}{NO_THINK_DIRECTIVE}"
 
 
-def parse_ai_json_response(content):
+def _extract_json_payload(content):
     content = str(content or "").strip()
     content = re.sub(
         r"<(?:think|thinking|redacted_thinking)>.*?</(?:think|thinking|redacted_thinking)>",
@@ -117,38 +117,155 @@ def parse_ai_json_response(content):
         content = content.split("```")[1].split("```")[0]
     content = content.strip()
     if not content.startswith("{") and not content.startswith("["):
-        match = re.search(r"\{.*\}", content, re.DOTALL)
+        match = re.search(r"(\{.*\}|\[.*\])", content, re.DOTALL)
         if match:
             content = match.group(0)
-    content = content.strip()
+    return content.strip()
+
+
+def _escape_newlines_in_json_strings(text):
+    """Экранирует сырые переносы/табы внутри JSON-строк."""
+    out = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string:
+            if ch == "\n":
+                out.append("\\n")
+                continue
+            if ch == "\r":
+                out.append("\\r")
+                continue
+            if ch == "\t":
+                out.append("\\t")
+                continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _insert_missing_commas(text):
+    """Вставляет пропущенные запятые между элементами/полями JSON."""
+    # "value"\n  "key"  или  3\n  "key"  или  ]\n  "key"  или  }\n  "key"
+    text = re.sub(
+        r'([}\]"0-9]|true|false|null)\s*\n(\s*")',
+        r"\1,\n\2",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # }\n{  или  ]\n[  внутри массивов объектов
+    text = re.sub(r"\}\s*\n\s*\{", "},\n{", text)
+    text = re.sub(r"\]\s*\n\s*\[", "],\n[", text)
+    return text
+
+
+def _close_truncated_json(text):
+    """Пытается закрыть обрезанный JSON (нехватка max_tokens)."""
+    text = text.rstrip()
+    if not text:
+        return text
+    # Убрать висящую запятую в конце
+    text = re.sub(r",\s*$", "", text)
+    # Если обрезано посреди строки — закрыть кавычку
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        text += '"'
+    # Баланс скобок
+    stack = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+    closers = {"{": "}", "[": "]"}
+    while stack:
+        text += closers[stack.pop()]
+    return text
+
+
+def parse_ai_json_response(content):
+    content = _extract_json_payload(content)
     try:
         return json.loads(content)
     except json.JSONDecodeError as original_error:
         # Модели иногда возвращают почти валидный JSON: с запятой перед
-        # закрывающей скобкой, одинарными кавычками или ключом без кавычек.
+        # закрывающей скобкой, одинарными кавычками, ключом без кавычек,
+        # пропущенной запятой между полями или сырыми переносами в строках.
+        candidates = [content]
         repaired = re.sub(r",\s*([}\]])", r"\1", content)
-        try:
-            return json.loads(repaired)
-        except json.JSONDecodeError:
-            pass
+        candidates.append(repaired)
+        candidates.append(_escape_newlines_in_json_strings(repaired))
+        candidates.append(_insert_missing_commas(repaired))
+        candidates.append(
+            _insert_missing_commas(_escape_newlines_in_json_strings(repaired))
+        )
+        candidates.append(_close_truncated_json(candidates[-1]))
 
-        try:
-            parsed = literal_eval(repaired)
-            if isinstance(parsed, (dict, list)):
-                return parsed
-        except (SyntaxError, ValueError):
-            pass
+        seen = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+            try:
+                parsed = literal_eval(candidate)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except (SyntaxError, ValueError):
+                pass
 
-        repaired = re.sub(
-            r'([{,]\s*)([A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё-]*)(\s*:)',
+        # Ключи без кавычек
+        unquoted = re.sub(
+            r"([{,]\s*)([A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё-]*)(\s*:)",
             r'\1"\2"\3',
-            repaired,
+            _insert_missing_commas(_escape_newlines_in_json_strings(repaired)),
         )
         try:
-            return json.loads(repaired)
+            return json.loads(unquoted)
         except json.JSONDecodeError:
-            raise original_error
-
+            try:
+                return json.loads(_close_truncated_json(unquoted))
+            except json.JSONDecodeError:
+                raise original_error
 
 def create_chat_completion(client, config, task, messages, *, temperature=None, max_tokens=None, **kwargs):
     """Единая точка вызова chat.completions с лимитами, no_think и логом времени."""

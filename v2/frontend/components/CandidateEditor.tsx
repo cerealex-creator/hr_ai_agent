@@ -1,0 +1,1281 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getApiBase, type CandidateDetail } from "@/lib/api";
+import { HR_STAGE_LABELS, clientStatusLabel, clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
+import { StageProgress } from "@/components/StageProgress";
+import { AiCommentBlock } from "@/components/AiCommentBlock";
+import { QuestionnairePanel, type QItem } from "@/components/QuestionnairePanel";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
+import { LinkField } from "@/components/LinkField";
+import { ActionBanner } from "@/components/ActionBanner";
+import { daysBetween, daysLabel, formatDateRu, isEventPassed, parseLocalDate } from "@/lib/dates";
+
+type Props = { initial: CandidateDetail };
+
+type JobStatus = {
+  id: string;
+  status: string;
+  progress_label: string | null;
+  error: string | null;
+};
+
+type WaitingInfo = {
+  since: string;
+  days: number;
+  reason: string;
+};
+
+const STAGE_ORDER = Object.keys(HR_STAGE_LABELS).filter((k) => k !== "rejected");
+const CHAT_POLL_MS = 8000;
+
+function field(v: string | null | undefined): string {
+  return v ?? "";
+}
+
+function aiScoreSourceLabel(source: string | null | undefined): string {
+  const s = (source || "").trim().toLowerCase();
+  if (s === "resume") return "по резюме";
+  if (s === "interview") return "по интервью";
+  if (!s) return "";
+  return s;
+}
+
+function formatMeetingDateRu(value: string | null | undefined): string {
+  const d = parseLocalDate(value);
+  if (!d) return "—";
+  return d.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+/** Fields that change from Telegram / client zone. */
+function chatFingerprint(c: CandidateDetail): string {
+  const p = c.payload || {};
+  return JSON.stringify([
+    c.hr_stage,
+    c.client_status,
+    c.status_updated_at,
+    c.office_interview_date,
+    c.office_interview_time,
+    c.client_comment,
+    Boolean(p.meeting_hr_confirmed),
+    Boolean(p.remote_interview),
+    Boolean(p.office_interview),
+  ]);
+}
+
+function splitClientComments(raw: string | null | undefined): {
+  status: string[];
+  free: string[];
+} {
+  const status: string[] = [];
+  const free: string[] = [];
+  for (const line of (raw || "").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.includes("к статусу «") || t.includes('к статусу "')) status.push(t);
+    else free.push(t);
+  }
+  return { status, free };
+}
+
+function meetingFormatLabel(c: CandidateDetail): string | null {
+  const p = c.payload || {};
+  const remote = Boolean(p.remote_interview);
+  const office = Boolean(p.office_interview);
+  if (remote && office) return "онлайн / офис";
+  if (remote) return "онлайн";
+  if (office) return "в офисе";
+  return null;
+}
+
+/** Waiting for a decision after interview/meeting date or while on client review. */
+function resolveWaiting(c: CandidateDetail): WaitingInfo | null {
+  const stage = c.hr_stage;
+  const meetingDate = c.office_interview_date;
+  const meetingPassed = isEventPassed(meetingDate, c.office_interview_time);
+
+  if (stage === "interview_scheduled" && meetingPassed && meetingDate) {
+    const days = daysBetween(meetingDate);
+    if (days == null) return null;
+    return { since: meetingDate, days, reason: "после собеседования" };
+  }
+  if (stage === "client_meeting" && meetingPassed && meetingDate) {
+    const days = daysBetween(meetingDate);
+    if (days == null) return null;
+    return { since: meetingDate, days, reason: "после встречи с заказчиком" };
+  }
+  if (stage === "client_review" || stage === "client_pause") {
+    const since = c.status_updated_at || c.created_at;
+    if (!since) return null;
+    const days = daysBetween(since);
+    if (days == null) return null;
+    return {
+      since,
+      days,
+      reason: stage === "client_pause" ? "на паузе у заказчика" : "на оценке у заказчика",
+    };
+  }
+  return null;
+}
+
+export function CandidateEditor({ initial }: Props) {
+  const router = useRouter();
+  const [c, setC] = useState(initial);
+  const [name, setName] = useState(initial.name || "");
+  const [phone, setPhone] = useState(field(initial.phone));
+  const [age, setAge] = useState(field(initial.age));
+  const [city, setCity] = useState(field(initial.city));
+  const [metro, setMetro] = useState(field(initial.metro));
+  const [salary, setSalary] = useState(field(initial.salary_expected));
+  const [resumeLink, setResumeLink] = useState(field(initial.resume_link));
+  const [hhLink, setHhLink] = useState(field(initial.hh_resume_link));
+  const [portfolio, setPortfolio] = useState(field(initial.portfolio_link));
+  const [video, setVideo] = useState(field(initial.video_link));
+  const [taskLink, setTaskLink] = useState(field(initial.task_link));
+  const [hrComment, setHrComment] = useState(field(initial.hr_comment));
+  const [interviewEvalNotes, setInterviewEvalNotes] = useState(field(initial.interview_eval_notes));
+  const [interviewDate, setInterviewDate] = useState(field(initial.office_interview_date));
+  const [interviewTime, setInterviewTime] = useState(field(initial.office_interview_time));
+  const [stage, setStage] = useState(initial.hr_stage);
+  const [stageNote, setStageNote] = useState("");
+  const [deleteCalendarEvent, setDeleteCalendarEvent] = useState(false);
+  const [warrantyDate, setWarrantyDate] = useState("");
+  const [warrantyMonths, setWarrantyMonths] = useState(3);
+  const [materialTitle, setMaterialTitle] = useState("");
+  const [materialUrl, setMaterialUrl] = useState("");
+  const [copyTargetId, setCopyTargetId] = useState("");
+  const [vacancies, setVacancies] = useState<{ id: number; title: string }[]>([]);
+  const [moveToClientReview, setMoveToClientReview] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [evalBusy, setEvalBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [aiCommentOpen, setAiCommentOpen] = useState(false);
+  const [scoreJumpPending, setScoreJumpPending] = useState(false);
+  const [job, setJob] = useState<JobStatus | null>(null);
+  const [stageOpen, setStageOpen] = useState(false);
+  const [anketaOpen, setAnketaOpen] = useState(false);
+  const [questOpen, setQuestOpen] = useState(false);
+  const [telegramOpen, setTelegramOpen] = useState(false);
+  const [aiSectionOpen, setAiSectionOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [pendingRemote, setPendingRemote] = useState<CandidateDetail | null>(null);
+  const [actionSection, setActionSection] = useState<
+    "anketa" | "stage" | "telegram" | "top" | null
+  >(null);
+
+  const sections = useMemo(() => {
+    const s = c.ai_comment_sections;
+    if (s && typeof s === "object" && !Array.isArray(s)) return s as Record<string, unknown>;
+    return null;
+  }, [c.ai_comment_sections]);
+
+  const hasAiComment =
+    Boolean((c.ai_comment || "").trim()) ||
+    Boolean(sections && Object.keys(sections).length > 0);
+
+  const meetingScheduled = Boolean(
+    (c.office_interview_date || "").trim() && (c.office_interview_time || "").trim(),
+  );
+  const meetingHrConfirmed = Boolean(c.payload?.meeting_hr_confirmed);
+  const attendanceStatus = String(c.payload?.interview_attendance_status || "").trim();
+  const meetingFormat = meetingFormatLabel(c);
+
+  useEffect(() => {
+    if (!scoreJumpPending || !aiSectionOpen) return;
+    const el = document.getElementById("ai-comment-block");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScoreJumpPending(false);
+  }, [scoreJumpPending, aiSectionOpen, c.ai_comment, sections]);
+
+  const openAiComment = () => {
+    if (!hasAiComment && c.ai_score == null) return;
+    setAiSectionOpen(true);
+    setAiCommentOpen(true);
+    setScoreJumpPending(true);
+  };
+
+  const inWorkDays = daysBetween(c.created_at);
+  const waiting = useMemo(() => resolveWaiting(c), [c]);
+  const hasQuestionnaire = Array.isArray(c.interview_questionnaire) && c.interview_questionnaire.length > 0;
+
+  const applyCandidate = (next: CandidateDetail) => {
+    setC(next);
+    setName(next.name || "");
+    setPhone(field(next.phone));
+    setAge(field(next.age));
+    setCity(field(next.city));
+    setMetro(field(next.metro));
+    setSalary(field(next.salary_expected));
+    setResumeLink(field(next.resume_link));
+    setHhLink(field(next.hh_resume_link));
+    setPortfolio(field(next.portfolio_link));
+    setVideo(field(next.video_link));
+    setTaskLink(field(next.task_link));
+    setHrComment(field(next.hr_comment));
+    setInterviewEvalNotes(field(next.interview_eval_notes));
+    setInterviewDate(field(next.office_interview_date));
+    setInterviewTime(field(next.office_interview_time));
+    setStage(next.hr_stage);
+    setPendingRemote(null);
+  };
+
+  const isFormDirty = () =>
+    name !== (c.name || "") ||
+    phone !== field(c.phone) ||
+    age !== field(c.age) ||
+    city !== field(c.city) ||
+    metro !== field(c.metro) ||
+    salary !== field(c.salary_expected) ||
+    resumeLink !== field(c.resume_link) ||
+    hhLink !== field(c.hh_resume_link) ||
+    portfolio !== field(c.portfolio_link) ||
+    video !== field(c.video_link) ||
+    taskLink !== field(c.task_link) ||
+    hrComment !== field(c.hr_comment) ||
+    interviewEvalNotes !== field(c.interview_eval_notes) ||
+    interviewDate !== field(c.office_interview_date) ||
+    interviewTime !== field(c.office_interview_time) ||
+    stage !== c.hr_stage ||
+    stageNote.trim() !== "";
+
+  const dirtyRef = useRef(false);
+  const fingerprintRef = useRef(chatFingerprint(c));
+  const candidateIdRef = useRef(c.id);
+  dirtyRef.current = isFormDirty();
+  fingerprintRef.current = chatFingerprint(c);
+  candidateIdRef.current = c.id;
+
+  const reloadCandidate = async () => {
+    const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const next: CandidateDetail = await res.json();
+    applyCandidate(next);
+    return next;
+  };
+
+  /** Poll for Telegram / external changes while the card is open. */
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const id = candidateIdRef.current;
+      try {
+        const res = await fetch(`${getApiBase()}/api/v1/candidates/${id}`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const next: CandidateDetail = await res.json();
+        if (cancelled) return;
+        if (chatFingerprint(next) === fingerprintRef.current) return;
+        if (dirtyRef.current) {
+          setPendingRemote(next);
+          return;
+        }
+        applyCandidate(next);
+        setMsg("Карточка обновлена из чата");
+      } catch {
+        /* ignore polling errors */
+      }
+    };
+    const timer = setInterval(tick, CHAT_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll only while mounted; refs hold latest
+  }, []);
+
+  const setFeedback = (
+    section: "anketa" | "stage" | "telegram" | "top",
+    nextMsg: string | null,
+    nextErr: string | null = null,
+  ) => {
+    setActionSection(section);
+    setMsg(nextMsg);
+    setErr(nextErr);
+  };
+
+  const saveCard = async () => {
+    setBusy(true);
+    setFeedback("anketa", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          phone,
+          age,
+          city,
+          metro,
+          salary_expected: salary,
+          resume_link: resumeLink,
+          hh_resume_link: hhLink,
+          portfolio_link: portfolio,
+          video_link: video,
+          task_link: taskLink,
+          hr_comment: hrComment,
+          interview_eval_notes: interviewEvalNotes,
+          office_interview_date: interviewDate,
+          office_interview_time: interviewTime,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const next: CandidateDetail = await res.json();
+      applyCandidate(next);
+      setFeedback(
+        "anketa",
+        "Карточка сохранена (чат обновлён, если была Telegram-карточка)",
+      );
+      router.refresh();
+    } catch (e) {
+      setFeedback("anketa", null, e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!job || (job.status !== "queued" && job.status !== "running")) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/v1/jobs/${job.id}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const next = (await res.json()) as JobStatus;
+        setJob(next);
+        if (next.status === "completed") {
+          await reloadCandidate();
+          setMsg(next.progress_label || "Собеседование обработано");
+          setScoreJumpPending(false);
+        } else if (next.status === "failed" || next.status === "cancelled") {
+          setErr(next.error || next.progress_label || "Обработка собеседования не завершена");
+        }
+      } catch {
+        /* ignore polling errors */
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [job]);
+
+  const saveStage = async () => {
+    setBusy(true);
+    setFeedback("stage", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hr_stage: stage,
+          note: stageNote,
+          office_interview_date: interviewDate || null,
+          office_interview_time: interviewTime || null,
+          keep_calendar_event: !deleteCalendarEvent,
+          warranty_start_date: warrantyDate || null,
+          warranty_months: ["offer", "internship", "started_work"].includes(stage)
+            ? warrantyMonths
+            : null,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const next: CandidateDetail = await res.json();
+      applyCandidate(next);
+      setStageNote("");
+      setDeleteCalendarEvent(false);
+      setFeedback("stage", `Этап: ${hrStageLabel(next.hr_stage)}`);
+      router.refresh();
+    } catch (e) {
+      setFeedback("stage", null, e instanceof Error ? e.message : "Ошибка смены этапа");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyClientStage = async () => {
+    setBusy(true);
+    setFeedback("stage", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/apply-client-stage`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const next: CandidateDetail = await res.json();
+      applyCandidate(next);
+      setFeedback("stage", `Этап применён: ${hrStageLabel(next.hr_stage)}`);
+      router.refresh();
+    } catch (e) {
+      setFeedback("stage", null, e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remind = async (kind: "evaluate" | "decide") => {
+    setBusy(true);
+    setFeedback("telegram", null);
+    try {
+      const res = await fetch(
+        `${getApiBase()}/api/v1/candidates/${c.id}/remind?kind=${kind}`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : await res.text());
+      setFeedback("telegram", data.message || "Напоминание отправлено");
+    } catch (e) {
+      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refreshTelegramCard = async () => {
+    setBusy(true);
+    setFeedback("telegram", null);
+    try {
+      const res = await fetch(
+        `${getApiBase()}/api/v1/candidates/${c.id}/refresh-telegram?notify=true`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Ошибка");
+      setFeedback("telegram", data.message || "Карточка в чате обновлена");
+    } catch (e) {
+      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendMaterial = async () => {
+    setBusy(true);
+    setFeedback("telegram", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/extra-material`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: materialTitle, url: materialUrl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Ошибка");
+      if (data.candidate) applyCandidate(data.candidate);
+      setMaterialTitle("");
+      setMaterialUrl("");
+      setFeedback("telegram", data.message || "Материал отправлен");
+      router.refresh();
+    } catch (e) {
+      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyCandidate = async () => {
+    if (!copyTargetId) return;
+    setBusy(true);
+    setFeedback("stage", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_vacancy_id: Number(copyTargetId) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Ошибка");
+      setFeedback("stage", "Кандидат скопирован");
+      router.push(`/candidates/${data.id}`);
+      router.refresh();
+    } catch (e) {
+      setFeedback("stage", null, e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/v1/vacancies?active=true`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const rows = (await res.json()) as { id: number; title: string; active?: boolean }[];
+        if (!cancelled) {
+          setVacancies(
+            rows
+              .filter((v) => v.active !== false && v.id !== c.vacancy_id)
+              .map((v) => ({ id: v.id, title: v.title })),
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.vacancy_id]);
+
+  const remove = async () => {
+    if (!window.confirm(`Удалить кандидата «${c.name}»?`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) throw new Error(await res.text());
+      router.push(`/vacancies/${c.vacancy_id}?section=candidates`);
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка удаления");
+      setBusy(false);
+    }
+  };
+
+  const sendToChat = async () => {
+    setBusy(true);
+    setFeedback("telegram", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/send-to-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ move_to_client_review: moveToClientReview }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.detail;
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : detail
+              ? JSON.stringify(detail)
+              : `HTTP ${res.status}`,
+        );
+      }
+      if (data.candidate) applyCandidate(data.candidate as CandidateDetail);
+      setFeedback("telegram", data.message || "Отправлено в чат");
+      setStage(data.hr_stage || c.hr_stage);
+      router.refresh();
+    } catch (e) {
+      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка отправки в Telegram");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const evaluateInterview = async () => {
+    setEvalBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const saveRes = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interview_eval_notes: interviewEvalNotes }),
+      });
+      if (!saveRes.ok) throw new Error(await saveRes.text());
+
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/evaluate-interview`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      if (data.candidate) applyCandidate(data.candidate as CandidateDetail);
+      const score = data.ai_score ?? "—";
+      let note = `Оценка по интервью: ${score}/4`;
+      if (!data.profile_present) note += " · профиль вакансии пуст — оценка менее точная";
+      setMsg(note);
+      setScoreJumpPending(false);
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка оценки по интервью");
+    } finally {
+      setEvalBusy(false);
+    }
+  };
+
+  const transcribeAndEvaluate = async () => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const saveRes = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video_link: video,
+          interview_eval_notes: interviewEvalNotes,
+        }),
+      });
+      if (!saveRes.ok) throw new Error(await saveRes.text());
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/transcribe-and-evaluate`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      setJob({
+        id: String(data.id || ""),
+        status: String(data.status || "queued"),
+        progress_label: data.progress_label || "Задача поставлена в очередь",
+        error: null,
+      });
+      await reloadCandidate();
+      setMsg(
+        data.reused
+          ? "Уже идёт обработка этой записи — следим за статусом"
+          : "Запущена расшифровка и оценка собеседования",
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка запуска обработки собеседования");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const transcriptionBusy = Boolean(job && (job.status === "queued" || job.status === "running"));
+
+  const showInterviewDateFields =
+    stage === "interview_scheduled" ||
+    stage === "client_meeting" ||
+    c.hr_stage === "interview_scheduled" ||
+    c.hr_stage === "client_meeting";
+
+  const clientComments = splitClientComments(c.client_comment);
+  const bannerFor = (section: typeof actionSection) =>
+    actionSection === section ? (
+      <ActionBanner msg={msg} err={err} />
+    ) : null;
+
+  return (
+    <>
+      <h1 className="page-title">{c.name || "Без имени"}</h1>
+      <p className="muted">
+        {c.vacancy_title || `Вакансия #${c.vacancy_id}`}
+        {c.client_name ? ` · ${c.client_name}` : ""}
+      </p>
+
+      <div className="cand-summary">
+        <div className="cand-summary-row">
+          <span className="cand-summary-label">Оценка ИИ</span>
+          <span className="cand-summary-value">
+            {c.ai_score != null ? (
+              <button type="button" className="score-jump-link cand-summary-score" onClick={openAiComment}>
+                <strong>{c.ai_score}/4</strong>
+                {c.ai_score_source ? (
+                  <span className="cand-summary-muted"> · {aiScoreSourceLabel(c.ai_score_source)}</span>
+                ) : null}
+              </button>
+            ) : (
+              <span className="cand-summary-muted">ещё нет</span>
+            )}
+          </span>
+        </div>
+        <div className="cand-summary-row">
+          <span className="cand-summary-label">Статус</span>
+          <span className="cand-summary-value">
+            <strong>{hrStageLabel(c.hr_stage)}</strong>
+            <span className="cand-summary-muted">
+              {" "}
+              · {clientStatusLabelForCard(c.hr_stage, c.client_status)}
+            </span>
+            {c.control_word_status ? (
+              <span className="cand-summary-muted">
+                {" "}
+                · контроль: {c.control_word_status}
+                {c.control_word_match ? ` (${c.control_word_match})` : ""}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        {clientComments.status.length ? (
+          <div className="cand-summary-row">
+            <span className="cand-summary-label">К решению</span>
+            <span className="cand-summary-value">
+              {clientComments.status.map((line) => (
+                <div key={line} style={{ marginBottom: "0.2rem" }}>
+                  {line}
+                </div>
+              ))}
+            </span>
+          </div>
+        ) : null}
+        {clientComments.free.length ? (
+          <div className="cand-summary-row">
+            <span className="cand-summary-label">Коммент. заказчика</span>
+            <span className="cand-summary-value">
+              {clientComments.free.map((line) => (
+                <div key={line} style={{ marginBottom: "0.2rem" }}>
+                  {line}
+                </div>
+              ))}
+            </span>
+          </div>
+        ) : null}
+        {meetingScheduled ? (
+          <div className="cand-summary-row cand-summary-meeting">
+            <span className="cand-summary-label">Встреча</span>
+            <span className="cand-summary-value">
+              <strong>
+                {formatMeetingDateRu(c.office_interview_date)}
+                {c.office_interview_time ? `, ${c.office_interview_time}` : ""}
+              </strong>
+              {meetingFormat ? (
+                <span className="cand-summary-muted"> · {meetingFormat}</span>
+              ) : null}
+              <span
+                className={
+                  meetingHrConfirmed ? "cand-summary-confirm is-yes" : "cand-summary-confirm is-no"
+                }
+              >
+                {" · "}
+                {meetingHrConfirmed ? "встреча подтверждена HR" : "ожидает подтверждения HR"}
+              </span>
+              {attendanceStatus === "confirmed" ? (
+                <span className="cand-summary-confirm is-yes"> · кандидат подтвердил приход</span>
+              ) : null}
+              {attendanceStatus === "cancelled_candidate" ? (
+                <span className="cand-summary-confirm is-no"> · кандидат отменил</span>
+              ) : null}
+              {attendanceStatus === "cancelled_client" ? (
+                <span className="cand-summary-confirm is-no"> · отменено заказчиком</span>
+              ) : null}
+            </span>
+          </div>
+        ) : null}
+        <div className="cand-summary-row cand-summary-work">
+          <span className="cand-summary-label">В работе</span>
+          <span className="cand-summary-value">
+            {c.created_at ? (
+              <>
+                с {formatDateRu(c.created_at)}
+                {inWorkDays != null ? (
+                  <>
+                    {" · "}
+                    <strong>{daysLabel(inWorkDays)}</strong>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <span className="cand-summary-muted">дата неизвестна</span>
+            )}
+          </span>
+        </div>
+        {waiting ? (
+          <div className="cand-summary-row cand-summary-wait">
+            <span className="cand-summary-label">Ждёт решения</span>
+            <span className="cand-summary-value">
+              с {formatDateRu(waiting.since)} · <strong>{daysLabel(waiting.days)}</strong>
+              <span className="cand-summary-wait-reason"> · {waiting.reason}</span>
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {pendingRemote ? (
+        <div className="cand-remote-banner" role="status">
+          <span>В чате изменились данные кандидата (статус / встреча / комментарий).</span>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              applyCandidate(pendingRemote);
+              setMsg("Карточка обновлена из чата");
+            }}
+          >
+            Обновить карточку
+          </button>
+        </div>
+      ) : null}
+
+      <StageProgress stage={c.hr_stage} />
+
+      {(actionSection === null ||
+        actionSection === "top" ||
+        (msg &&
+          (msg.startsWith("Оценка по резюме:") ||
+            msg.startsWith("Оценка по интервью:") ||
+            msg.includes("Собеседование обработано")))) &&
+      (err || msg) ? (
+        <>
+          {err ? <p className="warn">{err}</p> : null}
+          {msg ? (
+            hasAiComment &&
+            (msg.startsWith("Оценка по резюме:") ||
+              msg.startsWith("Оценка по интервью:") ||
+              msg.includes("Собеседование обработано")) ? (
+              <p className="ok">
+                <button
+                  type="button"
+                  className="score-jump-link score-jump-ok"
+                  onClick={openAiComment}
+                >
+                  {msg}
+                </button>
+              </p>
+            ) : (
+              <p className="ok">{msg}</p>
+            )
+          ) : null}
+        </>
+      ) : null}
+
+      <CollapsibleCard
+        title="Анкета"
+        hint={[phone, city].filter(Boolean).join(" · ") || undefined}
+        open={anketaOpen}
+        onOpenChange={setAnketaOpen}
+      >
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="cand-name">
+            Имя
+          </label>
+          <input id="cand-name" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
+        </div>
+        <div className="hh-inline-pair">
+          <div className="hh-field">
+            <label className="hh-label" htmlFor="cand-phone">
+              Телефон
+            </label>
+            <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+          </div>
+          <div className="hh-field">
+            <label className="hh-label" htmlFor="cand-age">
+              Возраст
+            </label>
+            <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
+          </div>
+        </div>
+        <div className="hh-inline-pair">
+          <div className="hh-field">
+            <label className="hh-label" htmlFor="cand-city">
+              Город
+            </label>
+            <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} />
+          </div>
+          <div className="hh-field">
+            <label className="hh-label" htmlFor="cand-metro">
+              Метро
+            </label>
+            <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
+          </div>
+        </div>
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="cand-salary">
+            Зарплатные ожидания
+          </label>
+          <input id="cand-salary" value={salary} onChange={(e) => setSalary(e.target.value)} disabled={busy} />
+        </div>
+
+        <h3 className="hh-subhead">Ссылки</h3>
+        {bannerFor("anketa")}
+        <LinkField
+          id="cand-resume"
+          label="Резюме PDF (Яндекс.Диск)"
+          openLabel="Открыть PDF резюме"
+          value={resumeLink}
+          onChange={setResumeLink}
+          disabled={busy}
+          placeholder="https://disk.yandex.ru/…"
+          hint="Сюда — ссылка на PDF после открытия контактов. HH без контактов — ниже."
+        />
+        <LinkField
+          id="cand-hh"
+          label="HH (без контактов)"
+          openLabel="Открыть резюме на HH.ru"
+          value={hhLink}
+          onChange={setHhLink}
+          disabled={busy}
+          placeholder="https://hh.ru/resume/…"
+        />
+        <LinkField
+          id="cand-portfolio"
+          label="Портфолио"
+          openLabel="Открыть портфолио"
+          value={portfolio}
+          onChange={setPortfolio}
+          disabled={busy}
+        />
+        <LinkField
+          id="cand-video"
+          label="Запись собеседования"
+          openLabel="Открыть запись"
+          value={video}
+          onChange={setVideo}
+          disabled={busy || transcriptionBusy}
+          placeholder="Ссылка на запись — затем «Расшифровать» в блоке ниже"
+        />
+        <LinkField
+          id="cand-task"
+          label="Ссылка на задание"
+          openLabel="Открыть задание"
+          value={taskLink}
+          onChange={setTaskLink}
+          disabled={busy}
+          placeholder="https://…"
+        />
+
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="cand-hr">
+            Комментарий HR
+          </label>
+          <textarea
+            id="cand-hr"
+            rows={4}
+            value={hrComment}
+            onChange={(e) => setHrComment(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+
+        <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+          <button type="button" className="chip chip-active" disabled={busy} onClick={saveCard}>
+            Сохранить карточку
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={remove}>
+            Удалить
+          </button>
+        </div>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        title="Этап"
+        hint={hrStageLabel(stage || c.hr_stage)}
+        open={stageOpen}
+        onOpenChange={setStageOpen}
+      >
+        {bannerFor("stage")}
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="hr-stage">
+            HR-этап
+          </label>
+          <select
+            id="hr-stage"
+            value={stage}
+            onChange={(e) => setStage(e.target.value)}
+            disabled={busy}
+          >
+            {STAGE_ORDER.map((id) => (
+              <option key={id} value={id}>
+                {HR_STAGE_LABELS[id] || id}
+              </option>
+            ))}
+          </select>
+        </div>
+        {showInterviewDateFields ? (
+          <div className="hh-inline-pair">
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="iv-date">
+                {stage === "client_meeting" || c.hr_stage === "client_meeting"
+                  ? "Дата встречи с заказчиком"
+                  : "Дата собеседования"}
+              </label>
+              <input
+                id="iv-date"
+                type="date"
+                value={interviewDate}
+                onChange={(e) => setInterviewDate(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="iv-time">
+                Время
+              </label>
+              <input
+                id="iv-time"
+                type="time"
+                value={interviewTime}
+                onChange={(e) => setInterviewTime(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+          </div>
+        ) : null}
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="stage-note">
+            Заметка к этапу
+          </label>
+          <input
+            id="stage-note"
+            value={stageNote}
+            onChange={(e) => setStageNote(e.target.value)}
+            disabled={busy}
+            placeholder="необязательно"
+          />
+        </div>
+        {["offer", "internship", "started_work"].includes(stage) ? (
+          <div className="hh-inline-pair">
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="warranty-date">
+                Дата начала гарантии
+              </label>
+              <input
+                id="warranty-date"
+                type="date"
+                value={warrantyDate}
+                onChange={(e) => setWarrantyDate(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="warranty-months">
+                Срок (мес)
+              </label>
+              <select
+                id="warranty-months"
+                value={warrantyMonths}
+                onChange={(e) => setWarrantyMonths(Number(e.target.value))}
+                disabled={busy}
+              >
+                {[1, 2, 3, 4, 5, 6].map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : null}
+        <label className="hh-check">
+          <input
+            type="checkbox"
+            checked={deleteCalendarEvent}
+            onChange={(e) => setDeleteCalendarEvent(e.target.checked)}
+            disabled={busy}
+          />
+          Удалить событие из Google Calendar
+        </label>
+        <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+          <button type="button" className="chip chip-active" disabled={busy} onClick={saveStage}>
+            Зафиксировать этап
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
+            Применить этап по статусу заказчика
+          </button>
+        </div>
+        <CollapsibleCard
+          title="История этапов"
+          hint={
+            Array.isArray(c.payload?.hr_stage_history)
+              ? `${(c.payload.hr_stage_history as unknown[]).length}`
+              : undefined
+          }
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+        >
+          <ul className="muted" style={{ margin: 0, paddingLeft: "1.1rem" }}>
+            {(Array.isArray(c.payload?.hr_stage_history)
+              ? (c.payload.hr_stage_history as { stage?: string; at?: string; note?: string }[])
+              : []
+            ).map((h, i) => (
+              <li key={`${h.at || i}-${h.stage}`}>
+                {hrStageLabel(h.stage || "")} · {formatDateRu(h.at || null)}
+                {h.note ? ` — ${h.note}` : ""}
+              </li>
+            ))}
+            {!Array.isArray(c.payload?.hr_stage_history) ||
+            !(c.payload.hr_stage_history as unknown[]).length ? (
+              <li>Пока пусто</li>
+            ) : null}
+          </ul>
+        </CollapsibleCard>
+        <div className="hh-field" style={{ marginTop: "0.75rem" }}>
+          <label className="hh-label" htmlFor="copy-target">
+            Копировать в вакансию
+          </label>
+          <select
+            id="copy-target"
+            value={copyTargetId}
+            onChange={(e) => setCopyTargetId(e.target.value)}
+            disabled={busy}
+          >
+            <option value="">— выбрать —</option>
+            {vacancies.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.title}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="chip"
+            disabled={busy || !copyTargetId}
+            onClick={copyCandidate}
+            style={{ marginTop: "0.35rem" }}
+          >
+            Скопировать кандидата
+          </button>
+        </div>
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        id="questionnaire"
+        title="Опросник и собеседование"
+        hint={
+          hasQuestionnaire
+            ? `${(c.interview_questionnaire as unknown[]).length} вопросов`
+            : (c.transcript || "").trim()
+              ? "есть расшифровка"
+              : undefined
+        }
+        open={questOpen}
+        onOpenChange={setQuestOpen}
+      >
+        <QuestionnairePanel
+          embedded
+          candidate={c}
+          initialItems={
+            Array.isArray(c.interview_questionnaire)
+              ? (c.interview_questionnaire as QItem[])
+              : null
+          }
+          videoLinkDraft={video}
+          interviewNotesDraft={interviewEvalNotes}
+          onInterviewNotesChange={setInterviewEvalNotes}
+          onCandidateChange={applyCandidate}
+          onTranscribeAndEvaluate={transcribeAndEvaluate}
+          onEvaluateInterview={evaluateInterview}
+          transcriptionBusy={transcriptionBusy}
+          transcriptionStatus={job ? job.progress_label : null}
+          evaluateBusy={evalBusy}
+        />
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        title="Telegram"
+        hint={
+          c.client_status === "wait"
+            ? clientStatusLabelForCard(c.hr_stage, c.client_status)
+            : clientStatusLabel(c.client_status)
+        }
+        open={telegramOpen}
+        onOpenChange={setTelegramOpen}
+      >
+        {bannerFor("telegram")}
+        <p className="muted hh-micro">
+          Отправка карточки в чат вакансии с кнопками статуса. Если кнопки на старом
+          сообщении не срабатывают — «Отправить в чат» ещё раз (новая карточка v2). «Обновить
+          данные» пересобирает карточку и пишет в чат, что изменилось.
+        </p>
+        <label className="hh-check">
+          <input
+            type="checkbox"
+            checked={moveToClientReview}
+            onChange={(e) => setMoveToClientReview(e.target.checked)}
+            disabled={busy}
+          />
+          Перевести на этап «На оценке у заказчика»
+        </label>
+        <div className="hh-row-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+          <button type="button" className="chip chip-active" disabled={busy} onClick={sendToChat}>
+            Отправить в чат заказчика
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={refreshTelegramCard}>
+            Обновить данные по кандидату
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={() => remind("evaluate")}>
+            Напомнить о кандидате
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={() => remind("decide")}>
+            Напомнить принять решение
+          </button>
+        </div>
+        <div className="hh-field" style={{ marginTop: "0.75rem" }}>
+          <label className="hh-label">Доп. материал в чат</label>
+          <input
+            value={materialTitle}
+            onChange={(e) => setMaterialTitle(e.target.value)}
+            disabled={busy}
+            placeholder="Заголовок"
+          />
+          <input
+            value={materialUrl}
+            onChange={(e) => setMaterialUrl(e.target.value)}
+            disabled={busy}
+            placeholder="https://…"
+            style={{ marginTop: "0.35rem" }}
+          />
+          <button
+            type="button"
+            className="chip"
+            disabled={busy || !materialUrl.trim()}
+            onClick={sendMaterial}
+            style={{ marginTop: "0.35rem" }}
+          >
+            Отправить материал
+          </button>
+        </div>
+        {Array.isArray(c.payload?.extra_materials) &&
+        (c.payload.extra_materials as unknown[]).length ? (
+          <ul className="muted" style={{ marginTop: "0.5rem", paddingLeft: "1.1rem" }}>
+            {(
+              c.payload.extra_materials as {
+                title?: string;
+                url?: string;
+                sent_at?: string;
+              }[]
+            ).map((m, i) => (
+              <li key={`${m.url || i}-${m.sent_at || i}`}>
+                {m.title || "Материал"}
+                {m.url ? (
+                  <>
+                    {" · "}
+                    <a href={m.url} target="_blank" rel="noreferrer">
+                      открыть
+                    </a>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </CollapsibleCard>
+
+      {(c.client_comment || hasAiComment || c.ai_score != null) && (
+        <CollapsibleCard
+          id="ai-comment-block"
+          title="Комментарий ИИ"
+          hint={c.ai_score != null ? `${c.ai_score}/4` : undefined}
+          open={aiSectionOpen}
+          onOpenChange={setAiSectionOpen}
+        >
+          <div className="meta-grid">
+            <div className="meta-item">
+              <span>Оценка</span>
+              <strong>
+                {c.ai_score != null ? `${c.ai_score}/4` : "—"}
+                {c.ai_score_source ? ` · ${aiScoreSourceLabel(c.ai_score_source)}` : ""}
+              </strong>
+            </div>
+            <div className="meta-item">
+              <span>Добавлен</span>
+              <strong>{formatDateRu(c.created_at)}</strong>
+            </div>
+            <div className="meta-item">
+              <span>Статус обновлён</span>
+              <strong>{formatDateRu(c.status_updated_at)}</strong>
+            </div>
+          </div>
+          {c.client_comment ? (
+            <div className="doc-block" style={{ marginTop: "0.75rem" }}>
+              <h3 className="hh-subhead">Комментарий заказчика</h3>
+              <div className="doc-text">{c.client_comment}</div>
+            </div>
+          ) : null}
+          <AiCommentBlock
+            id="ai-comment-inner"
+            comment={c.ai_comment}
+            sections={sections}
+            open={aiCommentOpen}
+            onOpenChange={setAiCommentOpen}
+          />
+        </CollapsibleCard>
+      )}
+    </>
+  );
+}

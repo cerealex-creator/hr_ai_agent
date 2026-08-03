@@ -35,7 +35,12 @@ from resume_ai import (
     copy_vacancy_questionnaire_template,
     questionnaire_to_prompt_text,
 )
-from eval_ui import render_ai_score_badge, render_ai_evaluation_block
+from eval_ui import (
+    control_word_badge_html,
+    render_ai_score_badge,
+    render_ai_evaluation_block,
+    render_structured_ai_comment,
+)
 from telegram_notify import (
     validate_primary_fields,
 )
@@ -52,7 +57,7 @@ from interview_schedule import (
     sync_interview_calendar,
     INTERVIEW_STAGE,
 )
-from vacancy_store import vacancy_show_portfolio_field
+from vacancy_store import vacancy_control_word, vacancy_show_portfolio_field
 from warranty import (
     WARRANTY_MONTH_CHOICES,
     WARRANTY_MONTH_LABELS,
@@ -87,8 +92,12 @@ def new_candidate_template(vacancy_id):
         "client_final_verdict": "",
         "ai_score": None,
         "ai_comment": "",
+        "ai_comment_sections": {},
         "ai_strengths": [],
         "ai_weaknesses": [],
+        "control_word_status": "",
+        "control_word_match": "",
+        "control_word_note": "",
         "created_at": datetime.now().isoformat(),
         "viewed": False,
         "status_updated_at": datetime.now().isoformat(),
@@ -137,8 +146,11 @@ def _apply_calendar_sync(cand, vacancy, previous_stage=None, keep_calendar_event
     return ok, msg
 
 
-def populate_from_resume(cand, resume_text, client, config):
-    data = extract_data_from_resume(resume_text, client, config)
+def populate_from_resume(cand, resume_text, client, config, vacancy=None):
+    control = vacancy_control_word(vacancy) if vacancy is not None else None
+    data = extract_data_from_resume(
+        resume_text, client, config, control_word=control
+    )
     cand["name"] = data.get("name", cand.get("name", ""))
     cand["phone"] = data.get("phone", "")
     cand["age"] = data.get("age", "")
@@ -147,6 +159,14 @@ def populate_from_resume(cand, resume_text, client, config):
     cand["age_location"] = data.get("age_location", "")
     cand["salary_expected"] = data.get("salary_expected", "")
     cand["resume_text"] = resume_text
+    if control:
+        cand["control_word_status"] = data.get("control_word_status", "")
+        cand["control_word_match"] = data.get("control_word_match", "")
+        cand["control_word_note"] = data.get("control_word_note", "")
+    else:
+        cand["control_word_status"] = ""
+        cand["control_word_match"] = ""
+        cand["control_word_note"] = ""
 
 
 def _load_candidate_resume_text(cand, deps):
@@ -394,6 +414,15 @@ def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
             title_parts.append(interview_when)
     if cand.get("ai_score") is not None:
         title_parts.append(f"{cand['ai_score']}/4")
+    cw = (cand.get("control_word_status") or "").strip()
+    if cw == "exact":
+        title_parts.append("🔑 слово")
+    elif cw == "fuzzy":
+        title_parts.append("🔑≈ слово")
+    elif cw == "missing":
+        title_parts.append("без слова")
+    elif cw == "no_cover_letter":
+        title_parts.append("нет письма")
 
     if stage_tone:
         cid = cand.get("id", "unknown")
@@ -584,8 +613,12 @@ def render_candidate_card(vacancy, cand, idx, deps, *, archive_mode=False):
 
             if cand.get("ai_score") is not None:
                 st.markdown(render_ai_score_badge(cand["ai_score"]), unsafe_allow_html=True)
-                if cand.get("ai_comment"):
-                    st.info(cand["ai_comment"])
+                render_structured_ai_comment(cand, expanded=False)
+            badge = control_word_badge_html(cand)
+            if badge:
+                st.markdown(badge, unsafe_allow_html=True)
+                if cand.get("control_word_note"):
+                    st.caption(cand["control_word_note"])
             interview_q = cand.get("interview_questionnaire") or []
             legacy_focus = False
             if not interview_q and cand.get("interview_focus_questions"):
@@ -1188,7 +1221,7 @@ def _append_bulk_candidate(
     if (transcript or "").strip():
         cand["transcript"] = transcript.strip()
     if text:
-        populate_from_resume(cand, text, deps["client"], deps["config"])
+        populate_from_resume(cand, text, deps["client"], deps["config"], vacancy=vacancy)
     cand["cold_screening"] = True
     cand["hr_stage"] = "resume_screening"
     vacancy["candidates"].append(cand)
@@ -1505,7 +1538,7 @@ def render_add_candidate(vacancy, deps):
                         deps.get("transcribe_video_from_link"),
                     )
                 if text:
-                    populate_from_resume(cand, text, deps["client"], deps["config"])
+                    populate_from_resume(cand, text, deps["client"], deps["config"], vacancy=vacancy)
                     if not cand["name"] or cand["name"] == "Нет информации":
                         cand["name"] = name.strip()
             vacancy["candidates"].append(cand)

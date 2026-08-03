@@ -1,0 +1,83 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    database_url: str = "postgresql+psycopg://hr_v2:hr_v2_dev@localhost:5433/hr_v2"
+    legacy_data_dir: str = "../data"
+    cors_origins: str = "http://localhost:3000"
+    redis_url: str = "redis://localhost:6379/0"
+    default_org_name: str = "Default Organization"
+    default_org_slug: str = "default"
+
+    # Yandex SpeechKit / Object Storage (same keys as Streamlit .env)
+    yandex_api_key: str = ""
+    yandex_bucket_name: str = ""
+    yandex_access_key_id: str = ""
+    yandex_secret_access_key: str = ""
+    ffmpeg_binary: str = ""
+
+    # HeadHunter (system-wide employer manager token — option A)
+    hh_client_id: str = ""
+    hh_client_secret: str = ""
+    hh_access_token: str = ""
+    hh_refresh_token: str = ""
+    hh_api_base: str = "https://api.hh.ru"
+    hh_user_agent: str = "HR_AI_Agent_v2/1.0 (dialex307@gmail.com)"
+
+    # AI (same as Streamlit RouterAI by default)
+    routerai_api_key: str = ""
+    ai_api_key: str = ""
+    ai_base_url: str = "https://routerai.ru/api/v1"
+    ai_model_name: str = "qwen/qwen3.5-plus-20260420"
+
+    # Messaging Gateway (Telegram). Inbound off by default — do not steal polling from Streamlit.
+    telegram_bot_token: str = ""
+    messaging_outbound_enabled: bool = True
+    messaging_inbound_enabled: bool = False
+    # Local/dev: long-poll getUpdates (python -m app.workers.telegram_poller). Off when using HTTPS webhook.
+    messaging_poll_enabled: bool = False
+    telegram_hr_user_id: str = ""
+    telegram_reminder_tz: str = "Europe/Moscow"
+    messaging_reminder_interval_sec: int = 60
+
+    model_config = SettingsConfigDict(
+        env_file=("../../.env", "../.env", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    def resolved_legacy_data_dir(self) -> Path:
+        """Resolve Streamlit `data/` whether cwd is v2/ or v2/backend/."""
+        raw = Path(self.legacy_data_dir)
+        if raw.is_absolute():
+            return raw
+        here = Path(__file__).resolve()
+        # app/core/config.py → repo root = parents[4]
+        repo_data = here.parents[4] / "data"
+        candidates = [
+            (Path.cwd() / raw).resolve(),
+            (here.parents[3] / raw).resolve(),  # v2/<legacy>
+            repo_data,
+        ]
+        markers = (
+            "vacancies.json",
+            "app_settings.json",
+            "google_calendar_credentials.json",
+            "clients.json",
+        )
+        for path in candidates:
+            if any((path / m).exists() for m in markers):
+                return path
+        return candidates[0]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

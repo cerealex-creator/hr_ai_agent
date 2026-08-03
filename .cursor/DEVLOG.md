@@ -5,6 +5,1062 @@
 
 ---
 
+## 2026-08-03 — UX-пакет: Telegram comment, HH history, хаб, темы
+
+**Тип:** `feature` / `fix`
+
+**Сделано:**
+- Telegram: «Подумать»/«Отказ» и «Комментарий» снова шлют reply-prompt под карточкой (как Streamlit); якорь MessagingPost из callback.
+- HH: история поисков из `jobs` — последний результат после refresh + выбор прошлых прогонов.
+- Карточка вакансии: вкладки сразу после meta; «Управление вакансией» свёрнуто внизу.
+- Главная `/` — 3 блока; список вакансий на `/vacancies`.
+- Настройки: темы (светлая/тёмная/контраст) + ползунок шрифта (localStorage).
+- Убраны cutover/PostgreSQL/Streamlit-тексты из UI.
+
+**Файлы:** `inbound.py`, `jobs.py`, `endpoints.py`, `schemas.py`, `HhSearchPanel.tsx`, `vacancies/[id]/page.tsx`, `VacancyLifecycle.tsx`, `page.tsx`, `vacancies/page.tsx`, `AppShell.tsx`, `AppearanceSettings.tsx`, `UiPrefsProvider.tsx`, `globals.css`, …
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Согласовать модель «Компания → подразделения/чаты» и реализовать CRUD в Настройках.
+
+---
+
+## 2026-08-03 — HH поиск «Казначей»: ARQ был мёртв
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Диагностика: HH API и токен OK; джобы `hh_cold_search` висели в `queued`/`running` без прогресса, потому что ARQ worker не работал (процесс умирал после nohup / pkill).
+- Поднят ARQ в постоянном терминале; отменены orphan-джобы; очищены stuck Redis `arq:in-progress:*`.
+- Повторный поиск по вакансии 13 (Казначей) завершился: найдено 20, оценено 10, отсев 6, ~21 мин.
+
+**Файлы:** (ops) `run/logs/v2_arq.log`; job `39d4534c-…`
+
+**Git:** без правок кода
+
+**Следующий шаг:**
+- Держать ARQ живым (`arq app.workers.settings.WorkerSettings`); при «тихом» поиске сначала смотреть `/jobs` и процесс ARQ.
+
+---
+
+## 2026-08-03 — Новая вакансия из существующей / архива
+
+**Тип:** `feature`
+
+**Сделано:**
+- В «Новая вакансия»: режимы «С нуля» / «Из существующей» (архив сверху списка).
+- При выборе источника префиллятся title, client, chat; в API уходит `source_vacancy_id`.
+- Копируются documents + настройки; кандидаты не переносятся; `seen_paths` Я.Диска обнуляются.
+- В `VacancyListItem` добавлен `chat_id` для префилла.
+
+**Файлы:** `CreateVacancyForm.tsx`, `page.tsx`, `api.ts`, `schemas.py`, `endpoints.py`, `vacancy_write.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить создание из архивной вакансии и наличие документов на новой карточке.
+
+---
+
+## 2026-08-03 — Cutover Streamlit → v2
+
+**Тип:** `deploy` / `cutover`
+
+**Сделано:**
+- Snapshot `data/` → `data_snapshot_20260803/` (без `*.webm`).
+- Финальный импорт `--replace`: 8 clients, 11 vacancies, 99 candidates, 36 messaging_posts, 17 history, 4 templates.
+- Streamlit/`bot.py` не запущены; v2 на **боевом** токене `@hr_yourboxBot`.
+- Запущены API `:8000`, ARQ worker, telegram_poller; UI `:3000` уже был up.
+- `MESSAGING_INBOUND/OUTBOUND/POLL=true`.
+
+**Данные / конфиг:** `data_snapshot_20260803/`, `v2/.env` TELEGRAM_BOT_TOKEN=prod
+
+**Git:** незакоммичено (secrets в `.env` не коммитить)
+
+**Риски:**
+- Не запускать старый `bot.py` параллельно (409 Conflict).
+- `data/` и snapshot хранить для отката.
+
+**Следующий шаг:**
+- Smoke: кнопка статуса в боевом чате + 2–3 карточки в UI vs snapshot.
+
+---
+
+## 2026-08-01 — Настройки: CRUD чатов как в Streamlit
+
+**Тип:** `feature`
+
+**Сделано:**
+- Форма «Сохранить чат»: название + Chat ID + подразделение (существующее или «Создать новое»).
+- Переименование (имя/chat_id), смена подразделения, удаление чата.
+- Тест и инструкция — `<select>` из списка чатов, не ручной ввод.
+- API: `POST /clients`, `POST/PATCH/DELETE /messaging/channels`; sync `vacancy.chat_id` по client_id.
+
+**Файлы:** `clients_write.py`, `channels.py`, `schemas.py`, `endpoints.py`, `settings/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить в UI: создать чат с новым отделом, тест/инструкция из дропдауна, rename/delete.
+
+---
+
+## 2026-08-01 — HR-confirm refresh + сводка в чат
+
+**Тип:** `fix` / `feature`
+
+**Сделано:**
+- После кнопки `mhc` / явки в ЛС HR карточка обновляется в чате **заказчика** (`find_client_chat_post` по `vacancy.chat_id`), а не по chat_id ЛС.
+- В HTML карточки Telegram при встрече: «подтверждена HR» / «ожидает подтверждения HR».
+- Кнопка «Сводка в чат» под meta-grid на странице вакансии → `POST /vacancies/{id}/digest-to-chat`.
+- Инструкция заказчику по-прежнему только в Настройках.
+
+**Файлы:** `inbound.py`, `card_html.py`, `VacancyDigestButton.tsx`, `vacancies/[id]/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перезапустить poller/API; нажать HR-confirm и проверить карточку в чате + F5 в веб.
+
+---
+
+## 2026-08-01 — UX: документы, календарь, чат, Я.Диск keys
+
+**Тип:** `fix` / `polish`
+
+**Сделано:**
+- Пустые документы больше не считаются «есть» (убран fallback на Object.keys).
+- Параметры вакансии / автозагрузка — свёрнуты по умолчанию.
+- Календарь: по умолчанию не удалять; чекбокс «Удалить событие…».
+- Chat: title канала + Редактировать; кандидаты сортируются как Streamlit.
+- Статус «wait» при отказе/до клиента → «не показывался» / «не отправлен».
+- HR-confirm встречи на карточке; Я.Диск RU + unique keys в логе.
+
+**Файлы:** vacancy page, ChatSelect, VacancySettingsPanel, BulkLinksForm, CandidateEditor, labels, YandexDiskPanel, endpoints, schemas
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Обновить UI и перепроверить вакансию «Менеджер по работе с блогерами» (синк Я.Диск).
+
+---
+
+**Тип:** `fix` / `polish`
+
+**Сделано:**
+- Выбор чата из списка каналов при создании/настройках вакансии (`ChatSelect`).
+- Авто-refresh TG-карточки при save ссылок + кнопка «Обновить данные» с notify и deep-link.
+- Комменты заказчика к статусу в summary; LinkField Open/Edit; ActionBanner у секции.
+- Manual remind без ложных «5 дней»; OAuth parse `code=` + PKCE pending; сайдбар на Settings.
+
+**Файлы:** `ChatSelect.tsx`, `LinkField.tsx`, `ActionBanner.tsx`, `CandidateEditor.tsx`, `ops.py`, `reminders.py`, `google_calendar.py`, Settings/CreateVacancy…
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Для Андроповой: переотправить карточку из v2 (старые кнопки Streamlit не работают).
+
+---
+
+## 2026-07-30 — Cutover волны B → A1 → A2
+
+**Тип:** `feature`
+
+**Сделано:**
+- Волна 0: import wipe messaging/hh, `telegram_posts`→`messaging_posts`, history ids, CUTOVER verify.
+- A1: reminder tick (poller), attendance/HR-confirm, digests/commands/nav, ops API (remind/materials/digest/instruction/refresh), Settings UI.
+- A2: task_link/materials/history/control_word/is_test, apply client stage, copy, search; warranty registry/create; Google Calendar sync + OAuth UI.
+
+**Файлы:** `import_json.py`, `CUTOVER.md`, `messaging/*`, `telegram_poller.py`, `endpoints.py`, `warranty.py`, `google_calendar.py`, `interview_calendar.py`, `candidate_copy.py`, `candidate_search.py`, Settings/CandidateEditor/VacancySettingsPanel/…
+
+**Данные / конфиг:** `TELEGRAM_HR_USER_ID`, reminder tz/interval, `GOOGLE_CALENDAR_*`, `data/app_settings.json` (warranty months)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Smoke: poller reminders + Settings OAuth + warranty на 1 вакансии; pip install google libs в v2 venv.
+
+---
+
+## 2026-07-30 — Чеклист фич до cutover
+
+**Тип:** `docs`
+
+**Сделано:**
+- Файл `v2/CUTOVER_FEATURE_CHECKLIST.md`: Missing/Partial vs Streamlit + требования идентичности данных (вакансии/кандидаты/stats) и день cutover.
+
+**Файлы:** `v2/CUTOVER_FEATURE_CHECKLIST.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Пользователь отмечает нужные пункты → приоритизация переноса.
+
+---
+
+## 2026-07-30 — Telegram poller как сервис
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Модуль `python -m app.workers.telegram_poller` (getUpdates, снимает webhook).
+- Флаг `MESSAGING_POLL_ENABLED`; docker profile `messaging` → `telegram-poller`.
+- README / `.env.example` / `messaging/status` обновлены.
+
+**Файлы:** `telegram_poller.py`, `config.py`, `endpoints.py`, `docker-compose.yml`, `README.md`, `.env.example`
+
+**Данные / конфиг:** `MESSAGING_POLL_ENABLED`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Держать poller запущенным на тестовом токене; позже — HTTPS webhook без poll.
+
+---
+
+## 2026-07-30 — Cleanup чата после комментария + confirmation
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- После фиксации комментария: удаляются prompt бота и сообщение пользователя.
+- Бот пишет подтверждение с текстом комментария и reply на карточку (+ `t.me/c/...` в супергруппах).
+
+**Файлы:** `inbound.py`, `telegram_provider.py`
+
+**Риски:** удаление чужих сообщений в группе требует прав админа у бота.
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перезапустить poller; сделать бота админом тестового чата при необходимости.
+
+---
+
+## 2026-07-30 — Комментарии к статусу отдельно в карточке чата
+
+
+**Тип:** `polish`
+
+**Сделано:**
+- Комментарии к «Подумать»/«Отказ» сохраняются с пометкой `к статусу «…»:`.
+- В Telegram-карточке: блок «Комментарий к статусу» vs обычный «Комментарий».
+
+**Файлы:** `client_apply.py`, `card_html.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перезапустить poller и проверить think/reject + кнопку «Комментарий».
+
+---
+
+## 2026-07-30 — Удаление prompt-сообщения после комментария
+
+
+**Тип:** `fix`
+
+**Сделано:**
+- Сообщение «Для статуса нужна короткая причина…» сохраняет `prompt_message_id` в pending action.
+- После отправки комментария prompt удаляется из чата (`deleteMessage`).
+
+**Файлы:** `v2/backend/app/services/messaging/inbound.py`, `telegram_provider.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить think/reject в тестовом чате: prompt исчезает после reply.
+
+---
+
+## 2026-07-29 — Карточка: встреча + live-обновление из чата
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- В summary карточки при назначенной встрече показываются дата/время, формат (онлайн/офис) и «подтверждено / не подтверждено» (`payload.meeting_hr_confirmed`).
+- Пока открыта карточка — polling ~8 с: изменения из чата (статус / встреча / комментарий) подтягиваются сами; если форма грязная — баннер «Обновить карточку».
+- Постоянный webhook без терминала — отложено (пока local poller / tunnel).
+
+**Файлы:** `v2/frontend/components/CandidateEditor.tsx`, `v2/frontend/app/globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Smoke: смена статуса/встречи в тестовом чате → обновление summary без F5.
+
+---
+
+## 2026-07-28 — Messaging Gateway slice 2 (inbound)
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Outbound `send-to-chat` шлёт карточку с inline-кнопками (статусы + комментарий), короткий `tg_callback_id`.
+- Inbound: webhook обрабатывает `cs/cc/cchg/ccl` + wizard встречи `ivi/ivd/ivt/ivf/ivc/ivx` → PG (`client_status`, `hr_stage`, дата встречи, комментарии, `messaging_actions`).
+- Pending-комментарии для think/reject живут в `messaging_actions` (не в памяти).
+- Флаг `MESSAGING_INBOUND_ENABLED` (default false) — не конфликтует с polling `bot.py`.
+- Документы: README, CUTOVER, `.env.example`.
+
+**Файлы:** `messaging/keyboards.py`, `client_apply.py`, `inbound.py`, `gateway.py`, `telegram_provider.py`, `card_html.py`, `config.py`, `endpoints.py`, `main.py`, `CandidateEditor.tsx`
+
+**Данные / конфиг:** `MESSAGING_INBOUND_ENABLED=false` по умолчанию
+
+**Git:** незакоммичено
+
+**Риски/регрессии:**
+- Не включать inbound на боевом токене, пока крутится Streamlit-бот.
+- HR-confirm встречи / attendance — ещё не в v2.
+
+**Следующий шаг:**
+- Smoke на тестовом токене (webhook или ручной POST update).
+
+---
+
+## 2026-07-28 — Анкета свёрнута по умолчанию
+
+**Тип:** `polish`
+
+**Сделано:**
+- Блок «Анкета» в карточке кандидата свёрнут по умолчанию, разворачивается по клику (как остальные секции).
+- Опросник тоже всегда свёрнут по умолчанию (раньше открывался, если уже были вопросы).
+
+**Файлы:** `v2/frontend/components/CandidateEditor.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Inbound Messaging ближе к cutover.
+
+---
+
+## 2026-07-28 — Карточка: сводка сверху + свёртка блоков
+
+**Тип:** `polish`
+
+**Сделано:**
+- Сверху сводка: оценка ИИ, HR-этап + статус заказчика, «в работе с … · N дн.» (teal), «ждёт решения с … · N дн.» (янтарный) при просроченном собеседовании/встрече или на оценке/паузе у заказчика.
+- Дата встречи с заказчиком = `office_interview_date` (как ставит Telegram-бот).
+- Ниже анкеты блоки сворачиваются по отдельности: Этап, Опросник, Telegram, Комментарий ИИ.
+- `npm run build` OK.
+
+**Файлы:** `CandidateEditor.tsx`, `CollapsibleCard.tsx`, `QuestionnairePanel.tsx`, `dates.ts`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Inbound Messaging ближе к cutover.
+
+---
+
+## 2026-07-28 — Полировка собеседования и карточки кандидата
+
+**Тип:** `polish`
+
+**Сделано:**
+- Карточка кандидата упорядочена: Карточка → Этап → Опросник и собеседование → Telegram → Комментарий ИИ.
+- Убраны дубли: отдельный блок «Оценка ИИ», поля расшифровки и замечаний опросника из тела карточки.
+- Действия собеседования собраны в одном блоке; черновик ссылки на запись передаётся до сохранения; расшифровка — свёрнутый просмотр.
+- Антидубль job `candidate_interview_process` + флаг `reused` в ответе API; fill опросника автогенерит шаблон при пустом.
+- Подписи оценок ИИ по-русски (`satisfactory` → «Удовлетворительно»).
+- `npm run build` OK.
+
+**Файлы:** `CandidateEditor.tsx`, `QuestionnairePanel.tsx`, `globals.css`, `endpoints.py`, `schemas.py`, `jobs.py`, `candidate_questionnaire.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Inbound Messaging ближе к cutover.
+
+---
+
+## 2026-07-28 — Fix: next build (`defaultOpen` у details)
+
+**Тип:** `fix`
+
+**Сделано:**
+- `DocumentBlock`: controlled `open`/`onToggle` вместо `defaultOpen` (React 19 types).
+- Убран `defaultOpen={false}` в `DocumentsEditor`.
+- `npm run build` проходит успешно.
+
+**Файлы:** `v2/frontend/components/DocumentBlock.tsx`, `DocumentsEditor.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Inbound Messaging ближе к cutover.
+
+---
+
+## 2026-07-28 — Опросник: новый сценарий карточки кандидата
+
+**Тип:** `feature`
+
+**Сделано:**
+- Блок `Опросник` переработан: вместо отдельной кнопки формирования теперь единый сценарий с подблоком `Настройки`.
+- Если оценки кандидата еще нет, доступна кнопка `Оценить кандидата и сформировать опросник`; после оценки опросник создается автоматически.
+- Добавлены замечания рекрутера для повторного создания опросника; повторное создание сохраняет уже внесенные заметки и оценки, где это возможно.
+- После добавления ссылки на запись собеседования повторное создание опросника блокируется.
+- Добавлена обработка записи собеседования: `Расшифровать и оценить`, очищенная расшифровка в карточке и `Заполнить опросник` по смыслу ответов кандидата.
+- Добавлен переход из кандидата в шаблон опросника вакансии и ссылка обратно к кандидату.
+- Проверка: `npm run build` зеленый; mocked smoke подтвердил создание, повторное создание, заполнение по расшифровке и блокировку после ссылки на запись.
+
+**Файлы:** `v2/frontend/components/QuestionnairePanel.tsx`, `CandidateEditor.tsx`, `DocumentsEditor.tsx`, `v2/frontend/app/vacancies/[id]/page.tsx`, `v2/backend/app/services/candidate_questionnaire.py`, `questionnaire_normalize.py`, `transcription.py`, `v2/backend/app/workers/tasks.py`, `settings.py`, `endpoints.py`, `schemas.py`, `candidate_write.py`, `candidate_fields.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Прогнать вручную живой сценарий со ссылкой на запись собеседования и очередью Redis/ARQ.
+
+---
+
+## 2026-07-28 — Паритет: опросник на карточке кандидата
+
+**Тип:** `feature`
+
+**Сделано:**
+- API: `GET/PUT /candidates/{id}/questionnaire`, `POST …/questionnaire/generate` (шаблон вакансии + «в резюме» + персональные уточнения).
+- UI: блок опросника на карточке — сформировать, заметки, оценки HR, порядок вопросов, сохранение.
+- Нормализация списка (в т.ч. pipe-dump) в `questionnaire_normalize.py`.
+
+**Файлы:** `v2/backend/app/services/questionnaire_normalize.py`, `candidate_questionnaire.py`, `candidate_fields.py`, `endpoints.py`, `schemas.py`, `QuestionnairePanel.tsx`, `CandidateEditor.tsx`, `globals.css`, `lib/api.ts`, `v2/README.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Оценка по интервью (паритет Streamlit).
+
+---
+
+## 2026-07-28 — Паритет: оценка по интервью + автоген опросника
+
+**Тип:** `feature`
+
+**Сделано:**
+- Добавлен `POST /candidates/{id}/evaluate-interview`: ИИ учитывает профиль вакансии, резюме, предварительную оценку по резюме, опросник с оценками HR, расшифровку и заметки интервью.
+- После `POST /candidates/{id}/evaluate-resume` опросник кандидата формируется автоматически, если его еще нет.
+- В payload сохраняются отдельные снапшоты `resume_ai_*` и `interview_ai_*`, а карточка показывает актуальную итоговую оценку с источником `interview`.
+- UI карточки кандидата дополнен полями `transcript` и `interview_eval_notes` и кнопкой «Оценить по интервью».
+- Прогнан mocked smoke: resume eval -> questionnaire autogen -> interview eval; цепочка записи в PostgreSQL подтверждена.
+
+**Файлы:** `v2/backend/app/services/candidate_interview_eval.py`, `candidate_resume_eval.py`, `candidate_fields.py`, `endpoints.py`, `schemas.py`, `v2/frontend/components/CandidateEditor.tsx`, `v2/frontend/lib/api.ts`, `v2/README.md`
+
+**Git:** незакоммичено
+
+**Риски/регрессии:** `next build` падает на старой ошибке в `v2/frontend/components/DocumentBlock.tsx` (`defaultOpen` у `<details>`), не связанной с этой задачей.
+
+**Следующий шаг:**
+- Inbound Messaging ближе к cutover или отдельный фикс `DocumentBlock.tsx` для чистой production-сборки.
+
+---
+
+## 2026-07-28 — Паритет: CRUD вакансий
+
+**Тип:** `feature`
+
+**Сделано:**
+- API: `POST /vacancies`, `POST …/close` (`success` | `client_cancelled`), `POST …/reopen`, `DELETE …/vacancies/{id}` (каскад кандидатов/HH/messaging posts).
+- Успешное закрытие — только при hire (internship/started_work), как в Streamlit.
+- UI: «+ Новая вакансия» на списке; блок «Жизненный цикл» на карточке вакансии.
+
+**Файлы:** `v2/backend/app/services/vacancy_write.py`, `endpoints.py`, `schemas.py`, `CreateVacancyForm.tsx`, `VacancyLifecycle.tsx`, `app/page.tsx`, `vacancies/[id]/page.tsx`, `globals.css`, `v2/README.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- P0 паритет: опросник на карточке кандидата.
+
+---
+
+## 2026-07-28 — Карточка: клик по оценке → разворот комментария ИИ
+
+**Тип:** `fix`
+
+**Сделано:**
+- Строки «Оценка по резюме: N/4» и «Оценка ИИ: N/4 · …» кликабельны — раскрывают блок комментария ИИ и скроллят к нему.
+- Подпись источника без английского: `resume` → «по резюме», `interview` → «по интервью».
+
+**Файлы:** `v2/frontend/components/CandidateEditor.tsx`, `AiCommentBlock.tsx`, `globals.css`
+
+**Следующий шаг:**
+- P0 паритет: CRUD вакансий.
+
+---
+
+## 2026-07-28 — Паритет slice 1: оценка резюме + bulk PDF
+
+**Тип:** `feature`
+
+**Сделано:**
+- `POST /candidates/{id}/evaluate-resume` — PDF→текст, extract полей, оценка 0–4 по профилю вакансии (как Streamlit «Оценить по резюме»).
+- `POST /vacancies/{id}/candidates/bulk-links` — автозагрузка по списку PDF-ссылок (+ опция сразу оценить).
+- UI: кнопка на карточке; блок «Автозагрузка по ссылкам» на вакансии.
+- Зависимость `pypdf`.
+
+**Файлы:** `v2/backend/app/services/pdf_extract.py`, `candidate_resume_eval.py`, `candidate_fields.py`, `endpoints.py`, `schemas.py`, `requirements.txt`, `CandidateEditor.tsx`, `BulkLinksForm.tsx`, `vacancies/[id]/page.tsx`, `lib/api.ts`, `v2/README.md`
+
+**Проверка:** Докучаева — оценка 3/4, `profile_present=true`.
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- P0 паритет: CRUD вакансий (создать / закрыть / удалить).
+
+---
+
+## 2026-07-27 — v2: синхронизация Яндекс.Диска
+
+**Тип:** `feature`
+
+**Сделано:**
+- Выбран следующий шаг после Messaging slice 1: автопривязка файлов с Диска (без cutover / без ломки Streamlit).
+- `sync_vacancy_yandex_disk`: подпапки Резюме/Записи/Задания → `resume_link` / `video_link` / `task_link` по ФИО; опционально новые кандидаты из PDF.
+- API: `GET/PATCH …/yandex-disk`, `POST …/yandex-disk/sync`; ARQ job `yandex_disk_sync`.
+- UI: вкладка «Я.Диск» на вакансии. Telegram-карточки открывают `yadisk:` через view URL.
+
+**Файлы:** `v2/backend/app/services/yandex_disk_sync.py`, `yandex_public.py`, `endpoints.py`, `schemas.py`, `workers/tasks.py`, `settings.py`, `messaging/card_html.py`, `YandexDiskPanel.tsx`, `vacancies/[id]/page.tsx`, `globals.css`, `v2/README.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Паритет / cutover prep или Messaging inbound ближе к переключению.
+
+---
+
+## 2026-07-27 — Messaging Gateway slice 1 (outbound)
+
+**Тип:** `feature`
+
+**Сделано:**
+- Таблицы `messaging_posts`, `messaging_actions`; sync каналов из `vacancy.chat_id`.
+- `TelegramProvider` + `POST /candidates/{id}/send-to-chat` (HTML-карточка без кнопок; опционально этап `client_review`).
+- API: `GET/POST /messaging/channels`, `/messaging/status`, stub `POST /integrations/telegram/webhook` (polling Streamlit не трогаем).
+- UI: кнопка «Отправить в чат заказчика» на карточке кандидата.
+
+**Файлы:** `v2/backend/app/db/models.py`, `services/messaging/*`, `endpoints.py`, `schemas.py`, `config.py`, `main.py`, `CandidateEditor.tsx`, `globals.css`, `v2/.env.example`, `v2/README.md`, `ARCHITECTURE_TARGET.md`
+
+**Данные / конфиг:** `TELEGRAM_BOT_TOKEN`, `MESSAGING_OUTBOUND_ENABLED` (из корневого `.env`)
+
+**Git:** незакоммичено
+
+**Риски/регрессии:**
+- Не включать Telegram webhook на этот токен, пока жив Streamlit polling.
+- Живая отправка идёт в реальные чаты вакансий.
+
+**Следующий шаг:**
+- Slice 2 inbound (кнопки → доменные события → PG) ближе к cutover; или паритет UX.
+
+---
+
+## 2026-07-27 — Статистика: drill-down в списки кандидатов
+
+**Тип:** `feature`
+
+**Сделано:**
+- `GET /api/v1/candidates` — фильтры `client_id` / `vacancy_id` / `active_vacancies_only` / `hr_stage` / `client_status` / `preset` (`sent_to_client` | `in_client_zone` | `hires`); семантика как у `/stats/funnel`.
+- Страница `/candidates` — таблица выборки со ссылками на карточку и вакансию.
+- На `/stats` кликабельны KPI по кандидатам, строки воронки HR и статусов заказчика.
+
+**Файлы:** `v2/backend/app/services/candidate_query.py`, `endpoints.py`, `schemas.py`, `v2/frontend/app/candidates/page.tsx`, `app/stats/page.tsx`, `lib/api.ts`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Messaging Gateway или автопривязка PDF с Я.Диска.
+
+---
+
+## 2026-07-27 — Статистика v2: scope, HH, активность
+
+**Тип:** `feature`
+
+**Сделано:**
+- Воронка: фильтр по вакансии/клиенту; метрики `sent_to_client` и «сейчас в зоне заказчика+»; блок оценки заказчика начинается с «отправлено на оценку».
+- HH: `GET /stats/hh` — viewed / score>2 / shortlist / in_funnel / автоотсев / reject рекрутера / jobs.
+- Активность: `GET /stats/activity?period=day|week|month|…` + мини-график на `/stats`.
+- UI: чипы клиент/вакансия, период, легенда графика.
+
+**Файлы:** `v2/backend/app/services/stats_service.py`, `endpoints.py`, `schemas.py`, `v2/frontend/app/stats/page.tsx`, `globals.css`, `lib/api.ts`, `v2/README.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Messaging Gateway или автопривязка PDF с Я.Диска.
+
+---
+
+## 2026-07-27 — Опросник: стена текста из дампа старой таблицы
+
+**Тип:** `fix`
+
+**Сделано:**
+- Причина: в `documents.questions` / `interview_questionnaire` попал дамп старой grid-таблицы (`№ | Вопрос | … | False`) одной строкой — UI рисовал её как один вопрос.
+- `normalize_questionnaire_list` / `parse_questionnaire_input` восстанавливают список вопросов из такого дампа.
+- Починены данные вакансии «Менеджер по работе с блогерами» и кандидаты Белов / Пчельникова; бэкап `data/vacancies_db.json.bak_qfix`.
+
+**Файлы:** `resume_ai.py`, `hri_full_v1.py`, `questionnaire_grid.py`, `data/vacancies_db.json`
+
+**Следующий шаг:**
+- Перезапустить Streamlit, открыть карточку — опросник списком по вопросам.
+
+---
+
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- `POST /vacancies/{id}/documents/generate` — секции `profile` / `vacancy_text` / `questions` / `keywords`; поле `corrections` для перегенерации; `apply=true` пишет в PG.
+- UI: в каждой строке аккордеона кнопка «Сгенерировать» / «Перегенерировать» + textarea коррективов (если уже есть текст).
+- Заметки (`notes`) — только вручную. Streamlit не трогали.
+
+**Файлы:** `v2/backend/app/services/ai_json.py`, `document_generate.py`, `endpoints.py`, `schemas.py`, `DocumentsEditor.tsx`, `DocumentBlock.tsx`, `globals.css`
+
+**Следующий шаг:**
+- Messaging Gateway или автопривязка PDF с Я.Диска.
+
+---
+
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- `PATCH /vacancies/{id}/documents` — merge только `profile` / `vacancy_text` / `questions` / `keywords` / `notes` (не затирает `hh_search_criteria`).
+- `GET …/documents/editor` — строки для textarea.
+- UI вкладка «Документы»: редактор + просмотр; сохранение только в PostgreSQL.
+
+**Файлы:** `v2/backend/app/services/vacancy_documents_write.py`, `endpoints.py`, `schemas.py`, `v2/frontend/components/DocumentsEditor.tsx`, `app/vacancies/[id]/page.tsx`, `v2/README.md`
+
+**Следующий шаг:**
+- Messaging Gateway или автопривязка PDF с Я.Диска.
+
+---
+
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- API: `PATCH /candidates/{id}`, `POST /candidates/{id}/stage`, `POST /vacancies/{id}/candidates`, `DELETE /candidates/{id}`, `GET /meta/hr-stages`.
+- Семантика этапа как в Streamlit (`hr_stage_history`, `client_review` → `client_status=wait`); без Google Calendar и warranty.
+- UI: редактируемая карточка, фиксация этапа, создание/удаление; поля `resume_link` (PDF Я.Диск) и `hh_resume_link` (HH без контактов).
+- Streamlit / `data/` не трогались.
+
+**Файлы:** `v2/backend/app/services/candidate_write.py`, `endpoints.py`, `schemas.py`, `candidate_fields.py`, `v2/frontend/components/CandidateEditor.tsx`, `AddCandidateForm.tsx`, `app/candidates/[id]/page.tsx`, `vacancies/[id]/page.tsx`, `globals.css`, `v2/README.md`, `CUTOVER.md`, `ARCHITECTURE_TARGET.md`
+
+**Следующий шаг:**
+- Документы вакансии / ARQ или автопривязка PDF с Я.Диска к кандидату (без ломки Streamlit).
+
+---
+
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- `POST /vacancies/{id}/hh-shortlist/{item_id}/to-candidate` — создаёт кандидата в PG (этап `resume_screening`, `cold_screening`, ссылка HH, AI-оценка из snapshot).
+- Идемпотентность по `hh_resume_id`; после перевода — убрать из shortlist + `hh_seen` reason `in_funnel` (не попадает снова в cold search).
+- UI: кнопка «В воронку» в shortlist + ссылка на карточку / список кандидатов.
+- Имя без контактов: `HH · {title}` (FIO появятся после открытия контактов — отдельно).
+
+**Файлы:** `v2/backend/app/services/hh_to_candidate.py`, `hh_seen.py`, `endpoints.py`, `schemas.py`, `v2/frontend/components/HhSearchPanel.tsx`, `globals.css`, `v2/README.md`, `ARCHITECTURE_TARGET.md`
+
+**Следующий шаг:**
+- Write path (этапы/карточки) или открытие контактов HH.
+
+---
+
+
+
+**Тип:** `decision` / `docs`
+
+**Сделано:**
+- Зафиксировано: Auth/роли/веб-кабинет заказчика не в ближайшем scope (один оператор; заказчик в мессенджере).
+- Cutover — только после полной готовности и сверки актуальности данных (без dual-write).
+- Обновлены актуальный план шагов и чеклист cutover.
+
+**Файлы:** `ARCHITECTURE_TARGET.md`, `v2/README.md`, `v2/CUTOVER.md`
+
+**Следующий шаг:**
+- HH shortlist → кандидат + write path по сценариям HR.
+
+---
+
+## 2026-07-24 — v2: холодный поиск резюме HH + ИИ-оценка
+
+**Тип:** `feature`
+
+**Сделано:**
+- Системный `HH_ACCESS_TOKEN` (вариант A): клиент поиска/просмотра **без** открытия контактов.
+- ARQ job `hh_cold_search`: keywords → `GET /resumes` → `GET /resumes/{id}` → оценка ИИ (RouterAI).
+- API defaults `GET /vacancies/{id}/hh-search-defaults`; создание job с `vacancy_id` + keywords.
+- UI вкладка «Поиск HH» на карточке вакансии: shortlist со score 0–4, ссылка на HH, без контактов.
+
+**Файлы:** `v2/backend/app/services/hh_*.py`, `resume_eval.py`, `vacancy_docs.py`, `workers/tasks.py`, `api/v1/endpoints.py`, `core/config.py`; `v2/frontend/components/HhSearchPanel.tsx`, `vacancies/[id]/page.tsx`; `v2/.env.example`
+
+**Данные / конфиг:** `HH_ACCESS_TOKEN`, `HH_USER_AGENT`, `ROUTERAI_API_KEY` (из корневого `.env`)
+
+**Git:** незакоммичено
+
+**Риски/регрессии:**
+- Нужен валидный employer token; иначе 403.
+- Дневной лимит просмотров HH (~50 API) — `max_evaluate` по умолчанию 10.
+- Открытие контактов / привязка в карточку — не сделаны.
+
+**Следующий шаг:**
+- Прописать `HH_ACCESS_TOKEN`, перезапустить API+worker, прогнать вкладку «Поиск HH».
+
+---
+
+## 2026-07-24 — HH: не оценивать повторно «не тех»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Таблица `hh_seen_resumes`: автобан при AI score ≤ 1; кнопка «✕» — отклонение рекрутером; shortlist тоже исключается из повторной оценки.
+- При следующем поиске такие резюме пропускаются до ИИ, в выдаче пометка «уже смотрели».
+- API: `GET/POST reject/DELETE` `/vacancies/{id}/hh-seen…`.
+
+**Файлы:** `hh_seen.py`, `models.py`, `tasks.py`, `endpoints.py`, `schemas.py`, `HhSearchPanel.tsx`
+
+**Данные:** новая таблица `hh_seen_resumes`
+
+**Следующий шаг:**
+- Прогнать поиск дважды на одной вакансии — низкие оценки не должны снова идти в ИИ.
+
+---
+
+## 2026-07-24 — HH: pre-filter + квоты запросов
+
+**Тип:** `feature`
+
+**Сделано:**
+- Поиск по строкам keywords с приоритетом (квоты ~50/30/остаток) + добор при недоборе.
+- Pre-filter до оценки: hard-отсев руководителей/reject по title; soft title — только для добора.
+- Флаг `smart_prefilter` (вкл. по умолчанию) в воронке; в результатах — причина отсева и исходный запрос.
+
+**Файлы:** `hh_prefilter.py`, `hh_client.py`, `hh_search_criteria.py`, `tasks.py`, `HhSearchPanel.tsx`
+
+**Следующий шаг:**
+- Прогнать поиск и проверить отсев «Руководитель направления» без траты слота ИИ.
+
+---
+
+## 2026-07-24 — HH UI: упрощение панели поиска
+
+**Тип:** `refactor` / `ux`
+
+**Сделано:**
+- Три шага: Кого ищем → Воронка HH → Результаты.
+- Портрет + комментарий на первом экране; must/reject/названия — в «Дополнительно».
+- Убраны селекты приоритета у каждого фильтра и простыня FieldHint.
+- Warnings: жёсткие сразу, info за «Подсказки»; primary CTA «Искать на HH» в футере.
+
+**Файлы:** `HhSearchPanel.tsx`, `globals.css`
+
+**Следующий шаг:**
+- Открыть вкладку Поиск HH и пройти сценарий глазами.
+
+---
+
+## 2026-07-24 — HH: фильтр свежести резюме (period)
+
+**Тип:** `feature`
+
+**Сделано:**
+- В воронку добавлено «Обновлено за»: 7 / 14 / 30 / 90 дней или без ограничения.
+- В API HH уходит `period`; дефолт для новых критериев — 30 дней.
+- Prefill ИИ может задавать `period_days`.
+
+**Файлы:** `hh_search_criteria.py`, `hh_client.py`, `tasks.py`, `hh_criteria_prefill.py`, `HhSearchPanel.tsx`
+
+**Следующий шаг:**
+- Выбрать срок на вкладке Поиск HH, сохранить, прогнать поиск.
+
+---
+
+## 2026-07-24 — HH: AI-prefill критериев + комментарий рекрутера
+
+**Тип:** `feature`
+
+**Сделано:**
+- Авто-prefill критериев при первом открытии пустых (профиль + документы + последняя расшифровка job по вакансии).
+- Предупреждение `prefill_unreviewed` + confirm перед поиском, если правок рекрутера не было.
+- Поле «Комментарий рекрутера» — приоритет №1 в оценке; усилен промпт (сфера, overqualified, ЗП).
+- Кнопка «Перезаполнить из профиля (ИИ)».
+
+**Файлы:** `hh_criteria_prefill.py`, `hh_search_criteria.py`, `resume_eval.py`, `endpoints.py`, `HhSearchPanel.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- На вакансии с профилем нажать «Перезаполнить из профиля», поправить комментарий, запустить поиск.
+
+---
+
+## 2026-07-24 — HH UI: правка портрета, пробелы, fit по-русски
+
+**Тип:** `fix`
+
+**Сделано:**
+- Убран trim/filter при каждом нажатии в многострочных полях — можно ставить пробел, Enter и править середину строки портрета.
+- Нормализация строк только при Save / запуске поиска.
+- Fit в таблице: «Офис / Должность / Дорога» + да|частично|нет|неясно.
+
+**Файлы:** `v2/frontend/components/HhSearchPanel.tsx`
+
+**Следующий шаг:**
+- Проверить правку портрета в середине строки после refresh UI.
+
+---
+
+## 2026-07-24 — HH поиск: критерии, портрет, shortlist
+
+**Тип:** `feature`
+
+**Сделано:**
+- Критерии поиска хранятся в `vacancy.documents.hh_search_criteria` (сохранение сразу).
+- UI: воронка HH + критерии ИИ + приоритеты Жёстко/Важно/Желательно + **редактируемый портрет** + warnings.
+- Job/оценка: фильтры area/schedule/salary; промпт с портретом; флаги office/title/commute; сортировка.
+- Shortlist у вакансии: таблица `hh_shortlist_items`, ★ из результатов, API list/add/delete.
+
+**Файлы:** `hh_search_criteria.py`, `hh_client.py`, `resume_eval.py`, `tasks.py`, `endpoints.py`, `models.py`, `schemas.py`, `HhSearchPanel.tsx`, `documents_preview.py`
+
+**Данные / конфиг:** новая таблица `hh_shortlist_items` (create_all)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Прогнать поиск на вакансии с заполненным портретом; проверить ★ shortlist.
+
+---
+
+## 2026-07-24 — HH OAuth: диагностика bad_authorization + скрипт авторизации
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Диагностика: `HH_ACCESS_TOKEN` в корневом `.env` невалиден (`bad_authorization`); `HH_REFRESH_TOKEN` жив, но refresh отвечает `token not expired` — в `.env` лежит не та пара access/refresh.
+- Скрипт `v2/backend/scripts/hh_oauth.py` — OAuth code flow, проверка `/me` и `/resumes`, вывод строк для `.env`.
+- Config: `HH_CLIENT_ID`, `HH_CLIENT_SECRET`, `HH_REFRESH_TOKEN`; дефолтный `HH_USER_AGENT` с реальным email.
+- `hh_client.py`: auto-refresh при `token_expired`.
+
+**Файлы:** `v2/backend/scripts/hh_oauth.py`, `app/core/config.py`, `app/services/hh_client.py`
+
+**Данные / конфиг:** нужны валидные `HH_ACCESS_TOKEN` + `HH_USER_AGENT` в корневом `.env`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Запустить `hh_oauth.py`, обновить `.env`, перезапустить API + worker.
+
+---
+
+**Тип:** `feature`
+
+**Сделано:**
+- v2: левая панель «Клиент» по умолчанию на всех экранах (`DefaultClientSidebar` в `AppShell`).
+- Streamlit: оценка резюме → `ai_comment_sections` (как профиль); UI свёрнут по умолчанию.
+- Streamlit: настройка вакансии «Контрольное слово» (чекбокс + фраза); ИИ ищет только в сопроводительном, exact/fuzzy; бейдж в списке и карточке.
+- v2: шкала HR-этапа на карточке кандидата (тест «на глаз»); свёрнутый блок комментария ИИ.
+- Фото кандидата — отложено (без автовырезания из PDF).
+
+**Файлы:** `v2/frontend/components/AppShell.tsx`, `DefaultClientSidebar.tsx`, `StageProgress.tsx`, `AiCommentBlock.tsx`, `candidates/[id]/page.tsx`, `globals.css`, `labels.ts`; `resume_ai.py`, `eval_ui.py`, `candidate_funnel.py`, `vacancy_prep.py`, `vacancy_store.py`, `models.py`, `hri_full_v1.py`, `yandex_disk_ingest.py`; v2 API `candidate_fields` / `schemas`
+
+**Данные / конфиг:** новые поля вакансии `control_word_enabled`, `control_word`; у кандидата `control_word_*`, `ai_comment_sections` (в JSON вакансий)
+
+**Git:** незакоммичено
+
+**Риски/регрессии:**
+- Старые оценки без `ai_comment_sections` показываются как текст «Итог» / plain.
+- Fuzzy-поиск контрольного слова зависит от качества ответа ИИ.
+- После импорта в v2 новые поля появятся только после повторного import snapshot.
+
+**Следующий шаг:**
+- В Streamlit: включить слово на тестовой вакансии и прогнать extract; в v2 глянуть шкалу этапа.
+
+---
+
+## 2026-07-23 — v2: ARQ job расшифровки (SpeechKit)
+
+**Тип:** `feature`
+
+**Сделано:**
+- Сервис `transcription.py`: Яндекс.Диск → download → ffmpeg PCM → Object Storage → SpeechKit longRunningRecognize.
+- ARQ-задача `transcribe_media` с прогрессом и отменой; текст в `job.payload.transcript`.
+- API принимает `payload.source_url`; Settings подхватывает `YANDEX_*` / `FFMPEG_BINARY` из корневого `.env`.
+- UI `/jobs`: поле ссылки + кнопка «Расшифровать», просмотр текста.
+
+**Файлы:** `v2/backend/app/services/transcription.py`, `v2/backend/app/workers/tasks.py`, `v2/backend/app/workers/settings.py`, `v2/backend/app/api/v1/endpoints.py`, `v2/backend/app/core/config.py`, `v2/frontend/app/jobs/page.tsx`, `v2/backend/requirements.txt`, `v2/.env.example`, `v2/README.md`
+
+**Данные / конфиг:** ключи SpeechKit из корневого `.env` (не дублировать в git); Redis без изменений
+
+**Git:** незакоммичено
+
+**Риски/регрессии:**
+- Worker нужно перезапустить, чтобы подхватить `transcribe_media`.
+- Длинные расшифровки пишутся в JSONB payload (для MVP ок).
+
+**Следующий шаг:**
+- Прогнать реальную ссылку с `/jobs`; затем generate_documents как ARQ.
+
+---
+
+## 2026-07-23 — v2: ARQ + Redis, страница «Задачи»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Redis (порт 6380) + ARQ worker; API `POST /jobs`, `GET /jobs`, cancel.
+- Типы: `demo_progress` (прогресс без побочек), `import_legacy` (повторный импорт snapshot).
+- UI `/jobs` с опросом статуса каждые 2 с; нав «Задачи» готов.
+- Streamlit не затронут.
+
+**Файлы:** `v2/backend/app/workers/**`, `v2/backend/app/services/jobs.py`, `v2/backend/app/api/v1/endpoints.py`, `v2/docker-compose.yml`, `v2/frontend/app/jobs/page.tsx`
+
+**Данные / конфиг:** `REDIS_URL=redis://localhost:6380/0` в `v2/.env`
+
+**Git:** незакоммичено
+
+**Открыто / риски:**
+- Генерация документов / SpeechKit ещё не как ARQ-задачи.
+
+**Следующий шаг:**
+- Первая «боевая» job: generate_documents или transcribe; либо auth.
+
+---
+
+## 2026-07-23 — v2: карточка кандидата + статистика воронки
+
+**Тип:** `feature`
+
+**Сделано:**
+- API `GET /stats/funnel` — сводка по этапам HR, статусам заказчика, клиентам.
+- API карточки кандидата обогащён полями из payload + название вакансии/клиента.
+- UI: `/candidates/[id]`, клик по имени из списка вакансии.
+- UI: `/stats` с фильтрами клиент / только «в работе»; пункт в нав без «скоро».
+
+**Файлы:** `v2/backend/app/api/v1/endpoints.py`, `v2/backend/app/schemas.py`, `v2/backend/app/services/candidate_fields.py`, `v2/frontend/app/stats/page.tsx`, `v2/frontend/app/candidates/[id]/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Auth или write path / ARQ — по приоритету.
+
+---
+
+## 2026-07-23 — v2: единый читаемый формат документов
+
+**Тип:** `fix`
+
+**Сделано:**
+- Нормализация документов перед UI: `{raw: pipe-table}` → структура как у JSON-профиля (подразделение, задачи, требования…).
+- Опросник из markdown-таблицы → карточки «вопрос / пример ответа».
+- Уже структурированные документы (как у «Графический дизайнер») не ломаются.
+- JSON-режим по-прежнему показывает исходник.
+
+**Файлы:** `v2/frontend/lib/documentNormalize.ts`, `v2/frontend/components/DocumentBlock.tsx`, `v2/frontend/lib/labels.ts`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Auth или write path / ARQ.
+
+---
+
+## 2026-07-23 — v2 UI: RU-лейблы, сайдбар клиентов, читаемые документы
+
+**Тип:** `feature`
+
+**Сделано:**
+- Статусы HR-этапа и оценки заказчика на русском (ключи в БД без изменений).
+- Фильтр «Клиент» перенесён в левую боковую панель.
+- Документы по умолчанию в читаемом виде; переключатель «JSON» по желанию.
+- Колонка кандидатов: «Оценка заказчика» вместо путаницы с «Клиент».
+
+**Файлы:** `v2/frontend/lib/labels.ts`, `v2/frontend/components/**`, `v2/frontend/app/**`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Auth или write path / ARQ — по приоритету.
+
+---
+
+## 2026-07-23 — v2 read-only: история, фильтр клиента, документы
+
+**Тип:** `feature`
+
+**Сделано:**
+- Страница «История» на реальных `document_generations` + карточка снимка.
+- Фильтр вакансий по клиенту (chips).
+- Карточка вакансии: вкладки Кандидаты / Документы (превью).
+- API: preview в `/history`, `GET /history/{id}`, `document_keys` в vacancy detail.
+- В нав «История» без метки «скоро».
+
+**Файлы:** `v2/frontend/**`, `v2/backend/app/api/v1/endpoints.py`, `v2/backend/app/schemas.py`, `v2/backend/app/services/documents_preview.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Auth или write path / ARQ — по приоритету пользователя.
+
+---
+
+## 2026-07-23 — v2 UI: вакансии В работе/Архив + nav-макет
+
+**Тип:** `feature`
+
+**Сделано:**
+- Тема UI: кремовый фон, голубые акценты/навигация.
+- Список вакансий: вкладки «В работе» / «Архив»; в работе — дата старта + дни; в архиве — период + дни + мягкий исход.
+- Мягкий `outcome` в API (`success` / `client_cancelled` / `no_result`) по `close_reason` или наличию hire-этапа — не финальная доменная модель.
+- Шапка с пунктами-заглушками: Статистика, Задачи, История, Настройки, Клиентская зона.
+
+**Файлы:** `v2/frontend/**`, `v2/backend/app/api/v1/endpoints.py`, `v2/backend/app/schemas.py`, `v2/backend/app/services/vacancy_outcome.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Сверить UX с пользователем; затем auth или write path / ARQ.
+
+---
+
+## 2026-07-23 — MVP v2: каркас рядом со Streamlit
+
+**Тип:** `feature`
+
+**Сделано:**
+- Создан изолированный каталог `v2/` (отдельный docker compose, порты 5433/8000/3000).
+- PostgreSQL-схема: organizations, clients, vacancies, candidates, document_generations, messaging_channels, vacancy_templates, jobs, import_runs.
+- Импортёр `json → PG` (только чтение `data/`): 8 clients, 11 vacancies, 91 candidates, 17 history, 4 templates, 7 channels.
+- FastAPI read-only `/api/v1/*` + Next.js read-only UI списка вакансий/кандидатов.
+- Cutover-чеклист: `v2/CUTOVER.md`. Корневой Streamlit/bot/compose не менялись.
+
+**Файлы:** `v2/**`, `ARCHITECTURE_TARGET.md`, `ARCHITECTURE.md`
+
+**Данные / конфиг:** импорт читает `data/`; PG volume `hr_v2_pgdata`; `v2/.env` из `.env.example`
+
+**Git:** незакоммичено
+
+**Поведение / регрессии:**
+- Текущая рабочая версия не затронута; dual-write нет.
+
+**Открыто / риски:**
+- Auth, write API, ARQ, Messaging Gateway — следующие фазы.
+- Docker Desktop должен быть запущен для локального PG.
+
+**Следующий шаг:**
+- Фаза 1: auth + более полный read UI / сверка полей с Streamlit; либо write path по приоритету.
+
+---
+
 ## Шаблон записи (копировать для новых сессий)
 
 ```markdown
@@ -30,6 +1086,95 @@
 **Следующий шаг:**
 - …
 ```
+
+---
+
+## 2026-07-27 — Оценка резюме: битый JSON от ИИ
+
+**Тип:** `fix`
+
+**Сделано:**
+- Для оценки по резюме включён JSON mode (`response_format=json_object`).
+- Усилен `parse_ai_json_response`: пропущенные запятые между полями, сырые переносы в строках, закрытие обрезанного JSON.
+- Лимит `resume_eval` max_tokens по умолчанию 2500 (меньше обрезки ответа).
+
+**Файлы:** `ai_helpers.py`, `resume_ai.py`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- Повторить «Оценить по резюме» в карточке кандидата.
+
+---
+
+## 2026-07-25 — Бот: сеть восстановлена, фикс падения session.close
+
+**Тип:** `incident` + `fix`
+
+**Сделано:**
+- Проверка: Streamlit жив, `api.telegram.org` доступен; бот был мёртв после таймаутов.
+- Перезапуск бота — polling для `@hr_yourboxBot` снова активен.
+- Исправлено `_close_bot_session`: у AiohttpSession нет `.closed`, из‑за этого бот падал при сетевом retry.
+
+**Файлы:** `bot.py`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- В чате «Пульс» снова нажать «Отменить встречу» у Белова.
+
+---
+
+## 2026-07-22 — Настройки: отправка инструкции в Telegram-чат
+
+**Тип:** `feature`
+
+**Сделано:**
+- Добавлен текст инструкции для группового чата (`CHAT_INSTRUCTIONS_HTML`): статусы, комментарии, команды, напоминания; отдельно — как открыть резюме и запись по ссылкам в карточке.
+- Убрана строка про `/start` в группе (она про личное меню вакансий, не про работу в чате).
+- В Настройках → Telegram-бот: выбор чата и кнопка «Отправить инструкцию в чат».
+
+**Файлы:** `telegram_bot_commands.py`, `hri_full_v1.py`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- Проверить отправку в реальный чат из Настроек.
+
+---
+
+## 2026-07-16 — Разделение архитектуры: текущая и целевая
+
+**Тип:** `docs` + `decision`
+
+**Сделано:**
+- `ARCHITECTURE.md` явно помечен как текущая версия (Streamlit); добавлены ограничения и ссылка на целевой документ.
+- Создан `ARCHITECTURE_TARGET.md`: стек v2, мультитенантность, Messaging Gateway, ARQ/jobs, виджет «Задачи», upload/S3, миграция без dual-write.
+
+**Файлы:** `ARCHITECTURE.md`, `ARCHITECTURE_TARGET.md`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- При старте реализации v2 — ADR по фазе 0 и SQL-схема.
+
+---
+
+## 2026-07-16 — Архитектура и инструкции в приложении
+
+**Тип:** `docs`
+
+**Сделано:**
+- Обновлён `ARCHITECTURE.md`: мастер документов, мульти-источники, доп. материалы, скрипты локального запуска, привязка чатов, env.
+- Вкладка «Инструкции»: документы по вакансии, запуск с Mac, expander «Настройка нового Telegram-чата» (8 шагов).
+- Настройки: подсказка у «Мои чаты Telegram», актуализирован блок статуса бота.
+
+**Файлы:** `ARCHITECTURE.md`, `hri_full_v1.py`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- При необходимости — коммит документации.
 
 ---
 

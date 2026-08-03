@@ -367,6 +367,12 @@ def migrate_vacancy(vacancy):
     if "show_portfolio_field" not in vacancy:
         vacancy["show_portfolio_field"] = False
         migrated = True
+    if "control_word_enabled" not in vacancy:
+        vacancy["control_word_enabled"] = False
+        migrated = True
+    if "control_word" not in vacancy:
+        vacancy["control_word"] = ""
+        migrated = True
     from yandex_disk_ingest import migrate_vacancy_yandex_disk
 
     if migrate_vacancy_yandex_disk(vacancy):
@@ -379,17 +385,32 @@ def vacancy_show_portfolio_field(vacancy):
     return bool(vacancy.get("show_portfolio_field"))
 
 
+def vacancy_control_word(vacancy):
+    """Возвращает контрольное слово или None, если проверка выключена."""
+    migrate_vacancy(vacancy)
+    if not vacancy.get("control_word_enabled"):
+        return None
+    word = (vacancy.get("control_word") or "").strip()
+    return word or None
+
+
 def migrate_vacancies_data(data):
     changed = False
     for vacancy in data.get("vacancies", []):
         before = json.dumps(
-            {k: vacancy.get(k) for k in ("show_portfolio_field",)},
+            {
+                k: vacancy.get(k)
+                for k in ("show_portfolio_field", "control_word_enabled", "control_word")
+            },
             sort_keys=True,
             ensure_ascii=False,
         )
         migrate_vacancy(vacancy)
         after = json.dumps(
-            {k: vacancy.get(k) for k in ("show_portfolio_field",)},
+            {
+                k: vacancy.get(k)
+                for k in ("show_portfolio_field", "control_word_enabled", "control_word")
+            },
             sort_keys=True,
             ensure_ascii=False,
         )

@@ -335,7 +335,7 @@ def _ingest_resume_file(vacancy, deps, root_url, item, result, *, ingest_new):
                 deps.get("transcribe_video_from_link"),
             )
             if text:
-                populate_from_resume(cand, text, deps["client"], deps["config"])
+                populate_from_resume(cand, text, deps["client"], deps["config"], vacancy=vacancy)
             elif err:
                 result.errors.append(f"{name}: {err}")
         result.updated += 1

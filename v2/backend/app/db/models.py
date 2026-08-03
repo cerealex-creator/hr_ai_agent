@@ -1,0 +1,236 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    clients: Mapped[list["Client"]] = relationship(back_populates="organization")
+
+
+class Client(Base):
+    __tablename__ = "clients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # legacy department id
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_zone_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+    organization: Mapped["Organization"] = relationship(back_populates="clients")
+    vacancies: Mapped[list["Vacancy"]] = relationship(back_populates="client")
+
+
+class Vacancy(Base):
+    __tablename__ = "vacancies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # legacy vacancy id
+    client_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clients.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    documents: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    closed_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+    client: Mapped["Client | None"] = relationship(back_populates="vacancies")
+    candidates: Mapped[list["Candidate"]] = relationship(back_populates="vacancy")
+
+
+class Candidate(Base):
+    __tablename__ = "candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    vacancy_id: Mapped[int] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    hr_stage: Mapped[str] = mapped_column(String(64), nullable=False, default="resume_screening", index=True)
+    client_status: Mapped[str] = mapped_column(String(32), nullable=False, default="wait", index=True)
+    created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status_updated_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+    vacancy: Mapped["Vacancy"] = relationship(back_populates="candidates")
+
+
+class DocumentGeneration(Base):
+    __tablename__ = "document_generations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vacancy_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=True)
+    client_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clients.id"), nullable=True)
+    source_filename: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    mode: Mapped[str] = mapped_column(String(64), nullable=False, default="legacy_history")
+    documents_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at_legacy: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MessagingChannel(Base):
+    __tablename__ = "messaging_channels"
+    __table_args__ = (UniqueConstraint("provider", "external_id", name="uq_messaging_provider_external"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clients.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
+
+    posts: Mapped[list["MessagingPost"]] = relationship(back_populates="channel")
+
+
+class MessagingPost(Base):
+    """Outbound message tied to a candidate card (e.g. Telegram message_id)."""
+
+    __tablename__ = "messaging_posts"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_id",
+            "external_message_id",
+            name="uq_messaging_post_channel_message",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messaging_channels.id"), nullable=False, index=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("candidates.id"), nullable=False, index=True
+    )
+    vacancy_id: Mapped[int] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="primary")
+    external_message_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    text_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    channel: Mapped["MessagingChannel"] = relationship(back_populates="posts")
+    actions: Mapped[list["MessagingAction"]] = relationship(back_populates="post")
+
+
+class MessagingAction(Base):
+    """Pending / completed client action bound to a messaging post (slice 2: webhook)."""
+
+    __tablename__ = "messaging_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messaging_posts.id"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    external_callback_data: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    post: Mapped["MessagingPost"] = relationship(back_populates="actions")
+
+
+class VacancyTemplate(Base):
+    __tablename__ = "vacancy_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    legacy_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    client_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clients.id"), nullable=True)
+    chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    documents: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    progress_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clients.id"), nullable=True)
+    vacancy_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=True)
+    result_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ImportRun(Base):
+    __tablename__ = "import_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_dir: Mapped[str] = mapped_column(Text, nullable=False)
+    stats: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HhShortlistItem(Base):
+    """Liked HH resumes for a vacancy (cold search shortlist, not funnel candidates)."""
+
+    __tablename__ = "hh_shortlist_items"
+    __table_args__ = (
+        UniqueConstraint("vacancy_id", "hh_resume_id", name="uq_hh_shortlist_vacancy_resume"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vacancy_id: Mapped[int] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=False, index=True)
+    hh_resume_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    area: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ai_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HhSeenResume(Base):
+    """Resumes already reviewed for a vacancy — skip on next HH cold search."""
+
+    __tablename__ = "hh_seen_resumes"
+    __table_args__ = (
+        UniqueConstraint("vacancy_id", "hh_resume_id", name="uq_hh_seen_vacancy_resume"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vacancy_id: Mapped[int] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=False, index=True)
+    hh_resume_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False, default="ai_low")
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -60,10 +60,26 @@ def invalidate_interview_questionnaire_cache(card_iq_key):
 
 
 def _load_questionnaire_items(cand, key_prefix):
+    from resume_ai import looks_like_pipe_questionnaire_dump, normalize_questionnaire_list
+
     cache_key = _items_cache_key(key_prefix)
-    if cache_key in st.session_state:
-        return _ensure_question_ids(st.session_state[cache_key])
-    return _ensure_question_ids(cand.get("interview_questionnaire") or [])
+    cached = st.session_state.get(cache_key)
+    if cached is not None:
+        # Drop cached pipe-dump (one giant "question")
+        bad_cache = (
+            isinstance(cached, list)
+            and len(cached) == 1
+            and isinstance(cached[0], dict)
+            and looks_like_pipe_questionnaire_dump(str(cached[0].get("вопрос") or ""))
+        )
+        if not bad_cache:
+            return _ensure_question_ids(normalize_questionnaire_list(cached))
+        st.session_state.pop(cache_key, None)
+
+    items = normalize_questionnaire_list(cand.get("interview_questionnaire") or [])
+    if items:
+        cand["interview_questionnaire"] = items
+    return _ensure_question_ids(items)
 
 
 def _store_questionnaire_items(cand, key_prefix, items):

@@ -1141,11 +1141,29 @@ def render_vacancy_candidate_settings(vacancy, deps):
                 "При заполнении ссылка отобразится в сообщении в Telegram."
             ),
         )
+        control_enabled = st.checkbox(
+            "Контрольное слово",
+            value=bool(vacancy.get("control_word_enabled")),
+            key=f"vac_cw_on_{vacancy['id']}",
+            help=(
+                "ИИ ищет слово/фразу только в сопроводительном письме резюме. "
+                "Допускаются близкие опечатки (YourBox → YouBox) с пометкой «небрежно»."
+            ),
+        )
+        control_word = st.text_input(
+            "Слово или фраза",
+            value=vacancy.get("control_word") or "",
+            key=f"vac_cw_text_{vacancy['id']}",
+            disabled=not control_enabled,
+            placeholder="Например: YourBox",
+        )
         if st.button("Сохранить настройки", key=f"save_vac_settings_{vacancy['id']}"):
             all_v = deps["load_vacancies"]()
             for v in all_v:
                 if v["id"] == vacancy["id"]:
                     v["show_portfolio_field"] = show_portfolio
+                    v["control_word_enabled"] = bool(control_enabled)
+                    v["control_word"] = (control_word or "").strip() if control_enabled else ""
             deps["save_vacancies"](all_v)
             st.success("Настройки сохранены")
             st.rerun()

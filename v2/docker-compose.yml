@@ -1,0 +1,106 @@
+# Отдельный compose для v2. Не связан с корневым hr-app / hr-bot.
+# Порты: Postgres 5433, Redis 6379, API 8000, UI 3000.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hr-v2-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hr_v2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hr_v2_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-hr_v2}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - hr_v2_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hr_v2} -d ${POSTGRES_DB:-hr_v2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: hr-v2-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    container_name: hr-v2-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD:-hr_v2_dev}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      LEGACY_DATA_DIR: /legacy_data
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ../data:/legacy_data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    container_name: hr-v2-worker
+    command: ["arq", "app.workers.settings.WorkerSettings"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD:-hr_v2_dev}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      LEGACY_DATA_DIR: /legacy_data
+    volumes:
+      - ../data:/legacy_data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Telegram inbound via getUpdates (no public HTTPS). Profile: --profile messaging
+  telegram-poller:
+    build:
+      context: ./backend
+    container_name: hr-v2-telegram-poller
+    profiles: ["messaging"]
+    command: ["python", "-m", "app.workers.telegram_poller"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD:-hr_v2_dev}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-true}
+      MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: hr-v2-web
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  hr_v2_pgdata:

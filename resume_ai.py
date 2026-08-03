@@ -33,23 +33,56 @@ RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки стр
 - Возраст — только число лет без слова «лет».
 - Зарплата — только число без валюты."""
 
+RESUME_EXTRACT_CONTROL_WORD_EXTRA = """
+Дополнительно (только если передано КОНТРОЛЬНОЕ СЛОВО):
+Найди сопроводительное письмо в тексте (блок «О себе» / cover letter / сопроводительное — НЕ опыт работы и НЕ навыки).
+Ищи контрольное слово/фразу ТОЛЬКО в сопроводительном письме.
+Допустима семантика «почти точное»: опечатки, раскладка, транслит (YourBox / YouBox / Ёрбокс).
+Добавь в JSON поля:
+  "control_word_status": "exact" | "fuzzy" | "missing" | "no_cover_letter",
+  "control_word_match": "как написал кандидат или пустая строка",
+  "control_word_note": "кратко: точное совпадение / найдено с опечаткой «…» / не найдено / нет письма"
+exact — совпадение без смысловых искажений (регистр не важен).
+fuzzy — явно то же задание, но с ошибкой/небрежностью (укажи в note).
+missing — письмо есть, слова нет.
+no_cover_letter — сопроводительного письма нет.
+Не ищи слово в остальных частях резюме.
+"""
+
 RESUME_EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени соответствие резюме профилю должности на этапе холодного отбора.
 Шкала rating: 0–4 (целое число).
 Верни ТОЛЬКО JSON:
 {
   "rating": 3,
-  "comment": "Краткий комментарий 2–4 предложения",
+  "comment_sections": {
+    "соответствие": "1–3 предложения: насколько подходит под профиль",
+    "опыт_и_навыки": "1–3 предложения по опыту и hard/soft skills",
+    "риски": ["риск 1", "риск 2"],
+    "проверить_на_интервью": ["что уточнить на интервью"],
+    "итог": "1–2 предложения — краткий вердикт"
+  },
   "strengths": ["..."],
   "weaknesses": ["..."]
 }
 
-Дополнительно проанализируй риски (отрази в weaknesses и/или comment):
+Структура comment_sections обязательна (как разделы профиля должности): отдельные пункты, без сплошного абзаца.
+Поле "comment" не используй — только comment_sections.
+
+Дополнительно проанализируй риски (отрази в «риски» / weaknesses):
 - Частая смена работы, неясные или противоречивые причины ухода, переход с фриланса/самозанятости без логики в резюме.
 - Длительные пробелы в опыте без пояснения — отметь необходимость выяснить причину на интервью.
 - Признаки излишней требовательности (только идеальные условия, много жёстких «не готов» без гибкости).
-На этапе резюме лояльность, адекватность и управляемость оцени предварительно по косвенным признакам; явно укажи в comment, что нужно проверить на интервью (мотивация, причины ухода, обратная связь от работодателей).
+На этапе резюме лояльность, адекватность и управляемость оцени предварительно по косвенным признакам; явно укажи в «проверить_на_интервью».
 
-Если передан КОММЕНТАРИЙ HR — обязательно учти его: это живые замечания рекрутера после контакта с кандидатом; согласуй оценку с ними и отрази в comment."""
+Если передан КОММЕНТАРИЙ HR — обязательно учти его: это живые замечания рекрутера после контакта с кандидатом; согласуй оценку с ними и отрази в comment_sections."""
+
+AI_COMMENT_SECTION_ORDER = (
+    ("соответствие", "Соответствие"),
+    ("опыт_и_навыки", "Опыт и навыки"),
+    ("риски", "Риски"),
+    ("проверить_на_интервью", "Проверить на интервью"),
+    ("итог", "Итог"),
+)
 
 QUESTIONNAIRE_ITEM_SCHEMA = """{
   "вопрос": "основной вопрос в разговорной форме",
@@ -102,6 +135,199 @@ def normalize_hr_rating(value):
     if raw in _LEGACY_HR_RATING_MAP:
         return _LEGACY_HR_RATING_MAP[raw]
     return raw if raw in HR_RATING_LABELS else ""
+
+
+def looks_like_pipe_questionnaire_dump(text):
+    """
+    True if text is a stringified old interview grid
+    (№ | Вопрос | Что уже есть… | False | False | False).
+    """
+    t = (text or "").strip()
+    if "|" not in t or "\n" not in t:
+        return False
+    markers = (
+        "Что уже есть в резюме",
+        "Желательный результат",
+        "Сомн, но ок",
+        "Сомнительно",
+        "Норм",
+    )
+    hits = sum(1 for m in markers if m in t)
+    if hits >= 2:
+        return True
+    return t.count("|") >= 20 and ("Вопрос" in t or "1.0 |" in t or "1 |" in t)
+
+
+def recover_questionnaire_from_pipe_dump(text):
+    """Разбирает дамп старой таблицы опросника → список вопросов."""
+    raw = (text or "").replace("\r\n", "\n").strip()
+    if not raw:
+        return []
+    # Sometimes the dump is wrapped in JSON [{"вопрос": "№ | ..."}]
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if (
+                isinstance(parsed, list)
+                and len(parsed) == 1
+                and isinstance(parsed[0], dict)
+                and looks_like_pipe_questionnaire_dump(str(parsed[0].get("вопрос") or ""))
+            ):
+                raw = str(parsed[0].get("вопрос") or "")
+            elif isinstance(parsed, list) and parsed and all(isinstance(x, dict) for x in parsed):
+                # already structured — leave to normalize_questionnaire_list
+                return []
+        except json.JSONDecodeError:
+            pass
+
+    # Join rows broken by newlines inside the question cell
+    merged_lines = []
+    for ln in raw.split("\n"):
+        line = ln.strip()
+        if not line:
+            continue
+        starts_row = bool(re.match(r"^\d+\.?\d*\s*\|", line)) or line.startswith("№")
+        if starts_row or not merged_lines:
+            merged_lines.append(line)
+        else:
+            merged_lines[-1] = merged_lines[-1].rstrip() + " " + line.lstrip()
+
+    items = []
+    for line in merged_lines:
+        if "|" not in line:
+            continue
+        # header
+        if line.startswith("№") or (
+            "Что уже есть в резюме" in line and "Желательный результат" in line
+        ):
+            continue
+
+        parts = [p.strip() for p in line.split("|")]
+        if not parts:
+            continue
+        # drop pandas-like index 1.0 / 2.0
+        if parts[0].replace(".", "", 1).isdigit() or (
+            parts[0].endswith(".0") and parts[0][:-2].isdigit()
+        ):
+            parts = parts[1:]
+        if not parts:
+            continue
+        question = (parts[0] or "").strip()
+        if not question or question.lower().startswith("итог"):
+            continue
+
+        # Columns after question: в_резюме | ответ | желательный | flags...
+        resume_hint = parts[1].strip() if len(parts) > 1 else ""
+        answer = parts[2].strip() if len(parts) > 2 else ""
+        example = parts[3].strip() if len(parts) > 3 else ""
+        flag_tokens = {"false", "true", "0", "1", ""}
+        if not example and len(parts) > 2:
+            for p in reversed(parts[1:]):
+                if p.strip().lower() not in flag_tokens:
+                    example = p.strip()
+                    break
+
+        items.append(
+            {
+                "вопрос": question,
+                "уточняющие_вопросы": [],
+                "уточнения_по_резюме": [],
+                "проверяет_требование": "",
+                "категория": "",
+                "пример_ответа": example,
+                "в_резюме": resume_hint,
+                "ответ": answer,
+                "оценка_hr": "",
+                "оценка": "",
+            }
+        )
+    return items
+
+
+def normalize_questionnaire_list(items):
+    if isinstance(items, str):
+        text = items.strip()
+        if not text:
+            return []
+        if looks_like_pipe_questionnaire_dump(text):
+            recovered = recover_questionnaire_from_pipe_dump(text)
+            if recovered:
+                items = recovered
+            else:
+                items = [{"вопрос": text}]
+        elif text.startswith("["):
+            try:
+                parsed = json.loads(text)
+                items = parsed if isinstance(parsed, list) else [{"вопрос": text}]
+            except json.JSONDecodeError:
+                items = [{"вопрос": text}]
+        else:
+            items = [{"вопрос": text}]
+
+    if not isinstance(items, list):
+        return []
+
+    # Expand a single pipe-dump "question" accidentally saved as one row
+    if (
+        len(items) == 1
+        and isinstance(items[0], dict)
+        and looks_like_pipe_questionnaire_dump(str(items[0].get("вопрос") or ""))
+    ):
+        recovered = recover_questionnaire_from_pipe_dump(str(items[0].get("вопрос") or ""))
+        if recovered:
+            items = recovered
+    elif (
+        len(items) == 1
+        and isinstance(items[0], str)
+        and looks_like_pipe_questionnaire_dump(items[0])
+    ):
+        recovered = recover_questionnaire_from_pipe_dump(items[0])
+        if recovered:
+            items = recovered
+
+    result = []
+    for q in items:
+        if isinstance(q, str):
+            if looks_like_pipe_questionnaire_dump(q):
+                recovered = recover_questionnaire_from_pipe_dump(q)
+                if recovered:
+                    result.extend(recovered)
+                    continue
+            item = {
+                "вопрос": q,
+                "уточняющие_вопросы": [],
+                "проверяет_требование": "",
+                "категория": "",
+                "пример_ответа": "",
+            }
+        elif isinstance(q, dict):
+            followups = q.get("уточняющие_вопросы", q.get("followups", []))
+            if isinstance(followups, str):
+                followups = [followups] if followups.strip() else []
+            rating = normalize_hr_rating(q.get("оценка_hr", q.get("оценка", q.get("rating", ""))))
+            item = {
+                "вопрос": q.get("вопрос", q.get("question", "")),
+                "уточняющие_вопросы": [str(f) for f in followups] if isinstance(followups, list) else [],
+                "уточнения_по_резюме": [
+                    str(f)
+                    for f in (q.get("уточнения_по_резюме") or q.get("resume_followups") or [])
+                    if str(f).strip()
+                ],
+                "проверяет_требование": q.get("проверяет_требование", q.get("requirement", "")),
+                "категория": q.get("категория", q.get("category", "")),
+                "пример_ответа": q.get("пример_ответа", q.get("example", "")),
+                "в_резюме": q.get("в_резюме", q.get("resume_hint", "")),
+                "ответ": q.get("ответ", q.get("answer", "")),
+                "оценка_hr": rating,
+                "оценка": rating,
+                "_qid": q.get("_qid", ""),
+            }
+        else:
+            continue
+        if not item.get("_qid"):
+            item["_qid"] = uuid.uuid4().hex[:8]
+        result.append(item)
+    return [q for q in result if (q.get("вопрос") or "").strip()]
 
 
 def format_phone(phone):
@@ -160,22 +386,68 @@ def format_salary(salary):
     return str(salary).strip()
 
 
-def extract_data_from_resume(resume_text, client, config):
+def format_ai_comment_from_sections(sections):
+    """Plain-text fallback from structured comment_sections."""
+    if not isinstance(sections, dict) or not sections:
+        return ""
+    parts = []
+    used = set()
+    for key, title in AI_COMMENT_SECTION_ORDER:
+        if key not in sections:
+            continue
+        used.add(key)
+        val = sections.get(key)
+        if val is None or val == "":
+            continue
+        if isinstance(val, list):
+            body = "\n".join(f"- {item}" for item in val if str(item).strip())
+        else:
+            body = str(val).strip()
+        if body:
+            parts.append(f"{title}\n{body}")
+    for key, val in sections.items():
+        if key in used or val is None or val == "":
+            continue
+        if isinstance(val, list):
+            body = "\n".join(f"- {item}" for item in val if str(item).strip())
+        else:
+            body = str(val).strip()
+        if body:
+            parts.append(f"{key}\n{body}")
+    return "\n\n".join(parts).strip()
+
+
+def normalize_ai_comment_sections(raw_sections, legacy_comment=""):
+    """Return (sections_dict, plain_comment)."""
+    sections = raw_sections if isinstance(raw_sections, dict) else {}
+    if not sections and (legacy_comment or "").strip():
+        sections = {"итог": str(legacy_comment).strip()}
+    plain = format_ai_comment_from_sections(sections) or (legacy_comment or "").strip()
+    return sections, plain
+
+
+def extract_data_from_resume(resume_text, client, config, control_word=None):
     if not resume_text or not resume_text.strip():
         raise ValueError("Пустой текст резюме")
     resume_limit = get_char_limit(config, "resume", 8000)
+    system = RESUME_EXTRACT_SYSTEM
+    user = f"Текст резюме:\n{trim_text(resume_text, resume_limit)}"
+    word = (control_word or "").strip()
+    if word:
+        system = RESUME_EXTRACT_SYSTEM + "\n" + RESUME_EXTRACT_CONTROL_WORD_EXTRA
+        user += f"\n\nКОНТРОЛЬНОЕ СЛОВО (искать только в сопроводительном письме): {word}"
     response = create_chat_completion(
         client,
         config,
         "extract",
         messages=[
-            {"role": "system", "content": RESUME_EXTRACT_SYSTEM},
-            {"role": "user", "content": f"Текст резюме:\n{trim_text(resume_text, resume_limit)}"},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
         temperature=0.1,
     )
     data = parse_ai_json_response(response.choices[0].message.content)
-    return {
+    out = {
         "name": data.get("full_name") or "Нет информации",
         "phone": format_phone(data.get("phone")),
         "age": data.get("age") if str(data.get("age", "")).strip() else "",
@@ -184,49 +456,14 @@ def extract_data_from_resume(resume_text, client, config):
         "age_location": format_age_location(data.get("age"), data.get("metro"), data.get("city")),
         "salary_expected": format_salary(data.get("salary")),
     }
-
-
-def normalize_questionnaire_list(items):
-    if not isinstance(items, list):
-        return []
-    result = []
-    for q in items:
-        if isinstance(q, str):
-            item = {
-                "вопрос": q,
-                "уточняющие_вопросы": [],
-                "проверяет_требование": "",
-                "категория": "",
-                "пример_ответа": "",
-            }
-        elif isinstance(q, dict):
-            followups = q.get("уточняющие_вопросы", q.get("followups", []))
-            if isinstance(followups, str):
-                followups = [followups] if followups.strip() else []
-            rating = normalize_hr_rating(q.get("оценка_hr", q.get("оценка", q.get("rating", ""))))
-            item = {
-                "вопрос": q.get("вопрос", q.get("question", "")),
-                "уточняющие_вопросы": [str(f) for f in followups] if isinstance(followups, list) else [],
-                "уточнения_по_резюме": [
-                    str(f)
-                    for f in (q.get("уточнения_по_резюме") or q.get("resume_followups") or [])
-                    if str(f).strip()
-                ],
-                "проверяет_требование": q.get("проверяет_требование", q.get("requirement", "")),
-                "категория": q.get("категория", q.get("category", "")),
-                "пример_ответа": q.get("пример_ответа", q.get("example", "")),
-                "в_резюме": q.get("в_резюме", q.get("resume_hint", "")),
-                "ответ": q.get("ответ", q.get("answer", "")),
-                "оценка_hr": rating,
-                "оценка": rating,
-                "_qid": q.get("_qid", ""),
-            }
-        else:
-            continue
-        if not item.get("_qid"):
-            item["_qid"] = uuid.uuid4().hex[:8]
-        result.append(item)
-    return [q for q in result if (q.get("вопрос") or "").strip()]
+    if word:
+        status = (data.get("control_word_status") or "").strip().lower()
+        if status not in ("exact", "fuzzy", "missing", "no_cover_letter"):
+            status = "missing"
+        out["control_word_status"] = status
+        out["control_word_match"] = (data.get("control_word_match") or "").strip()
+        out["control_word_note"] = (data.get("control_word_note") or "").strip()
+    return out
 
 
 RESUME_HINTS_SYSTEM = """Ты — HR-ассистент. По тексту резюме заполни для каждого вопроса опросника колонку «Что уже есть в резюме».
@@ -453,6 +690,7 @@ def evaluate_resume_with_ai(
             },
         ],
         temperature=0.3,
+        response_format={"type": "json_object"},
     )
     result = parse_ai_json_response(response.choices[0].message.content)
     rating = result.get("rating", 0)
@@ -461,10 +699,15 @@ def evaluate_resume_with_ai(
     except (TypeError, ValueError):
         rating = 0
     rating = max(0, min(4, rating))
+    sections, plain = normalize_ai_comment_sections(
+        result.get("comment_sections"),
+        legacy_comment=result.get("comment", ""),
+    )
     return {
         "ai_score": rating,
         "ai_score_source": "resume",
-        "ai_comment": result.get("comment", ""),
+        "ai_comment": plain,
+        "ai_comment_sections": sections,
         "ai_strengths": result.get("strengths", []) or [],
         "ai_weaknesses": result.get("weaknesses", []) or [],
         "profile_checked": True,

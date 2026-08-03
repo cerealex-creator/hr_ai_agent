@@ -2,6 +2,8 @@
 
 import streamlit as st
 
+from resume_ai import AI_COMMENT_SECTION_ORDER
+
 
 def has_ai_evaluation(cand):
     return cand.get("ai_score") is not None
@@ -32,6 +34,71 @@ def render_ai_score_badge(score):
     )
 
 
+def _render_section_value(val):
+    if val is None or val == "":
+        return
+    if isinstance(val, list):
+        for item in val:
+            if str(item).strip():
+                st.markdown(f"- {item}")
+    else:
+        st.markdown(str(val))
+
+
+def render_structured_ai_comment(cand, *, expanded=False):
+    """Свёрнутый по умолчанию разбор ИИ в структуре профиля."""
+    sections = cand.get("ai_comment_sections")
+    legacy = (cand.get("ai_comment") or "").strip()
+    has_sections = isinstance(sections, dict) and any(
+        v is not None and v != "" for v in sections.values()
+    )
+    if not has_sections and not legacy:
+        return
+
+    with st.expander("Анализ ИИ (структура)", expanded=expanded):
+        if has_sections:
+            used = set()
+            for key, title in AI_COMMENT_SECTION_ORDER:
+                if key not in sections:
+                    continue
+                used.add(key)
+                val = sections.get(key)
+                if val is None or val == "":
+                    continue
+                st.markdown(f"**{title}**")
+                _render_section_value(val)
+                st.markdown("")
+            for key, val in sections.items():
+                if key in used or val is None or val == "":
+                    continue
+                st.markdown(f"**{key}**")
+                _render_section_value(val)
+                st.markdown("")
+        else:
+            st.markdown(legacy)
+
+
+def control_word_badge_html(cand):
+    status = (cand.get("control_word_status") or "").strip()
+    if not status:
+        return ""
+    styles = {
+        "exact": ("#14532d", "#dcfce7", "Контрольное слово"),
+        "fuzzy": ("#854d0e", "#fef9c3", "Контрольное слово ≈"),
+        "missing": ("#991b1b", "#fee2e2", "Нет контр. слова"),
+        "no_cover_letter": ("#991b1b", "#fee2e2", "Нет письма"),
+    }
+    if status not in styles:
+        return ""
+    color, bg, label = styles[status]
+    note = (cand.get("control_word_note") or "").replace('"', "&quot;")
+    return (
+        f'<span title="{note}" style="background:{bg};color:{color};'
+        f'padding:0.15rem 0.5rem;border-radius:999px;font-size:0.78rem;'
+        f'font-weight:600;margin-left:0.35rem;">{label}</span>'
+    )
+
+
 def render_ai_evaluation_block(cand):
     """Read-only блок оценки ИИ. Не рендерится, если оценки нет."""
     if not has_ai_evaluation(cand):
@@ -40,9 +107,30 @@ def render_ai_evaluation_block(cand):
     with st.expander("🤖 Оценка ИИ", expanded=False):
         st.markdown(render_ai_score_badge(cand["ai_score"]), unsafe_allow_html=True)
 
-        if cand.get("ai_comment"):
+        sections = cand.get("ai_comment_sections")
+        has_sections = isinstance(sections, dict) and any(
+            v is not None and v != "" for v in sections.values()
+        )
+        if has_sections or (cand.get("ai_comment") or "").strip():
             st.markdown("**Анализ (ИИ):**")
-            st.info(cand["ai_comment"])
+            if has_sections:
+                used = set()
+                for key, title in AI_COMMENT_SECTION_ORDER:
+                    if key not in sections:
+                        continue
+                    used.add(key)
+                    val = sections.get(key)
+                    if val is None or val == "":
+                        continue
+                    st.markdown(f"**{title}**")
+                    _render_section_value(val)
+                for key, val in sections.items():
+                    if key in used or val is None or val == "":
+                        continue
+                    st.markdown(f"**{key}**")
+                    _render_section_value(val)
+            else:
+                st.info(cand["ai_comment"])
 
         met = cand.get("ai_profile_requirements_met") or {}
         if met:

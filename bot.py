@@ -457,8 +457,16 @@ async def _call_with_retries(label, coro_factory, *, required=True):
 
 async def _close_bot_session():
     session = getattr(bot, "session", None)
-    if session and not session.closed:
+    if not session:
+        return
+    # aiogram AiohttpSession: нет атрибута .closed — только .close()
+    closed = getattr(session, "closed", None)
+    if closed is True:
+        return
+    try:
         await session.close()
+    except Exception:
+        logger.debug("close bot session failed", exc_info=True)
 
 
 async def _prepare_bot_for_polling():
