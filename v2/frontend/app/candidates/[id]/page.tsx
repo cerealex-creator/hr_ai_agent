@@ -17,7 +17,7 @@ export default async function CandidatePage({ params }: Props) {
   }
 
   return (
-    <AppShell activePath="/">
+    <AppShell variant="search" activePath="/candidates">
       {candidate ? (
         <Link className="back" href={`/vacancies/${candidate.vacancy_id}?section=candidates`}>
           ← К вакансии{candidate.vacancy_title ? `: ${candidate.vacancy_title}` : ""}

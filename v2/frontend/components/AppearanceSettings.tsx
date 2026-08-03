@@ -13,7 +13,6 @@ export function AppearanceSettings() {
 
   return (
     <section className="card-edit">
-      <h2>Внешний вид</h2>
       <p className="muted hh-micro">Тема и размер шрифта сохраняются в этом браузере.</p>
       <div className="chip-row" role="group" aria-label="Тема">
         {THEMES.map((t) => (

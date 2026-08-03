@@ -16,7 +16,8 @@ import {
   type VacancyDetail,
 } from "@/lib/api";
 import { daysBetween, daysLabel, formatDateRu } from "@/lib/dates";
-import { clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
+import { clientStatusLabelForCard } from "@/lib/labels";
+import { StageMarker } from "@/components/StageMarker";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -185,7 +186,9 @@ export default async function VacancyPage({ params, searchParams }: Props) {
                       <td>
                         <Link href={`/candidates/${c.id}`}>{c.name || "—"}</Link>
                       </td>
-                      <td>{hrStageLabel(c.hr_stage)}</td>
+                      <td>
+                        <StageMarker stage={c.hr_stage} />
+                      </td>
                       <td>{clientStatusLabelForCard(c.hr_stage, c.client_status)}</td>
                       <td>{c.city || "—"}</td>
                       <td>{c.phone || "—"}</td>

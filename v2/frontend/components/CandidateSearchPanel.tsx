@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { getApiBase, type CandidateListItem } from "@/lib/api";
-import { clientStatusLabel, hrStageLabel } from "@/lib/labels";
+import { StageMarker } from "@/components/StageMarker";
+import { clientStatusLabel } from "@/lib/labels";
 
 type Hit = CandidateListItem & { match_in?: string; score?: number };
 
@@ -83,7 +84,7 @@ export function CandidateSearchPanel() {
                 </td>
                 <td>{c.vacancy_title || `#${c.vacancy_id}`}</td>
                 <td>
-                  {hrStageLabel(c.hr_stage)} · {clientStatusLabel(c.client_status)}
+                  <StageMarker stage={c.hr_stage} /> · {clientStatusLabel(c.client_status)}
                 </td>
                 <td>{c.match_in || "—"}</td>
               </tr>

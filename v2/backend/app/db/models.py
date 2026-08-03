@@ -39,9 +39,21 @@ class Client(Base):
     slug: Mapped[str] = mapped_column(String(128), nullable=False)
     client_zone_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Company tree: root company (parent_id NULL) or department under a company.
+    parent_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("clients.id"), nullable=True, index=True
+    )
+    # Meaningful on root company: "company" (one chat) | "departments" (chats per dept).
+    chat_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="company")
+    # "company" | "department" | "test"
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="company", index=True)
 
     organization: Mapped["Organization"] = relationship(back_populates="clients")
     vacancies: Mapped[list["Vacancy"]] = relationship(back_populates="client")
+    parent: Mapped["Client | None"] = relationship(
+        remote_side="Client.id", back_populates="children"
+    )
+    children: Mapped[list["Client"]] = relationship(back_populates="parent")
 
 
 class Vacancy(Base):

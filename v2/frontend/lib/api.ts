@@ -18,6 +18,9 @@ export type ClientItem = {
   id: number;
   name: string;
   slug: string;
+  parent_id?: number | null;
+  chat_mode?: string;
+  kind?: string;
 };
 
 export type VacancyListItem = {

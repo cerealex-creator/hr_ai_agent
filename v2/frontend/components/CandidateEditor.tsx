@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getApiBase, type CandidateDetail } from "@/lib/api";
 import { HR_STAGE_LABELS, clientStatusLabel, clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
+import { StageMarker } from "@/components/StageMarker";
 import { StageProgress } from "@/components/StageProgress";
 import { AiCommentBlock } from "@/components/AiCommentBlock";
 import { QuestionnairePanel, type QItem } from "@/components/QuestionnairePanel";
@@ -678,7 +679,9 @@ export function CandidateEditor({ initial }: Props) {
         <div className="cand-summary-row">
           <span className="cand-summary-label">Статус</span>
           <span className="cand-summary-value">
-            <strong>{hrStageLabel(c.hr_stage)}</strong>
+            <strong>
+              <StageMarker stage={c.hr_stage} />
+            </strong>
             <span className="cand-summary-muted">
               {" "}
               · {clientStatusLabelForCard(c.hr_stage, c.client_status)}

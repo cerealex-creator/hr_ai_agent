@@ -16,11 +16,75 @@ class ClientOut(BaseModel):
     id: int
     name: str
     slug: str
+    parent_id: int | None = None
+    chat_mode: str = "company"
+    kind: str = "company"
+
+
+class ClientChannelBrief(BaseModel):
+    id: str
+    name: str | None = None
+    external_id: str
+
+
+class ClientChannelTreeDeptOut(BaseModel):
+    id: int
+    name: str
+    slug: str
+    parent_id: int | None = None
+    chat_mode: str
+    kind: str
+    channel: ClientChannelBrief | None = None
+
+
+class ClientTreeNodeOut(BaseModel):
+    id: int
+    name: str
+    slug: str
+    parent_id: int | None = None
+    chat_mode: str
+    kind: str
+    channel: ClientChannelBrief | None = None
+    departments: list[ClientChannelTreeDeptOut] = Field(default_factory=list)
 
 
 class ClientCreateIn(BaseModel):
     name: str
+    chat_mode: str = "company"
+    parent_id: int | None = None
 
+
+class ClientPatchIn(BaseModel):
+    name: str | None = None
+    chat_mode: str | None = None
+
+
+class CompanyCreateIn(BaseModel):
+    name: str
+    chat_mode: str = Field(default="company", description="company | departments")
+
+
+class DepartmentCreateIn(BaseModel):
+    name: str
+    chat_name: str | None = None
+    chat_id: str | None = None
+
+
+class TestChatOut(BaseModel):
+    client_id: int | None = None
+    name: str | None = None
+    chat_id: str | None = None
+    channel_id: str | None = None
+
+
+class TestChatIn(BaseModel):
+    name: str = "Тестировочный"
+    chat_id: str
+
+
+class CompaniesTreeOut(BaseModel):
+    items: list[ClientTreeNodeOut]
+    migration: dict = Field(default_factory=dict)
 
 class MessagingChannelCreateIn(BaseModel):
     name: str

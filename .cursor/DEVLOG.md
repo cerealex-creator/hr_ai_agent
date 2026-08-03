@@ -5,6 +5,121 @@
 
 ---
 
+## 2026-08-03 — Шрифт, цвета этапов, ИИ/связь, HH вручную
+
+**Тип:** `fix` / `feature` / `ux`
+
+**Сделано:**
+- Шрифт: boot-script до paint, functional persist, явный `html` font-size; `font: inherit` на form controls.
+- Списки кандидатов: цветной кружок по HR-этапу (жёлтый → зелёная шкала → оффер → красный отказ).
+- Настройки: `/settings/ai` (модель без смены ключа; ссылки Яндекс/RouterAI), сайдбар «Ресурсы»; `/settings/candidate-comms` (Zoom/Телемост/мессенджеры — только хранение).
+- HH вкладка «Вручную»: массовая оценка ссылок + сравнительная таблица; ИИ-чек-лист смягчения фильтров (по ручным резюме или автопоиску) с применением отмеченных пунктов.
+- `app_settings.json`: `ai_model`, `ai_provider`, `provider_links`, `candidate_comms`; model override в `ai_json` / `resume_eval` / `hh_criteria_prefill`.
+
+**Файлы:** `UiPrefsProvider.tsx`, `layout.tsx`, `StageMarker.tsx`, `labels.ts`, `globals.css`, `app_settings.py`, `endpoints.py`, `hh_manual_eval.py`, `HhManualEvalBlock.tsx`, `HhSearchPanel.tsx`, `settings/ai`, `settings/candidate-comms`, `AppShell.tsx`, `ProviderResourceLinks.tsx`
+
+**Данные / конфиг:** `data/app_settings.json` (новые ключи); ключи API ИИ по-прежнему из `.env`
+
+**Git:** `feature/v2`, незакоммичено
+
+**Следующий шаг:**
+- Перезапустить API/worker и проверить шрифт, сайдбар настроек, HH «Вручную».
+
+---
+
+## 2026-08-03 — Главная: hub + навигация по разделам
+
+**Тип:** `ux`
+
+**Сделано:**
+- Главная `/`: hero + тональные карточки-кнопки (настройки / документы / поиск), без верхнего меню поиска.
+- `AppShell` variants: `home` | `search` | `settings`; меню Вакансии/Кандидаты… только в `search`.
+- В Поиске и Настройках — «← Вернуться в главное меню».
+- Настройки: карточка и страница «Описание функционала» (`/settings/about`).
+
+**Файлы:** `AppShell.tsx`, `app/page.tsx`, `app/settings/page.tsx`, `app/settings/about/page.tsx`, `globals.css`, страницы `settings/*` / search
+
+**Git:** `feature/v2`, незакоммичено
+
+**Следующий шаг:**
+- Проверить главную и переходы в UI.
+
+---
+
+## 2026-08-03 — Настройки: хаб вместо одной длинной страницы
+
+**Тип:** `ux`
+
+**Сделано:**
+- `/settings` — оглавление из 6 карточек-ссылок (минимум текста на экране).
+- Разделы вынесены: appearance, companies, test-chat, telegram, calendar, warranty.
+- В Telegram внутренние блоки свёрнуты по умолчанию.
+
+**Файлы:** `settings/page.tsx`, `settings/*/page.tsx`, `globals.css`
+
+**Git:** `feature/v2`, незакоммичено
+
+**Следующий шаг:**
+- Пройти хаб глазами в UI.
+
+---
+
+## 2026-08-03 — Настройки: создание компании отдельно + страница компании
+
+**Тип:** `feature` / `ux`
+
+**Сделано:**
+- Блок «Создать клиента / компанию» отдельно от списка.
+- Существующие компании — свёрнутые карточки + ссылка на `/settings/companies/{id}`.
+- Страница компании: название, режим чатов, общий чат или подразделения.
+- API `GET /companies/{id}`.
+
+**Файлы:** `CompaniesSettings.tsx`, `CompanyEditor.tsx`, `settings/companies/[id]/page.tsx`, `lib/companies.ts`, `endpoints.py`
+
+**Git:** `feature/v2`, незакоммичено
+
+**Следующий шаг:**
+- Проверить UX YourBox / Пульс на новых страницах.
+
+---
+
+## 2026-08-03 — Компании / подразделения / тестовый чат в Настройках
+
+**Тип:** `feature`
+
+**Сделано:**
+- В `clients`: `parent_id`, `chat_mode` (company|departments), `kind` (company|department|test).
+- Миграция: YourBox + 6 отделов; Пульс Групп — один чат; Тестировочный — `kind=test`.
+- API: `/companies`, CRUD клиентов, подразделения, `/settings/test-chat`.
+- UI: блоки «Компании и чаты», «Тестировочный чат»; сайдбар группирует YourBox.
+
+**Файлы:** `models.py`, `clients_write.py`, `endpoints.py`, `schemas.py`, `main.py`, `CompaniesSettings.tsx`, `TestChatSettings.tsx`, `ClientSidebar.tsx`, `settings/page.tsx`
+
+**Данные / конфиг:** ALTER clients; YourBox id=101
+
+**Git:** ветка `feature/v2`, незакоммичено (после предыдущего push)
+
+**Следующий шаг:**
+- Проверить Настройки в UI и переключение режима у Пульс Групп.
+
+---
+
+## 2026-08-03 — Git: ветка feature/v2 на GitHub
+
+**Тип:** `deploy` / `git`
+
+**Сделано:**
+- Создана ветка `feature/v2` от `main`.
+- Закоммичен v2 (API/UI/workers) + сопутствующие правки Streamlit и docs.
+- Запушено на `origin/feature/v2` (`c482924`). `v2/.env` не в репозитории.
+
+**Git:** branch `feature/v2`, commit `c482924`, remote pushed
+
+**Следующий шаг:**
+- При необходимости — PR: https://github.com/cerealex-creator/hr_ai_agent/pull/new/feature/v2
+
+---
+
 ## 2026-08-03 — UX-пакет: Telegram comment, HH history, хаб, темы
 
 **Тип:** `feature` / `fix`

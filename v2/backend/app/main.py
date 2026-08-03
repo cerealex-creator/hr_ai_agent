@@ -12,6 +12,16 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from app.db.session import SessionLocal
+    from app.services.clients_write import migrate_legacy_clients
+
+    db = SessionLocal()
+    try:
+        migrate_legacy_clients(db)
+    except Exception as exc:  # noqa: BLE001
+        print(f"clients migrate skipped: {exc}")
+    finally:
+        db.close()
     yield
     await close_arq_pool()
 

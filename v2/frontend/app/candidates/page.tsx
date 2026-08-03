@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { CandidateSearchPanel } from "@/components/CandidateSearchPanel";
 import { apiGet, type CandidateListItem } from "@/lib/api";
+import { StageMarker } from "@/components/StageMarker";
 import { clientStatusLabel, hrStageLabel } from "@/lib/labels";
 
 type Props = {
@@ -114,7 +115,9 @@ export default async function CandidatesListPage({ searchParams }: Props) {
                     </Link>
                   </td>
                   <td>{c.client_name || "—"}</td>
-                  <td>{hrStageLabel(c.hr_stage)}</td>
+                  <td>
+                    <StageMarker stage={c.hr_stage} />
+                  </td>
                   <td>{clientStatusLabel(c.client_status)}</td>
                   <td>{c.city || "—"}</td>
                 </tr>

@@ -100,7 +100,11 @@ export default async function VacanciesPage({ searchParams }: Props) {
       {mode === "active" && !error ? (
         <div style={{ margin: "0.75rem 0 1rem" }}>
           <CreateVacancyForm
-            clients={clients}
+            clients={clients.filter(
+              (c) =>
+                c.kind !== "test" &&
+                !(c.kind === "company" && c.chat_mode === "departments"),
+            )}
             vacancies={vacancies}
             defaultClientId={clientId}
           />

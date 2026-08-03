@@ -44,8 +44,10 @@ def chat_json(
     api_key = (settings.routerai_api_key or settings.ai_api_key or "").strip()
     if not api_key:
         raise RuntimeError("Нет ключа ИИ (ROUTERAI_API_KEY / AI_API_KEY).")
+    from app.services.app_settings import resolve_ai_model_name
+
     base = (settings.ai_base_url or "https://routerai.ru/api/v1").rstrip("/")
-    model = (settings.ai_model_name or "").strip() or "qwen/qwen3.5-plus-20260420"
+    model = resolve_ai_model_name(settings.ai_model_name)
     payload = {
         "model": model,
         "temperature": temperature,

@@ -21,6 +21,13 @@ from app.schemas import (
     ClientCount,
     ClientCreateIn,
     ClientOut,
+    ClientPatchIn,
+    CompaniesTreeOut,
+    ClientTreeNodeOut,
+    CompanyCreateIn,
+    DepartmentCreateIn,
+    TestChatIn,
+    TestChatOut,
     MessagingChannelCreateIn,
     MessagingChannelDeleteOut,
     MessagingChannelPatchIn,
@@ -133,22 +140,182 @@ def import_stats(db: Session = Depends(get_db)) -> ImportStatsOut:
 
 
 @router.get("/clients", response_model=list[ClientOut])
-def list_clients(db: Session = Depends(get_db)) -> list[ClientOut]:
-    rows = db.scalars(select(models.Client).order_by(models.Client.id)).all()
+def list_clients(
+    for_vacancies: bool = Query(default=False),
+    include_test: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> list[ClientOut]:
+    """Flat list. for_vacancies=true → selectable leaves (no company shells, no test)."""
+    from app.services import clients_write as cw
+
+    cw.ensure_client_schema(db)
+    if for_vacancies:
+        rows = cw.selectable_clients_for_vacancies(db)
+    else:
+        rows = list(db.scalars(select(models.Client).order_by(models.Client.id)).all())
+        if not include_test:
+            rows = [r for r in rows if r.kind != cw.KIND_TEST]
     return [ClientOut.model_validate(r) for r in rows]
+
+
+@router.get("/companies", response_model=CompaniesTreeOut)
+def list_companies_tree(
+    migrate: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> CompaniesTreeOut:
+    from app.services import clients_write as cw
+
+    migration: dict = {}
+    if migrate:
+        migration = cw.migrate_legacy_clients(db)
+    else:
+        cw.ensure_client_schema(db)
+    return CompaniesTreeOut(items=cw.company_tree(db), migration=migration)
+
+
+@router.get("/companies/{company_id}", response_model=ClientTreeNodeOut)
+def get_company(company_id: int, db: Session = Depends(get_db)) -> ClientTreeNodeOut:
+    from app.services import clients_write as cw
+
+    cw.ensure_client_schema(db)
+    company = db.get(models.Client, company_id)
+    if not company or company.kind != cw.KIND_COMPANY:
+        raise HTTPException(status_code=404, detail="Компания не найдена")
+    node = cw.client_to_dict(db, company)
+    node["departments"] = [cw.client_to_dict(db, d) for d in cw.list_departments(db, company.id)]
+    return ClientTreeNodeOut.model_validate(node)
+
+
+@router.post("/companies", response_model=ClientOut, status_code=201)
+def create_company_endpoint(body: CompanyCreateIn, db: Session = Depends(get_db)) -> ClientOut:
+    from app.services import clients_write as cw
+
+    try:
+        cw.ensure_client_schema(db)
+        row = cw.create_company(db, body.name, chat_mode=body.chat_mode)
+    except cw.ClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return ClientOut.model_validate(row)
 
 
 @router.post("/clients", response_model=ClientOut)
 def create_client_endpoint(body: ClientCreateIn, db: Session = Depends(get_db)) -> ClientOut:
-    from app.services.clients_write import create_client
+    from app.services import clients_write as cw
 
     try:
-        row = create_client(db, body.name)
+        cw.ensure_client_schema(db)
+        row = cw.create_client(
+            db,
+            body.name,
+            parent_id=body.parent_id,
+            chat_mode=body.chat_mode,
+        )
         db.commit()
         db.refresh(row)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except cw.ClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return ClientOut.model_validate(row)
+
+
+@router.patch("/clients/{client_id}", response_model=ClientOut)
+def patch_client_endpoint(
+    client_id: int, body: ClientPatchIn, db: Session = Depends(get_db)
+) -> ClientOut:
+    from app.services import clients_write as cw
+
+    client = db.get(models.Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    try:
+        row = cw.patch_client(db, client, name=body.name, chat_mode=body.chat_mode)
+    except cw.ClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return ClientOut.model_validate(row)
+
+
+@router.delete("/clients/{client_id}", status_code=204)
+def delete_client_endpoint(client_id: int, db: Session = Depends(get_db)) -> None:
+    from app.services import clients_write as cw
+
+    client = db.get(models.Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    try:
+        cw.delete_client(db, client)
+    except cw.ClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post("/companies/{company_id}/departments", response_model=ClientOut, status_code=201)
+def create_department_endpoint(
+    company_id: int, body: DepartmentCreateIn, db: Session = Depends(get_db)
+) -> ClientOut:
+    from app.services import clients_write as cw
+    from app.services.messaging.channels import ChannelError, create_channel
+
+    company = db.get(models.Client, company_id)
+    if not company or company.kind != cw.KIND_COMPANY:
+        raise HTTPException(status_code=404, detail="Компания не найдена")
+    try:
+        row = cw.create_client(db, body.name, parent_id=company_id)
+        if company.chat_mode != cw.CHAT_MODE_DEPARTMENTS:
+            company.chat_mode = cw.CHAT_MODE_DEPARTMENTS
+        if (body.chat_id or "").strip():
+            create_channel(
+                db,
+                name=(body.chat_name or body.name).strip(),
+                chat_id=body.chat_id.strip(),
+                client_id=row.id,
+            )
+        else:
+            db.commit()
+            db.refresh(row)
+    except (cw.ClientError, ChannelError) as exc:
+        code = getattr(exc, "status_code", 400)
+        msg = getattr(exc, "message", str(exc))
+        raise HTTPException(status_code=code, detail=msg) from exc
+    return ClientOut.model_validate(row)
+
+
+@router.get("/settings/test-chat", response_model=TestChatOut)
+def get_test_chat(db: Session = Depends(get_db)) -> TestChatOut:
+    from app.services import clients_write as cw
+
+    cw.ensure_client_schema(db)
+    client = cw.get_test_client(db)
+    if not client:
+        return TestChatOut()
+    ch = cw.channel_for_client(db, client.id)
+    return TestChatOut(
+        client_id=client.id,
+        name=client.name,
+        chat_id=ch.external_id if ch else None,
+        channel_id=str(ch.id) if ch else None,
+    )
+
+
+@router.put("/settings/test-chat", response_model=TestChatOut)
+def put_test_chat(body: TestChatIn, db: Session = Depends(get_db)) -> TestChatOut:
+    from app.services import clients_write as cw
+
+    try:
+        cw.ensure_client_schema(db)
+        client, ch = cw.set_test_chat(db, name=body.name, chat_id=body.chat_id)
+    except cw.ClientError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return TestChatOut(
+        client_id=client.id,
+        name=client.name,
+        chat_id=ch.external_id,
+        channel_id=str(ch.id),
+    )
+
+
+@router.delete("/settings/test-chat", status_code=204)
+def delete_test_chat_binding(db: Session = Depends(get_db)) -> None:
+    from app.services import clients_write as cw
+
+    cw.clear_test_chat(db)
 
 
 @router.get("/vacancies", response_model=list[VacancyListItem])
@@ -429,13 +596,27 @@ def get_settings_app() -> dict:
 
 @router.patch("/settings/app")
 def patch_settings_app(body: dict) -> dict:
-    from app.services.app_settings import get_app_settings, set_default_warranty_months
+    from app.services.app_settings import (
+        get_app_settings,
+        set_ai_provider,
+        set_candidate_comms,
+        set_default_warranty_months,
+        set_provider_links,
+    )
 
     if "default_warranty_months" in body:
         try:
             set_default_warranty_months(int(body["default_warranty_months"]))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if "ai_provider" in body and isinstance(body.get("ai_provider"), dict):
+        set_ai_provider(body["ai_provider"])
+    elif "ai_model" in body:
+        set_ai_provider({"model": body.get("ai_model")})
+    if "provider_links" in body and isinstance(body.get("provider_links"), list):
+        set_provider_links(body["provider_links"])
+    if "candidate_comms" in body and isinstance(body.get("candidate_comms"), dict):
+        set_candidate_comms(body["candidate_comms"])
     return get_app_settings()
 
 
@@ -865,6 +1046,85 @@ def delete_hh_shortlist(vacancy_id: int, item_id: str, db: Session = Depends(get
     db.delete(row)
     db.commit()
     return None
+
+
+@router.post("/vacancies/{vacancy_id}/hh-manual-evaluate")
+def hh_manual_evaluate(vacancy_id: int, body: dict, db: Session = Depends(get_db)) -> dict:
+    """Evaluate recruiter-provided HH resume URLs/ids; return comparison rows."""
+    from app.services.hh_manual_eval import evaluate_manual_hh_resumes
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    text = str(body.get("text") or body.get("refs") or "").strip()
+    criteria = body.get("criteria") if isinstance(body.get("criteria"), dict) else None
+    try:
+        return evaluate_manual_hh_resumes(db, vacancy, text, criteria=criteria)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/vacancies/{vacancy_id}/hh-soften-suggestions")
+def hh_soften_suggestions(vacancy_id: int, body: dict, db: Session = Depends(get_db)) -> dict:
+    """AI checklist: what filters/requirements to soften after search or good resumes."""
+    from app.services.hh_manual_eval import suggest_criteria_softening
+    from app.services.hh_search_criteria import criteria_from_vacancy_documents, normalize_criteria
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    criteria = body.get("criteria") if isinstance(body.get("criteria"), dict) else None
+    if not criteria:
+        criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+    criteria = normalize_criteria(criteria)
+    search_results = body.get("search_results") if isinstance(body.get("search_results"), list) else None
+    good_resumes = body.get("good_resumes") if isinstance(body.get("good_resumes"), list) else None
+    try:
+        return suggest_criteria_softening(
+            vacancy_title=vacancy.title or "",
+            criteria=criteria,
+            search_results=search_results,
+            good_resumes=good_resumes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/vacancies/{vacancy_id}/hh-soften-apply")
+def hh_soften_apply(vacancy_id: int, body: dict, db: Session = Depends(get_db)) -> dict:
+    """Apply selected soften suggestions; optionally persist into vacancy documents."""
+    from app.services.hh_manual_eval import apply_soften_suggestions
+    from app.services.hh_search_criteria import (
+        DOC_KEY,
+        criteria_from_vacancy_documents,
+        normalize_criteria,
+        warnings_for,
+    )
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    criteria = body.get("criteria") if isinstance(body.get("criteria"), dict) else None
+    if not criteria:
+        criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+    suggestions = body.get("suggestions") if isinstance(body.get("suggestions"), list) else []
+    selected_ids = body.get("selected_ids") if isinstance(body.get("selected_ids"), list) else []
+    next_c = apply_soften_suggestions(criteria, suggestions, [str(x) for x in selected_ids])
+    persist = bool(body.get("persist", True))
+    if persist:
+        docs = dict(vacancy.documents or {})
+        docs[DOC_KEY] = next_c
+        vacancy.documents = docs
+        db.add(vacancy)
+        db.commit()
+        db.refresh(vacancy)
+    return {
+        "criteria": normalize_criteria(next_c),
+        "warnings": warnings_for(next_c),
+        "persisted": persist,
+    }
 
 
 def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDetail:
@@ -1566,7 +1826,7 @@ def messaging_create_channel(
     body: MessagingChannelCreateIn,
     db: Session = Depends(get_db),
 ) -> MessagingChannelOut:
-    from app.services.clients_write import create_client
+    from app.services.clients_write import ClientError, create_client
     from app.services.messaging.channels import ChannelError, create_channel
 
     client_id = body.client_id
@@ -1575,8 +1835,8 @@ def messaging_create_channel(
         try:
             client = create_client(db, new_name)
             client_id = client.id
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ClientError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     try:
         row = create_channel(
             db,

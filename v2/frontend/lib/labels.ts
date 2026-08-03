@@ -45,6 +45,53 @@ export function isRejectionStage(stage: string): boolean {
   return REJECTION_STAGES.has(stage);
 }
 
+/** Visual tone for list markers (кружок у этапа). */
+export type StageTone =
+  | "none"
+  | "yellow"
+  | "green-1"
+  | "green-2"
+  | "green-3"
+  | "green-4"
+  | "green-5"
+  | "rejected";
+
+/**
+ * Отсев — без цвета; Первичный контакт — жёлтый;
+ * дальше зелёный светлее→ярче к офферу; отказ — красный.
+ */
+export function getStageTone(stage: string | null | undefined): StageTone {
+  if (!stage) return "none";
+  if (isRejectionStage(stage)) return "rejected";
+  switch (stage) {
+    case "resume_screening":
+    case "archived":
+      return "none";
+    case "primary_contact":
+      return "yellow";
+    case "interview_scheduled":
+      return "green-1";
+    case "interview_done":
+      return "green-2";
+    case "test_task":
+      return "green-2";
+    case "client_review":
+      return "green-3";
+    case "client_pause":
+      return "green-3";
+    case "client_meeting":
+      return "green-4";
+    case "offer":
+      return "green-5";
+    case "internship":
+      return "green-5";
+    case "started_work":
+      return "green-5";
+    default:
+      return "none";
+  }
+}
+
 export const CLIENT_STATUS_LABELS: Record<string, string> = {
   new: "Новый",
   wait: "Ждёт оценки",

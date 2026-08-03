@@ -20,10 +20,14 @@ type UiPrefs = {
 type UiPrefsContextValue = UiPrefs & {
   setTheme: (theme: ThemeId) => void;
   setFontScale: (scale: number) => void;
+  ready: boolean;
 };
 
 const STORAGE_KEY = "hr_v2_ui_prefs";
 const DEFAULTS: UiPrefs = { theme: "light", fontScale: 1.05 };
+
+/** Inline in layout <head> so theme/font apply before paint. Keep in sync with STORAGE_KEY / DEFAULTS. */
+export const UI_PREFS_BOOT_SCRIPT = `(function(){try{var k=${JSON.stringify(STORAGE_KEY)};var raw=localStorage.getItem(k);if(!raw)return;var p=JSON.parse(raw);var r=document.documentElement;if(p.theme==="dark"||p.theme==="contrast"||p.theme==="light")r.dataset.theme=p.theme;var n=Number(p.fontScale);if(!Number.isNaN(n)&&n>=0.9&&n<=1.3){r.style.setProperty("--font-scale",String(Math.round(n*100)/100));r.style.fontSize=(16*(Math.round(n*100)/100))+"px";}}catch(e){}})();`;
 
 const UiPrefsContext = createContext<UiPrefsContextValue | null>(null);
 
@@ -52,39 +56,52 @@ function applyToDom(prefs: UiPrefs) {
   const root = document.documentElement;
   root.dataset.theme = prefs.theme;
   root.style.setProperty("--font-scale", String(prefs.fontScale));
+  // Explicit px so scale is visible even if some rules use fixed px on children of body.
+  root.style.fontSize = `${16 * prefs.fontScale}px`;
 }
 
 export function UiPrefsProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<UiPrefs>(DEFAULTS);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const next = readStored();
     setPrefs(next);
     applyToDom(next);
+    setReady(true);
   }, []);
 
-  const persist = useCallback((next: UiPrefs) => {
-    setPrefs(next);
-    applyToDom(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
+  const persist = useCallback((updater: (prev: UiPrefs) => UiPrefs) => {
+    setPrefs((prev) => {
+      const next = updater(prev);
+      applyToDom(next);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
   }, []);
 
   const setTheme = useCallback(
-    (theme: ThemeId) => persist({ ...prefs, theme }),
-    [persist, prefs],
+    (theme: ThemeId) => {
+      if (!ready) return;
+      persist((prev) => ({ ...prev, theme }));
+    },
+    [persist, ready],
   );
   const setFontScale = useCallback(
-    (fontScale: number) => persist({ ...prefs, fontScale: clampScale(fontScale) }),
-    [persist, prefs],
+    (fontScale: number) => {
+      if (!ready) return;
+      persist((prev) => ({ ...prev, fontScale: clampScale(fontScale) }));
+    },
+    [persist, ready],
   );
 
   const value = useMemo(
-    () => ({ ...prefs, setTheme, setFontScale }),
-    [prefs, setTheme, setFontScale],
+    () => ({ ...prefs, setTheme, setFontScale, ready }),
+    [prefs, setTheme, setFontScale, ready],
   );
 
   return (

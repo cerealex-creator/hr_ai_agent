@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { getApiBase } from "@/lib/api";
+import { HhManualEvalBlock } from "@/components/HhManualEvalBlock";
 
 type Priority = "hard" | "important" | "nice";
 
@@ -265,7 +266,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
   const [prefilling, setPrefilling] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [section, setSection] = useState<"who" | "funnel" | "results">("who");
+  const [section, setSection] = useState<"who" | "funnel" | "results" | "manual">("who");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showInfoTips, setShowInfoTips] = useState(false);
 
@@ -634,6 +635,13 @@ export function HhSearchPanel({ vacancyId }: Props) {
         >
           3. Результаты
           {results.length ? <span className="tab-count">{results.length}</span> : null}
+        </button>
+        <button
+          type="button"
+          className={section === "manual" ? "tab tab-active" : "tab"}
+          onClick={() => setSection("manual")}
+        >
+          4. Вручную
         </button>
       </div>
 
@@ -1087,6 +1095,21 @@ export function HhSearchPanel({ vacancyId }: Props) {
           ) : (
             <p className="muted">Пока пусто — отметьте ★ в результатах.</p>
           )}
+        </div>
+      ) : null}
+
+      {section === "manual" && criteria ? (
+        <div className="hh-section">
+          <HhManualEvalBlock
+            vacancyId={vacancyId}
+            criteria={criteria as unknown as Record<string, unknown>}
+            searchResults={results as unknown as Record<string, unknown>[]}
+            onCriteriaApplied={(next) => {
+              setCriteria(next as unknown as Criteria);
+              setSaveOk("Критерии обновлены после смягчения");
+              setSection("who");
+            }}
+          />
         </div>
       ) : null}
 

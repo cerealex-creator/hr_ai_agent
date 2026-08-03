@@ -254,8 +254,10 @@ def prefill_criteria_with_ai(
             "Мало данных для prefill: заполните профиль вакансии или прикрепите расшифровку"
         )
 
+    from app.services.app_settings import resolve_ai_model_name
+
     base_url = (settings.ai_base_url or "https://routerai.ru/api/v1").rstrip("/")
-    model = (settings.ai_model_name or "").strip() or "qwen/qwen3.5-plus-20260420"
+    model = resolve_ai_model_name(settings.ai_model_name)
     resp = requests.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
