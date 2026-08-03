@@ -603,6 +603,7 @@ def patch_settings_app(body: dict) -> dict:
         set_default_warranty_months,
         set_provider_links,
     )
+    from app.services.yandex_disk_oauth import set_disk_paths
 
     if "default_warranty_months" in body:
         try:
@@ -617,7 +618,96 @@ def patch_settings_app(body: dict) -> dict:
         set_provider_links(body["provider_links"])
     if "candidate_comms" in body and isinstance(body.get("candidate_comms"), dict):
         set_candidate_comms(body["candidate_comms"])
+    if "yandex_disk_root" in body or "yandex_disk_inbox" in body:
+        set_disk_paths(
+            root=body.get("yandex_disk_root") if "yandex_disk_root" in body else None,
+            inbox_name=body.get("yandex_disk_inbox") if "yandex_disk_inbox" in body else None,
+        )
     return get_app_settings()
+
+
+@router.get("/integrations/yandex-disk/status")
+def yandex_disk_oauth_status() -> dict:
+    from app.services.yandex_disk_oauth import disk_status
+
+    return disk_status()
+
+
+@router.post("/integrations/yandex-disk/token")
+def yandex_disk_save_token(body: dict) -> dict:
+    from app.services.yandex_disk_oauth import DiskApiError, disk_status, ensure_app_root, save_disk_token
+
+    token = str(body.get("token") or body.get("access_token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token обязателен")
+    save_disk_token(token)
+    try:
+        ensure_app_root(token)
+    except DiskApiError as exc:
+        return {**disk_status(), "warning": str(exc)}
+    return disk_status()
+
+
+@router.delete("/integrations/yandex-disk/token")
+def yandex_disk_clear_token() -> dict:
+    from app.services.yandex_disk_oauth import clear_disk_token, disk_status
+
+    clear_disk_token()
+    return disk_status()
+
+
+@router.post("/integrations/yandex-disk/ensure-root")
+def yandex_disk_ensure_root() -> dict:
+    from app.services.yandex_disk_oauth import DiskApiError, ensure_app_root
+
+    try:
+        return ensure_app_root()
+    except DiskApiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/integrations/yandex-disk/inbox")
+def yandex_disk_inbox(db: Session = Depends(get_db)) -> dict:
+    from app.services.yandex_disk_oauth import DiskApiError, suggest_inbox_routes
+
+    try:
+        return suggest_inbox_routes(db)
+    except DiskApiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/vacancies/{vacancy_id}/yandex-disk/ensure-folders")
+def yandex_disk_ensure_vacancy_folders(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.yandex_disk_oauth import DiskApiError, ensure_vacancy_folders
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    try:
+        return ensure_vacancy_folders(db, vacancy, publish=True)
+    except DiskApiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/vacancies/{vacancy_id}/stage-schema")
+def get_stage_schema(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.stage_schema import catalog, get_vacancy_stage_schema
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    return {"schema": get_vacancy_stage_schema(db, vacancy), "catalog": catalog()}
+
+
+@router.patch("/vacancies/{vacancy_id}/stage-schema")
+def patch_stage_schema(vacancy_id: int, body: dict, db: Session = Depends(get_db)) -> dict:
+    from app.services.stage_schema import catalog, set_vacancy_stage_schema
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    schema = set_vacancy_stage_schema(db, vacancy, body if isinstance(body, dict) else {})
+    return {"schema": schema, "catalog": catalog()}
 
 
 @router.get("/integrations/google-calendar/status")

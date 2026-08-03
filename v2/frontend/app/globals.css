@@ -1914,6 +1914,26 @@ details[open] > .doc-summary .doc-summary-main::before {
   color: var(--muted);
 }
 
+.stage-schema-list {
+  list-style: none;
+  margin: 0.5rem 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.stage-schema-list li {
+  display: grid;
+  grid-template-columns: minmax(9rem, 12rem) 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.stage-schema-panel .hh-subhead {
+  margin-top: 0.75rem;
+}
+
 .soften-checklist {
   list-style: none;
   margin: 0.5rem 0 1rem;

@@ -11,6 +11,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
 from app.services.app_settings import get_default_warranty_months
+from app.services.stage_schema import default_stage_schema
 from app.services.vacancy_outcome import HIRE_STAGES
 
 CLOSE_REASON_SUCCESS = "success"
@@ -114,6 +115,7 @@ def create_vacancy(
             "last_sync_at": "",
             "ingest_new_resumes": True,
         },
+        "stage_schema": default_stage_schema(),
     }
 
     if source_vacancy_id is not None:
@@ -134,6 +136,8 @@ def create_vacancy(
             if "ingest_new_resumes" not in yd:
                 yd["ingest_new_resumes"] = True
             payload["yandex_disk"] = yd
+        if isinstance(src_p.get("stage_schema"), dict):
+            payload["stage_schema"] = copy.deepcopy(src_p["stage_schema"])
         payload["cloned_from_vacancy_id"] = source.id
 
     chat = (chat_id or "").strip() or None

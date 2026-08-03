@@ -96,6 +96,12 @@ export default function SettingsHubPage() {
       hint: "каналы связи",
     },
     {
+      href: "/settings/yandex-disk",
+      title: "Яндекс.Диск",
+      text: "OAuth, корневая папка приложения, inbox и автосоздание папок вакансий.",
+      hint: "одна стыковка",
+    },
+    {
       href: "/settings/appearance",
       title: "Внешний вид",
       text: "Тема оформления и размер шрифта.",

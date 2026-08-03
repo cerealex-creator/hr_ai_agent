@@ -143,6 +143,9 @@ export function CandidateEditor({ initial }: Props) {
   const [interviewDate, setInterviewDate] = useState(field(initial.office_interview_date));
   const [interviewTime, setInterviewTime] = useState(field(initial.office_interview_time));
   const [stage, setStage] = useState(initial.hr_stage);
+  const [stageOptions, setStageOptions] = useState<{ id: string; label: string }[]>(
+    STAGE_ORDER.map((id) => ({ id, label: HR_STAGE_LABELS[id] || id })),
+  );
   const [stageNote, setStageNote] = useState("");
   const [deleteCalendarEvent, setDeleteCalendarEvent] = useState(false);
   const [warrantyDate, setWarrantyDate] = useState("");
@@ -193,6 +196,34 @@ export function CandidateEditor({ initial }: Props) {
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
     setScoreJumpPending(false);
   }, [scoreJumpPending, aiSectionOpen, c.ai_comment, sections]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${getApiBase()}/api/v1/vacancies/${c.vacancy_id}/stage-schema`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = (data.schema?.hr_stages || []) as {
+          id: string;
+          label: string;
+          enabled?: boolean;
+        }[];
+        const opts = items
+          .filter((i) => i.enabled !== false || i.id === c.hr_stage)
+          .map((i) => ({ id: i.id, label: i.label || HR_STAGE_LABELS[i.id] || i.id }));
+        if (!cancelled && opts.length) setStageOptions(opts);
+      } catch {
+        /* keep defaults */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.vacancy_id, c.hr_stage]);
 
   const openAiComment = () => {
     if (!hasAiComment && c.ai_score == null) return;
@@ -962,9 +993,9 @@ export function CandidateEditor({ initial }: Props) {
             onChange={(e) => setStage(e.target.value)}
             disabled={busy}
           >
-            {STAGE_ORDER.map((id) => (
-              <option key={id} value={id}>
-                {HR_STAGE_LABELS[id] || id}
+            {stageOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
               </option>
             ))}
           </select>

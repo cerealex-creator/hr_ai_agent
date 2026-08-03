@@ -263,11 +263,16 @@ def set_candidate_comms(patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_app_settings() -> dict:
+    from app.services.yandex_disk_oauth import get_disk_paths
+
+    disk_paths = get_disk_paths()
     return {
         "default_warranty_months": get_default_warranty_months(),
         "ai_model": get_ai_model_override(),
         "ai_provider": get_ai_provider(),
         "provider_links": get_provider_links(),
         "candidate_comms": get_candidate_comms(),
+        "yandex_disk_root": disk_paths["root"],
+        "yandex_disk_inbox": disk_paths["inbox_name"],
         "path": str(_settings_path()),
     }

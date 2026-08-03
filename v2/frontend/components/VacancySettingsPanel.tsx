@@ -5,6 +5,7 @@ import { useState } from "react";
 import { getApiBase, type VacancyDetail } from "@/lib/api";
 import { ChatSelect } from "@/components/ChatSelect";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
+import { VacancyStageSchemaPanel } from "@/components/VacancyStageSchemaPanel";
 
 type Props = { vacancy: VacancyDetail };
 
@@ -99,6 +100,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
   ].filter(Boolean);
 
   return (
+    <>
     <CollapsibleCard
       title="Параметры вакансии"
       hint={hintBits.length ? hintBits.join(" · ") : undefined}
@@ -162,5 +164,10 @@ export function VacancySettingsPanel({ vacancy }: Props) {
         </button>
       </div>
     </CollapsibleCard>
+
+    <CollapsibleCard title="Этапы и статусы вакансии" defaultOpen={false}>
+      <VacancyStageSchemaPanel vacancyId={vacancy.id} />
+    </CollapsibleCard>
+    </>
   );
 }

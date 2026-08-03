@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     yandex_secret_access_key: str = ""
     ffmpeg_binary: str = ""
 
+    # Yandex Disk OAuth (folder create / inbox) — separate from SpeechKit keys
+    yandex_disk_oauth_token: str = ""
+    yandex_disk_oauth_token_path: str = ""
+    yandex_disk_client_id: str = ""
+
     # HeadHunter (system-wide employer manager token — option A)
     hh_client_id: str = ""
     hh_client_secret: str = ""

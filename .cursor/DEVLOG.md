@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-08-03 — Пресет этапов вакансии + Яндекс.Диск L1/L2-stub
+
+**Тип:** `feature`
+
+**Сделано:**
+- Пресет HR-этапов на вакансию: подписи + вкл/выкл; после появления кандидатов структура заморожена (только labels).
+- UI в «Управление вакансией» → «Этапы и статусы»; карточка кандидата берёт опции из схемы вакансии.
+- Яндекс.Диск OAuth: настройки `/settings/yandex-disk`, токен в `data/yandex_disk_oauth.json`, корень `/HR_AI_Agent` + `_inbox`.
+- Кнопка «Создать папки на Диске» у вакансии (mkdir + publish → public URL для старого синка).
+- Inbox L2-stub: список файлов + эвристика вакансии по имени `Вакансия__ФИО.pdf` (без auto-move).
+
+**Файлы:** `stage_schema.py`, `yandex_disk_oauth.py`, `endpoints.py`, `vacancy_write.py`, `VacancyStageSchemaPanel.tsx`, `YandexDiskPanel.tsx`, `settings/yandex-disk/page.tsx`, `config.py`, `.env.example`
+
+**Данные / конфиг:** `YANDEX_DISK_OAUTH_TOKEN`, `YANDEX_DISK_CLIENT_ID`; `app_settings.json` ключи `yandex_disk_root` / `yandex_disk_inbox`
+
+**Git:** `feature/v2` (после push предыдущего коммита; этот набор — следующий коммит)
+
+**Следующий шаг:**
+- Прописать OAuth-токен Диска и проверить create folders + inbox на живом аккаунте.
+
+---
+
 ## 2026-08-03 — Шрифт, цвета этапов, ИИ/связь, HH вручную
 
 **Тип:** `fix` / `feature` / `ux`

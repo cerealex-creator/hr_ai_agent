@@ -39,6 +39,35 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
   const [last, setLast] = useState<SyncResult | null>(null);
   const [seenCount, setSeenCount] = useState(initial.seen_count || 0);
   const [lastSync, setLastSync] = useState(initial.last_sync_at);
+  const [appPath, setAppPath] = useState<string | null>(null);
+
+  const ensureFolders = async () => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const res = await fetch(
+        `${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk/ensure-folders`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      if (data.config?.root_url) setRootUrl(data.config.root_url);
+      setAppPath(data.path || null);
+      setMsg(
+        data.public_url
+          ? `Папки созданы и опубликованы: ${data.path}`
+          : `Папки созданы: ${data.path} (публичная ссылка не получена — проверьте токен)`,
+      );
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка создания папок");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -127,10 +156,12 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
       <h2>Яндекс.Диск</h2>
       <p className="muted hh-micro">
         Публичная папка вакансии → привязка PDF/видео/заданий к кандидатам по ФИО в имени файла.
-        Сохраняет резюме и метаданные в системе.
+        Либо подключите OAuth в{" "}
+        <a href="/settings/yandex-disk">Настройки → Яндекс.Диск</a> и создайте папки автоматически.
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
+      {appPath ? <p className="muted hh-micro">Путь приложения: {appPath}</p> : null}
 
       <div className="hh-field">
         <label className="hh-label" htmlFor="yd-root">
@@ -158,6 +189,9 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
         {seenCount ? ` · обработано путей: ${seenCount}` : ""}
       </p>
       <div className="chip-row">
+        <button type="button" className="chip" disabled={busy} onClick={ensureFolders}>
+          Создать папки на Диске
+        </button>
         <button type="button" className="chip" disabled={busy} onClick={save}>
           Сохранить
         </button>
