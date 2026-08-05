@@ -48,7 +48,7 @@ export default function CandidateCommsSettingsPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(detailMessage(data, `HTTP ${res.status}`));
       setComms(data.candidate_comms);
-      setMsg("Сохранено (интеграции запуска сеансов — позже)");
+      setMsg("Сохранено");
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : "Ошибка");
     } finally {
@@ -63,8 +63,8 @@ export default function CandidateCommsSettingsPage() {
       </Link>
       <h1 className="page-title">Общение с кандидатом</h1>
       <p className="muted">
-        Каналы связи и шаблоны. Пока только хранение настроек — генерация ссылок Zoom/Телемост и
-        отправка в мессенджеры из карточки кандидата появятся позже.
+        Каналы связи и шаблоны. Для удалённого собеседования укажите default-ссылку Zoom/Телемост —
+        она подставится в карточку кандидата при сохранении, если поле «Ссылка на встречу» пустое.
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}

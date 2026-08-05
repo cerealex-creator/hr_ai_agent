@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { getApiBase } from "@/lib/api";
 import { HhManualEvalBlock } from "@/components/HhManualEvalBlock";
+import { HhPresetBlock, type HhPreset } from "@/components/HhPresetBlock";
+import { HhSearchPlanBlock, type SearchPlan } from "@/components/HhSearchPlanBlock";
 
 type Priority = "hard" | "important" | "nice";
 
@@ -57,6 +59,7 @@ type HhHit = {
   seen_label?: string;
   prefilter_reason?: string;
   source_query?: string;
+  updated_at?: string | null;
 };
 
 type Job = {
@@ -76,6 +79,18 @@ type Job = {
       seen_skip?: number;
     };
     results?: HhHit[];
+    debrief?: {
+      found?: number;
+      evaluated?: number;
+      shown?: number;
+      skipped?: number;
+      score_avg?: number | null;
+      score_ge_3?: number;
+      reject_reasons?: { reason: string; count: number }[];
+      headline?: string;
+      suggestions?: string[];
+      warnings?: string[];
+    };
   };
 };
 
@@ -107,6 +122,9 @@ type ToCandidateResult = {
 
 type Defaults = {
   criteria: Criteria;
+  plan?: SearchPlan;
+  preset?: HhPreset;
+  form_options?: Record<string, unknown>;
   warnings: Warning[];
   needs_prefill?: boolean;
   schedule_options: { id: string; label: string }[];
@@ -114,6 +132,9 @@ type Defaults = {
 };
 
 type Props = { vacancyId: number };
+
+/** Legacy who/funnel tabs. Primary path = preset form. */
+const HH_ADVANCED_UI = false;
 
 const inputStyle: CSSProperties = {
   padding: "0.45rem 0.65rem",
@@ -266,7 +287,12 @@ export function HhSearchPanel({ vacancyId }: Props) {
   const [prefilling, setPrefilling] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [section, setSection] = useState<"who" | "funnel" | "results" | "manual">("who");
+  const [section, setSection] = useState<"preset" | "plan" | "who" | "funnel" | "results" | "manual">(
+    "preset",
+  );
+  const [plan, setPlan] = useState<SearchPlan | null>(null);
+  const [preset, setPreset] = useState<HhPreset | null>(null);
+  const [formOptions, setFormOptions] = useState<Record<string, unknown> | undefined>();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showInfoTips, setShowInfoTips] = useState(false);
 
@@ -335,9 +361,11 @@ export function HhSearchPanel({ vacancyId }: Props) {
       });
       const sources = (data.sources || []).join(", ") || "профиль";
       setPrefillBanner(
-        `ИИ заполнил критерии из: ${sources}. Проверьте портрет и комментарий.`,
+        HH_ADVANCED_UI
+          ? `ИИ заполнил критерии из: ${sources}. Проверьте портрет и комментарий.`
+          : `ИИ заполнил критерии из: ${sources}.`,
       );
-      setSection("who");
+      if (HH_ADVANCED_UI) setSection("who");
       setSaveOk(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Prefill не удался");
@@ -362,6 +390,9 @@ export function HhSearchPanel({ vacancyId }: Props) {
           recruiter_comment: data.criteria.recruiter_comment || "",
           prefill_meta: data.criteria.prefill_meta || {},
         });
+        if (data.plan) setPlan(data.plan);
+        if (data.preset) setPreset(data.preset);
+        if (data.form_options) setFormOptions(data.form_options);
         setScheduleOptions(data.schedule_options || []);
         setAreaPresets(data.area_presets || []);
         await loadShortlist();
@@ -376,12 +407,22 @@ export function HhSearchPanel({ vacancyId }: Props) {
             setSection("results");
           }
         }
-        if (data.needs_prefill && !cancelled) {
-          await runPrefill();
-        } else if (data.criteria?.prefill_meta?.prefilled_at && !data.criteria.prefill_meta.recruiter_edited) {
+        // Auto-prefill legacy form only if no search plan yet
+        if (
+          data.needs_prefill &&
+          !cancelled &&
+          !(data.plan?.human_text || "").trim()
+        ) {
+          /* skip auto prefill — plan flow is primary */
+        } else if (
+          HH_ADVANCED_UI &&
+          data.criteria?.prefill_meta?.prefilled_at &&
+          !data.criteria.prefill_meta.recruiter_edited &&
+          data.plan?.status !== "approved"
+        ) {
           const sources = (data.criteria.prefill_meta.sources || []).join(", ") || "профиль";
           setPrefillBanner(
-            `Критерии ранее заполнены ИИ (${sources}), правок рекрутера не было.`,
+            `Критерии ранее заполнены ИИ (${sources}). Основной путь — вкладка «План».`,
           );
         }
       } catch (e) {
@@ -461,21 +502,75 @@ export function HhSearchPanel({ vacancyId }: Props) {
     return () => clearInterval(t);
   }, [job, poll]);
 
-  const onStart = async () => {
-    if (!criteria) return;
-    const meta = criteria.prefill_meta || {};
-    if (meta.prefilled_at && !meta.recruiter_edited) {
-      const ok = window.confirm(
-        "Критерии заполнены ИИ, правок рекрутера не зафиксировано.\n\nРекомендуется проверить портрет и комментарий. Всё равно запустить поиск?",
-      );
-      if (!ok) return;
+  const onStart = async (opts?: {
+    fromApprove?: boolean;
+    criteria?: Partial<Criteria> | Record<string, unknown>;
+  }) => {
+    const merged: Criteria | null = criteria
+      ? {
+          ...criteria,
+          ...((opts?.criteria || {}) as Partial<Criteria>),
+          prefill_meta: {
+            ...(criteria.prefill_meta || {}),
+            ...((opts?.criteria as { prefill_meta?: PrefillMeta } | undefined)?.prefill_meta || {}),
+          },
+          portrait: {
+            ...(criteria.portrait || { hard: [], important: [], nice: [] }),
+            ...((opts?.criteria as { portrait?: Portrait } | undefined)?.portrait || {}),
+          },
+        }
+      : null;
+    if (!merged) return;
+
+    if (HH_ADVANCED_UI) {
+      const meta = merged.prefill_meta || {};
+      const planApproved = opts?.fromApprove || plan?.status === "approved";
+      if (!planApproved && meta.prefilled_at && !meta.recruiter_edited) {
+        const ok = window.confirm(
+          "Критерии заполнены ИИ, правок рекрутера не зафиксировано.\n\nРекомендуется проверить план или портрет. Всё равно запустить поиск?",
+        );
+        if (!ok) return;
+      }
+    } else if (!opts?.fromApprove && plan?.status !== "approved") {
+      setError("Сначала утвердите план поиска");
+      setSection("plan");
+      return;
     }
+
+    setCriteria(merged);
+    if (opts?.fromApprove) {
+      setPlan((prev) => (prev ? { ...prev, status: "approved" } : prev));
+    }
+
     setBusy(true);
     setError(null);
     setSection("results");
     try {
-      const saved = await saveCriteria(false);
-      const payloadCriteria = normalizeCriteriaForSave(saved || criteria);
+      let payloadCriteria: Criteria;
+      if (opts?.fromApprove) {
+        // Approve уже сохранил критерии на сервере — не перезаписываем устаревшим state.
+        payloadCriteria = normalizeCriteriaForSave(merged);
+        const put = await fetch(
+          `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-criteria`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              criteria: payloadCriteria,
+              rebuild_portrait: false,
+            }),
+          },
+        );
+        if (put.ok) {
+          const data = await put.json();
+          payloadCriteria = normalizeCriteriaForSave(data.criteria);
+          setCriteria(data.criteria);
+        }
+      } else {
+        setCriteria(merged);
+        const saved = await saveCriteria(false);
+        payloadCriteria = normalizeCriteriaForSave(saved || merged);
+      }
       const res = await fetch(`${getApiBase()}/api/v1/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -568,7 +663,43 @@ export function HhSearchPanel({ vacancyId }: Props) {
     }
   };
 
+  const removeHistoryJob = async (jobId: string) => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/jobs/${jobId}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) throw new Error(await res.text());
+      if (job?.id === jobId) setJob(null);
+      await loadHistory();
+      setSaveOk("Поиск удалён из истории");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось удалить");
+    }
+  };
+
+  const cleanupBadHistory = async () => {
+    try {
+      const res = await fetch(
+        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-history/cleanup`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (job && ["failed", "cancelled", "queued"].includes(job.status)) setJob(null);
+      await loadHistory();
+      setSaveOk(`Удалено проблемных поисков: ${data.deleted ?? 0}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось очистить");
+    }
+  };
+
   const results = job?.payload?.results || [];
+  const visibleResults = results.filter(
+    (r) =>
+      r.ai_score != null &&
+      !r.skipped_prefilter &&
+      !r.skipped_seen &&
+      !r.skipped_eval,
+  );
+  const debrief = job?.payload?.debrief;
 
   const warnings = useMemo(
     () => (criteria ? buildWarnings(criteria) : []),
@@ -589,8 +720,8 @@ export function HhSearchPanel({ vacancyId }: Props) {
     [warnings],
   );
 
-  if (!criteria) {
-    return <p className="muted">{error || "Загрузка критериев…"}</p>;
+  if (!criteria || !preset) {
+    return <p className="muted">{error || "Загрузка пресета…"}</p>;
   }
 
   const meta = criteria.prefill_meta || {};
@@ -605,47 +736,159 @@ export function HhSearchPanel({ vacancyId }: Props) {
   return (
     <div className="hh-panel">
       <div className="hh-status">
-        <span className="muted">Холодный поиск HH · без контактов · ~50 просмотров/сутки</span>
+        <span className="muted">
+          {HH_ADVANCED_UI
+            ? "Холодный поиск HH · без контактов · ~50 просмотров/сутки"
+            : "Поиск HH: пресет фильтров → запуск · без контактов · ~50 просмотров/сутки"}
+        </span>
         {statusBits.length ? <span className="hh-status-pills">{statusBits.join(" · ")}</span> : null}
       </div>
 
       {error ? <p className="warn">{error}</p> : null}
       {saveOk ? <p className="muted">{saveOk}</p> : null}
-      {prefillBanner ? <p className="warn">{prefillBanner}</p> : null}
+      {HH_ADVANCED_UI && prefillBanner ? <p className="warn">{prefillBanner}</p> : null}
 
       <div className="tabs" role="tablist">
         <button
           type="button"
-          className={section === "who" ? "tab tab-active" : "tab"}
-          onClick={() => setSection("who")}
+          className={section === "preset" ? "tab tab-active" : "tab"}
+          onClick={() => setSection("preset")}
         >
-          1. Кого ищем
+          Пресет
         </button>
-        <button
-          type="button"
-          className={section === "funnel" ? "tab tab-active" : "tab"}
-          onClick={() => setSection("funnel")}
-        >
-          2. Воронка HH
-        </button>
+        {HH_ADVANCED_UI ? (
+          <>
+            <button
+              type="button"
+              className={section === "plan" ? "tab tab-active" : "tab"}
+              onClick={() => setSection("plan")}
+            >
+              План (legacy)
+            </button>
+            <button
+              type="button"
+              className={section === "who" ? "tab tab-active" : "tab"}
+              onClick={() => setSection("who")}
+            >
+              Расшир.: кого ищем
+            </button>
+            <button
+              type="button"
+              className={section === "funnel" ? "tab tab-active" : "tab"}
+              onClick={() => setSection("funnel")}
+            >
+              Расшир.: воронка
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           className={section === "results" ? "tab tab-active" : "tab"}
           onClick={() => setSection("results")}
         >
-          3. Результаты
-          {results.length ? <span className="tab-count">{results.length}</span> : null}
+          Результаты
+          {visibleResults.length ? (
+            <span className="tab-count">{visibleResults.length}</span>
+          ) : null}
         </button>
         <button
           type="button"
           className={section === "manual" ? "tab tab-active" : "tab"}
           onClick={() => setSection("manual")}
         >
-          4. Вручную
+          Вручную
         </button>
       </div>
 
-      {section === "who" ? (
+      {section === "preset" && preset ? (
+        <div className="hh-section">
+          <HhPresetBlock
+            vacancyId={vacancyId}
+            preset={preset}
+            formOptions={formOptions as never}
+            searchBusy={busy}
+            onPresetChange={(next) => {
+              setPreset(next);
+            }}
+            onJobStarted={async (jobId) => {
+              setBusy(true);
+              setError(null);
+              setSection("results");
+              try {
+                await poll(jobId);
+                // keep polling while active
+                let cur = await poll(jobId);
+                while (cur.status === "queued" || cur.status === "running") {
+                  await new Promise((r) => setTimeout(r, 2000));
+                  cur = await poll(jobId);
+                }
+                await loadHistory();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Ошибка job");
+              } finally {
+                setBusy(false);
+              }
+            }}
+            onMessage={(msg, kind) => {
+              if (kind === "err") {
+                setError(msg);
+                setSaveOk(null);
+              } else {
+                setSaveOk(msg);
+                setError(null);
+              }
+            }}
+          />
+        </div>
+      ) : null}
+
+      {HH_ADVANCED_UI && section === "plan" ? (
+        <div className="hh-section">
+          <HhSearchPlanBlock
+            vacancyId={vacancyId}
+            plan={plan}
+            maxSearch={criteria?.max_search ?? 20}
+            maxEvaluate={criteria?.max_evaluate ?? 10}
+            searchBusy={busy}
+            onLimitsChange={({ max_search, max_evaluate }) => {
+              setCriteria((prev) =>
+                prev ? { ...prev, max_search, max_evaluate } : prev,
+              );
+            }}
+            onPlanChange={(next, nextCriteria) => {
+              setPlan(next);
+              if (nextCriteria) {
+                setCriteria((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        ...(nextCriteria as Partial<Criteria>),
+                        max_search:
+                          typeof nextCriteria.max_search === "number"
+                            ? nextCriteria.max_search
+                            : prev.max_search,
+                        max_evaluate:
+                          typeof nextCriteria.max_evaluate === "number"
+                            ? nextCriteria.max_evaluate
+                            : prev.max_evaluate,
+                        prefill_meta: {
+                          ...(prev.prefill_meta || {}),
+                          ...((nextCriteria as { prefill_meta?: PrefillMeta }).prefill_meta || {}),
+                          recruiter_edited: true,
+                        },
+                      }
+                    : prev,
+                );
+              }
+            }}
+            onStartSearch={(opts) => {
+              void onStart(opts);
+            }}
+          />
+        </div>
+      ) : null}
+
+      {HH_ADVANCED_UI && section === "who" ? (
         <div className="hh-section">
           <label className="hh-field">
             <span className="hh-label">Комментарий рекрутера</span>
@@ -747,7 +990,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
         </div>
       ) : null}
 
-      {section === "funnel" ? (
+      {HH_ADVANCED_UI && section === "funnel" ? (
         <div className="hh-section">
           <label className="hh-field">
             <span className="hh-label">Ключевые запросы</span>
@@ -899,63 +1142,126 @@ export function HhSearchPanel({ vacancyId }: Props) {
       {section === "results" ? (
         <div className="hh-section">
           {history.length ? (
-            <label className="hh-field" style={{ marginBottom: "0.75rem" }}>
-              <span className="hh-label">Прошлые поиски</span>
-              <select
-                value={job?.id || ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  if (id) openHistoryJob(id).catch((err) => setError(String(err)));
-                }}
-                style={inputStyle}
-              >
-                {!job ? <option value="">Выберите поиск…</option> : null}
-                {history.map((h) => {
-                  const when = h.created_at
-                    ? new Date(h.created_at).toLocaleString("ru-RU", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                    : "—";
-                  const stats =
-                    h.found != null
-                      ? ` · найдено ${h.found}${h.evaluated != null ? `, оценено ${h.evaluated}` : ""}`
-                      : "";
-                  const kw = h.keywords_short ? ` · ${h.keywords_short}` : "";
-                  return (
-                    <option key={h.id} value={h.id}>
-                      {when} · {h.status}
-                      {stats}
-                      {kw}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
+            <div style={{ marginBottom: "0.75rem" }}>
+              <label className="hh-field">
+                <span className="hh-label">Прошлые поиски</span>
+                <select
+                  value={job?.id || ""}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (id) openHistoryJob(id).catch((err) => setError(String(err)));
+                  }}
+                  style={inputStyle}
+                >
+                  {!job ? <option value="">Выберите поиск…</option> : null}
+                  {history.map((h) => {
+                    const when = h.created_at
+                      ? new Date(h.created_at).toLocaleString("ru-RU", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "—";
+                    const stats =
+                      h.found != null
+                        ? ` · найдено ${h.found}${h.evaluated != null ? `, оценено ${h.evaluated}` : ""}`
+                        : "";
+                    const kw = h.keywords_short ? ` · ${h.keywords_short}` : "";
+                    return (
+                      <option key={h.id} value={h.id}>
+                        {when} · {h.status}
+                        {stats}
+                        {kw}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <div className="hh-footer-actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="chip"
+                  disabled={!job || ["queued", "running"].includes(job.status)}
+                  onClick={() => job && void removeHistoryJob(job.id)}
+                >
+                  Удалить этот поиск
+                </button>
+                <button type="button" className="chip" onClick={() => void cleanupBadHistory()}>
+                  Очистить failed/queued
+                </button>
+              </div>
+            </div>
           ) : null}
           {job ? (
             <p className="muted">
               {job.progress_label || job.status} · {job.progress_pct ?? 0}%
               {job.payload.found != null ? ` · найдено ${job.payload.found}` : ""}
               {job.payload.evaluated != null ? ` · оценено ${job.payload.evaluated}` : ""}
-              {job.payload.prefilter?.seen_skip
-                ? ` · уже смотрели ${job.payload.prefilter.seen_skip}`
-                : ""}
-              {job.payload.prefilter?.hard_skip
-                ? ` · отсев до оценки ${job.payload.prefilter.hard_skip}`
-                : ""}
-              {job.payload.prefilter?.soft_backfill
-                ? ` · добор ${job.payload.prefilter.soft_backfill}`
-                : ""}
+              {visibleResults.length
+                ? ` · в списке ${visibleResults.length}`
+                : job.status === "completed"
+                  ? " · в списке 0"
+                  : ""}
+              {criteria ? (
+                <>
+                  {" "}
+                  · лимит: найти {criteria.max_search}/оценить {criteria.max_evaluate}
+                </>
+              ) : null}
             </p>
           ) : (
-            <p className="muted">Запустите поиск — результаты появятся здесь. Прошлые прогоны сохраняются и доступны в списке выше.</p>
+            <p className="muted">
+              Запустите поиск с вкладки «План» — здесь появятся только оценённые резюме.
+            </p>
           )}
           {job?.error ? <p className="warn">{job.error}</p> : null}
 
-          {results.length ? (
+          {job?.status === "completed" ? (
+            <section className="card-edit" style={{ marginBottom: "0.85rem" }}>
+              <p>
+                {debrief?.headline ||
+                  `Найдено подходящих для рассмотрения: ${visibleResults.length} из ${
+                    job.payload.found ?? results.length
+                  }; остальные отсеяны и не показаны.`}
+              </p>
+              {(debrief?.reject_reasons || []).length ? (
+                <ul className="hh-micro muted">
+                  {(debrief?.reject_reasons || []).map((r) => (
+                    <li key={r.reason}>
+                      {r.reason}: {r.count}
+                    </li>
+                  ))}
+                </ul>
+              ) : job.payload.prefilter?.hard_skip || job.payload.prefilter?.seen_skip ? (
+                <p className="hh-micro muted">
+                  Отсев до оценки: {job.payload.prefilter?.hard_skip || 0}
+                  {job.payload.prefilter?.seen_skip
+                    ? ` · уже смотрели: ${job.payload.prefilter.seen_skip}`
+                    : ""}
+                </p>
+              ) : null}
+              {debrief?.suggestions?.length ? (
+                <>
+                  <h3 className="hh-subhead">Что изменить для следующего поиска</h3>
+                  <ul>
+                    {debrief.suggestions.map((s) => (
+                      <li key={s.slice(0, 48)}>{s}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {debrief?.warnings?.length ? (
+                <ul className="warn">
+                  {debrief.warnings.map((w) => (
+                    <li key={w.slice(0, 40)}>{w}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
+
+          {visibleResults.length ? (
             <table>
               <thead>
                 <tr>
@@ -969,39 +1275,29 @@ export function HhSearchPanel({ vacancyId }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => (
+                {visibleResults.map((r) => (
                   <tr key={r.hh_resume_id || r.url}>
                     <td>
                       {shortIds.has(r.hh_resume_id) ? (
                         <span className="muted">★</span>
-                      ) : r.skipped_seen ? (
-                        <span className="muted">—</span>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           <button type="button" className="chip" onClick={() => addToShortlist(r)}>
                             ★
                           </button>
-                          {!r.skipped_prefilter ? (
-                            <button
-                              type="button"
-                              className="chip"
-                              onClick={() => rejectCandidate(r)}
-                              title="Не рассматривать снова"
-                            >
-                              ✕
-                            </button>
-                          ) : null}
+                          <button
+                            type="button"
+                            className="chip"
+                            onClick={() => rejectCandidate(r)}
+                            title="Не рассматривать снова"
+                          >
+                            ✕
+                          </button>
                         </div>
                       )}
                     </td>
                     <td>
-                      {r.ai_score != null ? (
-                        <strong>{r.ai_score}/4</strong>
-                      ) : r.skipped_eval ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <span className="muted">…</span>
-                      )}
+                      <strong>{r.ai_score}/4</strong>
                     </td>
                     <td className="row-meta">
                       Офис: {fitLabel(r.office_fit)} · Должность: {fitLabel(r.title_fit)} · Дорога:{" "}
@@ -1010,19 +1306,6 @@ export function HhSearchPanel({ vacancyId }: Props) {
                     <td>
                       <div>{r.title || "—"}</div>
                       {r.error ? <div className="row-meta warn">{r.error}</div> : null}
-                      {r.skipped_seen ? (
-                        <div className="row-meta warn">
-                          уже смотрели
-                          {r.seen_label ? `: ${r.seen_label}` : ""}
-                        </div>
-                      ) : r.skipped_prefilter ? (
-                        <div className="row-meta warn">
-                          отсеян до оценки
-                          {r.prefilter_reason ? `: ${r.prefilter_reason}` : ""}
-                        </div>
-                      ) : r.skipped_eval ? (
-                        <div className="row-meta">без оценки ИИ</div>
-                      ) : null}
                       {r.source_query ? (
                         <div className="row-meta">запрос: {r.source_query}</div>
                       ) : null}
@@ -1040,6 +1323,8 @@ export function HhSearchPanel({ vacancyId }: Props) {
                 ))}
               </tbody>
             </table>
+          ) : job?.status === "completed" ? (
+            <p className="muted">Нет оценённых кандидатов в этом прогоне — смотрите итог и предложения выше.</p>
           ) : null}
 
           <h3 className="hh-subhead">Shortlist ({shortlist.length})</h3>
@@ -1107,7 +1392,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
             onCriteriaApplied={(next) => {
               setCriteria(next as unknown as Criteria);
               setSaveOk("Критерии обновлены после смягчения");
-              setSection("who");
+              setSection("preset");
             }}
           />
         </div>
@@ -1123,7 +1408,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
             ))}
           </div>
         ) : null}
-        {warningsInfo.length ? (
+        {HH_ADVANCED_UI && warningsInfo.length ? (
           <div>
             <button type="button" className="chip" onClick={() => setShowInfoTips((v) => !v)}>
               {showInfoTips ? "Скрыть подсказки" : `Подсказки (${warningsInfo.length})`}
@@ -1137,26 +1422,30 @@ export function HhSearchPanel({ vacancyId }: Props) {
               : null}
           </div>
         ) : null}
-        <div className="hh-footer-actions">
-          {section !== "funnel" ? (
-            <button type="button" className="chip" onClick={() => setSection("funnel")}>
-              К воронке
+        {HH_ADVANCED_UI ? (
+          <div className="hh-footer-actions">
+            {section !== "funnel" ? (
+              <button type="button" className="chip" onClick={() => setSection("funnel")}>
+                К воронке
+              </button>
+            ) : null}
+            {section !== "who" ? (
+              <button type="button" className="chip" onClick={() => setSection("who")}>
+                К портрету
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="chip chip-active"
+              disabled={busy || prefilling}
+              onClick={() => {
+                void onStart();
+              }}
+            >
+              {busy ? "Поиск…" : "Искать на HH"}
             </button>
-          ) : null}
-          {section !== "who" ? (
-            <button type="button" className="chip" onClick={() => setSection("who")}>
-              К портрету
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="chip chip-active"
-            disabled={busy || prefilling}
-            onClick={onStart}
-          >
-            {busy ? "Поиск…" : "Искать на HH"}
-          </button>
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -66,7 +66,7 @@ def empty_criteria() -> dict[str, Any]:
         "schedule": "",
         "experience_from": None,
         "salary_to": None,
-        "period_days": 30,  # HH API period: resumes published/updated in last N days; None = no limit
+        "period_days": 7,  # HH API period: resumes updated in last N days; align with HH «Неделя»
         "office_address": "",
         "max_commute_min": 60,
         "office_required": "first_3_months",  # first_3_months | always | no
@@ -84,6 +84,10 @@ def empty_criteria() -> dict[str, Any]:
         "max_search": 20,
         "max_evaluate": 10,
         "smart_prefilter": True,
+        "soft_rules": {"ignore": [], "focus": [], "extra_stop": []},
+        # HH text rules: keywords = OR alternatives (любое из); keywords_and = required (все / И)
+        "keywords_and": "",
+        "keywords_logic": "any",  # within a single multi-word OR line when no keywords_and expansion
     }
 
 
@@ -165,7 +169,57 @@ def normalize_criteria(raw: Any) -> dict[str, Any]:
         data["smart_prefilter"] = bool(raw.get("smart_prefilter"))
     else:
         data["smart_prefilter"] = True
+    soft = raw.get("soft_rules") if isinstance(raw.get("soft_rules"), dict) else {}
+    data["soft_rules"] = {
+        "ignore": _lines(soft.get("ignore")),
+        "focus": _lines(soft.get("focus")),
+        "extra_stop": _lines(soft.get("extra_stop")),
+    }
+    data["keywords_and"] = str(raw.get("keywords_and") or "").strip()
+    logic = str(raw.get("keywords_logic") or "any").strip().lower()
+    data["keywords_logic"] = logic if logic in ("any", "all") else "any"
     return data
+
+
+def build_hh_text_queries(criteria: dict[str, Any] | None = None, *, keywords: str = "", keywords_and: str = "", keywords_logic: str = "any") -> list[dict[str, str]]:
+    """Build HH /resumes text queries with logic.
+
+    Mirrors HH UI:
+    - ``keywords`` lines = alternatives (ИЛИ), like «любое из слов» / several synonym rows
+    - ``keywords_and`` = required terms (И), like second block «все слова» (e.g. 1С)
+
+    (A|B|C) AND D  →  queries ``A D``, ``B D``, ``C D`` with text.logic=all
+    Only OR, one line with several tokens → one query with text.logic=any (or all)
+    """
+    from app.services.hh_prefilter import split_queries
+
+    if criteria is not None:
+        c = normalize_criteria(criteria)
+        keywords = str(c.get("keywords") or "")
+        keywords_and = str(c.get("keywords_and") or "")
+        keywords_logic = str(c.get("keywords_logic") or "any")
+
+    or_terms = split_queries(keywords)
+    and_terms = split_queries(keywords_and)
+    if not or_terms and and_terms:
+        or_terms = [" ".join(and_terms)]
+        and_terms = []
+    if not or_terms:
+        return []
+
+    logic = keywords_logic if keywords_logic in ("any", "all") else "any"
+
+    # (OR) AND (required) → expand
+    if and_terms:
+        and_join = " ".join(and_terms)
+        return [{"text": f"{term} {and_join}".strip(), "logic": "all"} for term in or_terms]
+
+    # Several OR lines → one HH call with «любое из слов» is closer to the UI
+    if len(or_terms) > 1:
+        return [{"text": " ".join(or_terms), "logic": "any"}]
+
+    # Single line: respect keywords_logic (any = любое из слов, all = все слова)
+    return [{"text": or_terms[0], "logic": logic}]
 
 
 def build_portrait_from_fields(criteria: dict[str, Any]) -> dict[str, list[str]]:
@@ -374,19 +428,57 @@ def portrait_text_for_ai(criteria: dict[str, Any]) -> str:
         parts.append(f"Ключевые запросы поиска: {c['keywords']}")
     if c.get("salary_to"):
         parts.append(f"Ориентир верхней вилки ЗП: {c['salary_to']}")
+    soft = c.get("soft_rules") if isinstance(c.get("soft_rules"), dict) else {}
+    ignore = soft.get("ignore") or []
+    focus = soft.get("focus") or []
+    stop = soft.get("extra_stop") or []
+    if ignore or focus or stop:
+        parts.append("")
+        parts.append("SOFT_RULES ИЗ ПЛАНА ПОИСКА:")
+        if ignore:
+            parts.append("Не снижать оценку (правка рекрутера):")
+            parts.extend(f"- {x}" for x in ignore)
+        if focus:
+            parts.append("Обратить внимание:")
+            parts.extend(f"- {x}" for x in focus)
+        if stop:
+            parts.append("Доп. стоп-факторы скринера:")
+            parts.extend(f"- {x}" for x in stop)
     return "\n".join(parts)
 
 
 def hh_search_params(criteria: dict[str, Any]) -> dict[str, Any]:
-    """Params for HH GET /resumes (only hard-ish funnel fields)."""
+    """Params for HH GET /resumes (hard funnel only).
+
+    Intentionally omit ``schedule``: HH UI searches usually don't lock schedule,
+    and fullDay excludes strong hybrid/remote-open candidates in the right city.
+    Work format stays a soft rule for ИИ.
+    """
     c = normalize_criteria(criteria)
     params: dict[str, Any] = {}
     if c["area_id"] is not None:
         params["area"] = c["area_id"]
-    if c["schedule"]:
-        params["schedule"] = c["schedule"]
     if c["salary_to"]:
         params["salary_to"] = c["salary_to"]
     if c.get("period_days"):
         params["period"] = int(c["period_days"])
     return params
+
+
+def describe_hh_query_plan(criteria: dict[str, Any]) -> str:
+    """Human-readable explanation of OR/AND text plan for UI / debrief."""
+    c = normalize_criteria(criteria)
+    queries = build_hh_text_queries(c)
+    or_lines = [q.strip() for q in (c.get("keywords") or "").splitlines() if q.strip()]
+    and_lines = [q.strip() for q in (c.get("keywords_and") or "").splitlines() if q.strip()]
+    bits = []
+    if or_lines:
+        bits.append("ИЛИ (синонимы): " + " · ".join(or_lines))
+    if and_lines:
+        bits.append("И (обязательно): " + " · ".join(and_lines))
+    if queries:
+        bits.append(
+            "API: "
+            + "; ".join(f"«{q['text']}» [{q['logic']}]" for q in queries[:6])
+        )
+    return " | ".join(bits) if bits else ""

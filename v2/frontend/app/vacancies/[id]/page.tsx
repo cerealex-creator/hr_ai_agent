@@ -36,7 +36,17 @@ type YandexDiskConfig = {
 export default async function VacancyPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { section, candidate } = await searchParams;
-  const view =
+
+  let hhSearchEnabled = true;
+  try {
+    const app = await apiGet<{ functions?: { hh_search_enabled?: boolean } }>(`/api/v1/settings/app`);
+    hhSearchEnabled = app.functions?.hh_search_enabled !== false;
+  } catch {
+    // If settings unavailable — keep legacy behaviour (HH search stays visible).
+    hhSearchEnabled = true;
+  }
+
+  const viewFromSection =
     section === "docs"
       ? "docs"
       : section === "hh"
@@ -44,6 +54,7 @@ export default async function VacancyPage({ params, searchParams }: Props) {
         : section === "disk"
           ? "disk"
           : "candidates";
+  const view = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
 
   let vacancy: VacancyDetail | null = null;
   let candidates: CandidateListItem[] = [];
@@ -152,12 +163,14 @@ export default async function VacancyPage({ params, searchParams }: Props) {
               Документы
               <span className="tab-count">{docKeys.length}</span>
             </Link>
-            <Link
-              href={`/vacancies/${id}?section=hh`}
-              className={view === "hh" ? "tab tab-active" : "tab"}
-            >
-              Поиск HH
-            </Link>
+            {hhSearchEnabled ? (
+              <Link
+                href={`/vacancies/${id}?section=hh`}
+                className={view === "hh" ? "tab tab-active" : "tab"}
+              >
+                Поиск HH
+              </Link>
+            ) : null}
             <Link
               href={`/vacancies/${id}?section=disk`}
               className={view === "disk" ? "tab tab-active" : "tab"}

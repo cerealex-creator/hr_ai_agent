@@ -393,6 +393,60 @@ def transcribe_from_url(
                     pass
 
 
+def transcribe_from_path(
+    media_path: str,
+    *,
+    api_key: str,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+    ffmpeg_binary: str = "",
+    on_progress: ProgressCb | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    source_label: str = "",
+) -> dict[str, Any]:
+    """SpeechKit pipeline for a local media file (upload). Does not delete media_path."""
+    validate_speechkit_config(
+        bucket=bucket, access_key=access_key, secret_key=secret_key, api_key=api_key
+    )
+    if not media_path or not os.path.exists(media_path):
+        raise RuntimeError(f"Медиафайл не найден: {media_path}")
+    pcm_path = None
+    try:
+        if should_cancel and should_cancel():
+            raise RuntimeError("Отменено")
+        _progress(on_progress, 45, "Конвертация ffmpeg → PCM")
+        pcm_path = convert_to_pcm(media_path, ffmpeg_binary=ffmpeg_binary)
+        if should_cancel and should_cancel():
+            raise RuntimeError("Отменено")
+        _progress(on_progress, 60, "Загрузка в Object Storage")
+        audio_url = upload_to_s3_and_get_url(
+            pcm_path, bucket=bucket, access_key=access_key, secret_key=secret_key
+        )
+        _progress(on_progress, 70, "Запрос в SpeechKit")
+        text = recognize_long_audio(
+            audio_url,
+            api_key,
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        )
+        if not text:
+            raise RuntimeError("SpeechKit вернул пустой текст")
+        _progress(on_progress, 100, "Расшифровка готова")
+        return {
+            "transcript": text,
+            "source_url": source_label or media_path,
+            "chars": len(text),
+            "preview": text[:280] + ("…" if len(text) > 280 else ""),
+        }
+    finally:
+        if pcm_path and os.path.exists(pcm_path):
+            try:
+                os.unlink(pcm_path)
+            except OSError:
+                pass
+
+
 def cleanup_transcript_text(text: str, settings: Settings | None = None) -> str:
     source = (text or "").strip()
     if not source:

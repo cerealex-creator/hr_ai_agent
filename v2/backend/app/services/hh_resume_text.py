@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -96,6 +97,12 @@ def resume_card_summary(item: dict[str, Any]) -> dict[str, Any]:
         url = alt
     elif item.get("id"):
         url = f"https://hh.ru/resume/{item['id']}"
+    updated = item.get("updated_at") or item.get("created_at")
+    # HH +0300 → +03:00 for UI
+    if isinstance(updated, str):
+        m = re.match(r"^(.+[+-]\d{2})(\d{2})$", updated.strip())
+        if m and ":" not in updated.strip()[-5:]:
+            updated = f"{m.group(1)}:{m.group(2)}"
     return {
         "hh_resume_id": str(item.get("id") or ""),
         "title": (item.get("title") or "").strip(),
@@ -104,5 +111,5 @@ def resume_card_summary(item: dict[str, Any]) -> dict[str, Any]:
         "age": item.get("age"),
         "salary_amount": salary.get("amount") if isinstance(salary, dict) else None,
         "salary_currency": salary.get("currency") if isinstance(salary, dict) else None,
-        "updated_at": item.get("updated_at") or item.get("created_at"),
+        "updated_at": updated,
     }

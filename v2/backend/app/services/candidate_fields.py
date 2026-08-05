@@ -58,4 +58,5 @@ def candidate_public_fields(payload: dict | None) -> dict[str, Any]:
         "control_word_note": payload_get(p, "control_word_note"),
         "office_interview_date": payload_get(p, "office_interview_date"),
         "office_interview_time": payload_get(p, "office_interview_time"),
+        "hh_resume_id": payload_get(p, "hh_resume_id"),
     }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DocumentBlock } from "@/components/DocumentBlock";
+import { DocumentsFromMaterials } from "@/components/DocumentsFromMaterials";
 import { getApiBase } from "@/lib/api";
 import { fieldLabel } from "@/lib/labels";
 
@@ -43,6 +44,12 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [savedDocs, setSavedDocs] = useState(initialDocuments);
+  const [meetingBrief, setMeetingBrief] = useState<{
+    summary?: string;
+    qa?: { q: string; a: string }[];
+    open_points?: string[];
+  } | null>(null);
+  const [meetingTranscript, setMeetingTranscript] = useState("");
 
   const reloadEditor = useCallback(async () => {
     const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/documents/editor`, {
@@ -54,6 +61,8 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
     const next = {} as Record<DocKey, string>;
     for (const k of EDIT_KEYS) next[k] = docs[k] || "";
     setDrafts(next);
+    setMeetingBrief(data.meeting_brief || null);
+    setMeetingTranscript(String(data.meeting_transcript || ""));
   }, [vacancyId]);
 
   useEffect(() => {
@@ -183,6 +192,45 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
 
   return (
     <div className="docs-editor">
+      <DocumentsFromMaterials
+        vacancyId={vacancyId}
+        onDone={() => {
+          void reloadEditor();
+          router.refresh();
+        }}
+      />
+
+      {meetingBrief && (meetingBrief.summary || (meetingBrief.qa || []).length) ? (
+        <div className="card-edit" style={{ marginBottom: "1rem" }}>
+          <h3 className="hh-subhead">Конспект встречи (ИИ)</h3>
+          {meetingBrief.summary ? <p>{meetingBrief.summary}</p> : null}
+          <ul>
+            {(meetingBrief.qa || []).map((item, i) => (
+              <li key={i}>
+                <strong>{item.q || "—"}</strong>
+                {item.a ? <> — {item.a}</> : null}
+              </li>
+            ))}
+          </ul>
+          {(meetingBrief.open_points || []).length ? (
+            <>
+              <p className="muted hh-micro">Открытые вопросы</p>
+              <ul>
+                {(meetingBrief.open_points || []).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {meetingTranscript ? (
+            <details>
+              <summary className="muted">Полная очищенная расшифровка</summary>
+              <pre className="hh-plan-text">{meetingTranscript}</pre>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginBottom: "0.75rem" }}>
         <button
           type="button"

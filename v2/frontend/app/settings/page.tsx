@@ -102,6 +102,12 @@ export default function SettingsHubPage() {
       hint: "одна стыковка",
     },
     {
+      href: "/settings/functions",
+      title: "Функции",
+      text: "Включение/выключение модулей и внешних интеграций.",
+      hint: "feature flags",
+    },
+    {
       href: "/settings/appearance",
       title: "Внешний вид",
       text: "Тема оформления и размер шрифта.",

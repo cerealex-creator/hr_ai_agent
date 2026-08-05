@@ -83,6 +83,48 @@ def _title_hits_phrase(title: str, phrases: list[str]) -> str | None:
     return None
 
 
+def _hit_area_id(hit: dict[str, Any]) -> int | None:
+    area = hit.get("area") or {}
+    if not isinstance(area, dict):
+        return None
+    try:
+        return int(area.get("id")) if area.get("id") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _hit_area_name(hit: dict[str, Any]) -> str:
+    area = hit.get("area") or {}
+    if isinstance(area, dict):
+        return str(area.get("name") or "").strip()
+    return ""
+
+
+def area_mismatch_reason(
+    hit: dict[str, Any],
+    *,
+    area_id: int | None,
+    area_name: str = "",
+) -> str | None:
+    """If vacancy locks a city, reject other cities before AI eval."""
+    if area_id is None and not (area_name or "").strip():
+        return None
+    hid = _hit_area_id(hit)
+    hname = _hit_area_name(hit)
+    if area_id is not None and hid is not None and hid != int(area_id):
+        label = hname or f"area_id={hid}"
+        return f"другой город: {label}"
+    want = (area_name or "").strip().lower()
+    if want and hname:
+        hn = hname.lower()
+        if want not in hn and hn not in want:
+            # allow short aliases
+            tokens = [t for t in want.replace("-", " ").split() if len(t) >= 4]
+            if tokens and not any(t in hn for t in tokens):
+                return f"другой город: {hname}"
+    return None
+
+
 def classify_hit(
     hit: dict[str, Any],
     *,
@@ -90,6 +132,8 @@ def classify_hit(
     reject: list[str],
     keyword_phrases: list[str],
     vacancy_title: str = "",
+    area_id: int | None = None,
+    area_name: str = "",
 ) -> tuple[str, str]:
     """
     Returns (bucket, reason):
@@ -98,6 +142,10 @@ def classify_hit(
       ok    — fine for eval
       soft  — title weak match; use only when backfilling
     """
+    geo = area_mismatch_reason(hit, area_id=area_id, area_name=area_name)
+    if geo:
+        return "hard", geo
+
     title = str(hit.get("title") or "").strip()
     vac_is_senior = bool(SENIORITY_VACANCY.search(vacancy_title or ""))
 
@@ -153,6 +201,12 @@ def select_for_evaluation(
     title_priority = list(criteria.get("title_priority") or [])
     reject = list(criteria.get("reject") or [])
     keyword_phrases = split_queries(str(criteria.get("keywords") or ""))
+    area_id = criteria.get("area_id")
+    try:
+        area_id_i = int(area_id) if area_id not in (None, "") else None
+    except (TypeError, ValueError):
+        area_id_i = None
+    area_name = str(criteria.get("area_name") or "").strip()
 
     boost: list[dict] = []
     ok: list[dict] = []
@@ -167,6 +221,8 @@ def select_for_evaluation(
             reject=reject,
             keyword_phrases=keyword_phrases,
             vacancy_title=vacancy_title,
+            area_id=area_id_i,
+            area_name=area_name,
         )
         tagged = dict(hit)
         tagged["_prefilter_bucket"] = bucket

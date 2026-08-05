@@ -142,6 +142,12 @@ export function CandidateEditor({ initial }: Props) {
   const [interviewEvalNotes, setInterviewEvalNotes] = useState(field(initial.interview_eval_notes));
   const [interviewDate, setInterviewDate] = useState(field(initial.office_interview_date));
   const [interviewTime, setInterviewTime] = useState(field(initial.office_interview_time));
+  const [remoteInterview, setRemoteInterview] = useState(
+    Boolean((initial.payload as { remote_interview?: boolean } | undefined)?.remote_interview),
+  );
+  const [meetingLink, setMeetingLink] = useState(
+    field((initial.payload as { meeting_link?: string } | undefined)?.meeting_link),
+  );
   const [stage, setStage] = useState(initial.hr_stage);
   const [stageOptions, setStageOptions] = useState<{ id: string; label: string }[]>(
     STAGE_ORDER.map((id) => ({ id, label: HR_STAGE_LABELS[id] || id })),
@@ -253,6 +259,8 @@ export function CandidateEditor({ initial }: Props) {
     setInterviewEvalNotes(field(next.interview_eval_notes));
     setInterviewDate(field(next.office_interview_date));
     setInterviewTime(field(next.office_interview_time));
+    setRemoteInterview(Boolean((next.payload as { remote_interview?: boolean } | undefined)?.remote_interview));
+    setMeetingLink(field((next.payload as { meeting_link?: string } | undefined)?.meeting_link));
     setStage(next.hr_stage);
     setPendingRemote(null);
   };
@@ -353,6 +361,8 @@ export function CandidateEditor({ initial }: Props) {
           interview_eval_notes: interviewEvalNotes,
           office_interview_date: interviewDate,
           office_interview_time: interviewTime,
+          remote_interview: remoteInterview,
+          meeting_link: meetingLink,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1001,34 +1011,57 @@ export function CandidateEditor({ initial }: Props) {
           </select>
         </div>
         {showInterviewDateFields ? (
-          <div className="hh-inline-pair">
+          <>
+            <div className="hh-inline-pair">
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="iv-date">
+                  {stage === "client_meeting" || c.hr_stage === "client_meeting"
+                    ? "Дата встречи с заказчиком"
+                    : "Дата собеседования"}
+                </label>
+                <input
+                  id="iv-date"
+                  type="date"
+                  value={interviewDate}
+                  onChange={(e) => setInterviewDate(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="iv-time">
+                  Время
+                </label>
+                <input
+                  id="iv-time"
+                  type="time"
+                  value={interviewTime}
+                  onChange={(e) => setInterviewTime(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+            <label className="hh-check">
+              <input
+                type="checkbox"
+                checked={remoteInterview}
+                disabled={busy}
+                onChange={(e) => setRemoteInterview(e.target.checked)}
+              />
+              Удалённое собеседование (подставить ссылку Zoom/Телемост из настроек)
+            </label>
             <div className="hh-field">
-              <label className="hh-label" htmlFor="iv-date">
-                {stage === "client_meeting" || c.hr_stage === "client_meeting"
-                  ? "Дата встречи с заказчиком"
-                  : "Дата собеседования"}
+              <label className="hh-label" htmlFor="meet-link">
+                Ссылка на встречу
               </label>
               <input
-                id="iv-date"
-                type="date"
-                value={interviewDate}
-                onChange={(e) => setInterviewDate(e.target.value)}
+                id="meet-link"
+                value={meetingLink}
+                onChange={(e) => setMeetingLink(e.target.value)}
                 disabled={busy}
+                placeholder="заполнится из настроек при сохранении, если пусто"
               />
             </div>
-            <div className="hh-field">
-              <label className="hh-label" htmlFor="iv-time">
-                Время
-              </label>
-              <input
-                id="iv-time"
-                type="time"
-                value={interviewTime}
-                onChange={(e) => setInterviewTime(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-          </div>
+          </>
         ) : null}
         <div className="hh-field">
           <label className="hh-label" htmlFor="stage-note">

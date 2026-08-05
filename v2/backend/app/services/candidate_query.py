@@ -93,8 +93,12 @@ def serialize_list_item(
     *,
     vacancy_title: str | None = None,
     client_name: str | None = None,
+    last_contact_at: str | None = None,
 ) -> dict[str, Any]:
     p = c.payload or {}
+    contact = last_contact_at
+    if not contact:
+        contact = _infer_last_contact(c)
     return {
         "id": c.id,
         "vacancy_id": c.vacancy_id,
@@ -106,4 +110,44 @@ def serialize_list_item(
         "city": p.get("city"),
         "vacancy_title": vacancy_title,
         "client_name": client_name,
+        "last_contact_at": contact,
     }
+
+
+def _infer_last_contact(c: models.Candidate) -> str | None:
+    """Best-effort last contact: status_updated_at, stage history, created_at."""
+    candidates: list[str] = []
+    if c.status_updated_at:
+        candidates.append(str(c.status_updated_at))
+    hist = (c.payload or {}).get("hr_stage_history") or []
+    if isinstance(hist, list):
+        for item in hist:
+            if isinstance(item, dict) and item.get("at"):
+                candidates.append(str(item["at"]))
+    if c.created_at:
+        candidates.append(str(c.created_at))
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def last_contact_map(db: Session, candidate_ids: list) -> dict:
+    """Max MessagingPost.created_at per candidate (ISO)."""
+    if not candidate_ids:
+        return {}
+    from sqlalchemy import func as sa_func
+
+    rows = db.execute(
+        select(
+            models.MessagingPost.candidate_id,
+            sa_func.max(models.MessagingPost.created_at),
+        )
+        .where(models.MessagingPost.candidate_id.in_(candidate_ids))
+        .group_by(models.MessagingPost.candidate_id)
+    ).all()
+    out = {}
+    for cid, ts in rows:
+        if ts is None:
+            continue
+        out[cid] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+    return out

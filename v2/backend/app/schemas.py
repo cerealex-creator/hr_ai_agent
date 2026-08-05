@@ -188,6 +188,7 @@ class CandidateListItem(BaseModel):
     city: str | None = None
     vacancy_title: str | None = None
     client_name: str | None = None
+    last_contact_at: str | None = None
 
 
 class CandidateDetail(BaseModel):
@@ -228,6 +229,7 @@ class CandidateDetail(BaseModel):
     control_word_note: str | None = None
     office_interview_date: str | None = None
     office_interview_time: str | None = None
+    hh_resume_id: str | None = None
     payload: dict = Field(default_factory=dict)
 
 
@@ -249,6 +251,8 @@ class CandidatePatchIn(BaseModel):
     questionnaire_recruiter_notes: str | None = None
     office_interview_date: str | None = None
     office_interview_time: str | None = None
+    remote_interview: bool | None = None
+    meeting_link: str | None = None
 
 
 class CandidateStageIn(BaseModel):
@@ -339,6 +343,7 @@ class DocumentGenerationOut(BaseModel):
     created_at_legacy: str | None
     imported_at: datetime
     preview: str | None = None
+    vacancy_id: int | None = None
 
 
 class DocumentGenerationDetail(DocumentGenerationOut):
@@ -444,6 +449,12 @@ class HhShortlistToCandidateOut(BaseModel):
 class HhSearchCriteriaIn(BaseModel):
     criteria: dict = Field(default_factory=dict)
     rebuild_portrait: bool = False
+
+
+class HhPresetIn(BaseModel):
+    preset: dict = Field(default_factory=dict)
+    rebuild_portrait: bool = False
+    approve: bool = False
 
 
 class HhSeenItemOut(BaseModel):

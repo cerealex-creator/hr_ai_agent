@@ -123,6 +123,38 @@ def job_history_summary(job: models.Job) -> dict:
     }
 
 
+def delete_job(db: Session, job_id: uuid.UUID) -> bool:
+    job = db.get(models.Job, job_id)
+    if not job:
+        return False
+    db.delete(job)
+    db.commit()
+    return True
+
+
+def delete_hh_jobs(
+    db: Session,
+    *,
+    vacancy_id: int,
+    statuses: list[str] | None = None,
+    only_problematic: bool = False,
+) -> int:
+    """Delete HH search jobs for a vacancy. Returns deleted count."""
+    q = select(models.Job).where(
+        models.Job.vacancy_id == int(vacancy_id),
+        models.Job.job_type == "hh_cold_search",
+    )
+    if only_problematic:
+        q = q.where(models.Job.status.in_(("failed", "cancelled", "queued")))
+    elif statuses:
+        q = q.where(models.Job.status.in_(tuple(statuses)))
+    rows = list(db.scalars(q).all())
+    for job in rows:
+        db.delete(job)
+    db.commit()
+    return len(rows)
+
+
 def count_active(db: Session) -> int:
     return int(
         db.scalar(

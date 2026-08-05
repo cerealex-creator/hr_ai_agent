@@ -7,6 +7,7 @@ import { ProviderResourceLinks } from "@/components/ProviderResourceLinks";
 const SEARCH_NAV = [
   { href: "/vacancies", label: "Вакансии", ready: true },
   { href: "/candidates", label: "Кандидаты", ready: true },
+  { href: "/templates", label: "Шаблоны", ready: true },
   { href: "/stats", label: "Статистика", ready: true },
   { href: "/jobs", label: "Задачи", ready: true },
   { href: "/history", label: "История", ready: true },

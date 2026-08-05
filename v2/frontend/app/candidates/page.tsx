@@ -101,6 +101,7 @@ export default async function CandidatesListPage({ searchParams }: Props) {
                 <th>HR-этап</th>
                 <th>Оценка заказчика</th>
                 <th>Город</th>
+                <th>Последний контакт</th>
               </tr>
             </thead>
             <tbody>
@@ -120,11 +121,12 @@ export default async function CandidatesListPage({ searchParams }: Props) {
                   </td>
                   <td>{clientStatusLabel(c.client_status)}</td>
                   <td>{c.city || "—"}</td>
+                  <td>{formatLastContact(c.last_contact_at)}</td>
                 </tr>
               ))}
               {!rows.length && !error ? (
                 <tr>
-                  <td colSpan={6}>Нет кандидатов в этой выборке</td>
+                  <td colSpan={7}>Нет кандидатов в этой выборке</td>
                 </tr>
               ) : null}
             </tbody>
@@ -135,4 +137,11 @@ export default async function CandidatesListPage({ searchParams }: Props) {
       )}
     </AppShell>
   );
+}
+
+function formatLastContact(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  return d.toLocaleDateString("ru-RU");
 }

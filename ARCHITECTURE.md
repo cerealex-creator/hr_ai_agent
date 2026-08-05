@@ -1,11 +1,11 @@
-# Архитектура hr_ai_agent — текущая версия (Streamlit)
+# Архитектура hr_ai_agent — текущая версия (v2)
 
-> **Это описание работающей сейчас системы.**  
-> Планируемая архитектура (Next.js + FastAPI + PostgreSQL + ARQ) — в отдельном файле:  
-> **[`ARCHITECTURE_TARGET.md`](./ARCHITECTURE_TARGET.md)**  
-> Каркас MVP v2 (параллельно, без dual-write): **[`v2/`](./v2/)** — см. `v2/README.md`, cutover: `v2/CUTOVER.md`.
+> **Источник истины с 2026-08-03:** PostgreSQL + Next.js UI + FastAPI + ARQ + Messaging Gateway.  
+> Cutover и откат: [`v2/CUTOVER.md`](./v2/CUTOVER.md). Быстрый старт: [`v2/README.md`](./v2/README.md).  
+> Оставшиеся целевые пункты (auth, мультипровайдерный messaging): [`ARCHITECTURE_TARGET.md`](./ARCHITECTURE_TARGET.md).  
+> Streamlit + JSON + `bot.py` — **legacy** (корневые модули репозитория); не запускать параллельно с v2 poller на том же `TELEGRAM_BOT_TOKEN`.
 
-HR-приложение для ведения вакансий, кандидатов и воронки найма. Состоит из **веб-интерфейса (Streamlit)** и **Telegram-бота** — два отдельных процесса, общая файловая база данных.
+HR-приложение для ведения вакансий, кандидатов и воронки найма. Заказчик реагирует в Telegram; HR работает в веб-интерфейсе v2.
 
 ---
 
@@ -13,207 +13,230 @@ HR-приложение для ведения вакансий, кандидат
 
 | Слой | Технологии |
 |------|------------|
-| **Фронтенд** | [Streamlit](https://streamlit.io/) — UI рендерится на сервере, отдельного SPA нет. Стили: `corporate_ui.py`, `eval_ui.py`, доп. страницы в `pages/`. Лимит загрузки файлов: `.streamlit/config.toml` (`maxUploadSize`, сейчас 600 МБ). |
-| **Бэкенд** | Python 3.11. Логика в модулях корня репозитория. Entry point: `hri_full_v1.py` (веб) и `bot.py` (Telegram). |
-| **Telegram** | [aiogram](https://docs.aiogram.dev/) 3.x — long polling, inline-кнопки, команды в групповых чатах. Опционально прокси и IPv4: `TELEGRAM_PROXY`, `TELEGRAM_FORCE_IPV4` в `.env`. |
-| **ИИ** | OpenAI-совместимый API (RouterAI) — `ai_helpers.py`: единая точка вызова, лимиты токенов, JSON mode, восстановление битого JSON. Промпты: `hri_full_v1_config.yaml`. |
-| **Аудио/видео** | Яндекс SpeechKit (`YANDEX_API_KEY`), локальный `ffmpeg` для извлечения звука из видео. Поиск бинарника: `resolve_ffmpeg_binary()` в `hri_full_v1.py` (Homebrew `/opt/homebrew/bin`, `/usr/local/bin`). |
-| **Интеграции** | Яндекс.Диск (`yandex_disk_ingest.py`), Google Calendar (`google_calendar.py`), опционально S3 (`boto3`). |
-| **База данных** | **JSON-файлы** в `data/` — атомарная запись и file lock (`fcntl`) в `vacancy_store.py`. |
-| **Локальный запуск** | `scripts/start_local.sh` — Streamlit + бот в фоне; `install_mac_launcher.sh` — ярлыки на рабочий стол macOS. |
-| **Деплой** | Docker (`Dockerfile`, `docker-compose.yml`): `hr-app` (Streamlit :8501) и `hr-bot` (`bot.py`). Общий volume `./data`. |
+| **UI** | Next.js (App Router) + TypeScript — `v2/frontend/` |
+| **API** | FastAPI REST `/api/v1` — `v2/backend/app/` |
+| **БД** | PostgreSQL (Docker `:5433`) — SQLAlchemy models, JSONB для `documents` / `payload` |
+| **Очереди** | Redis (`:6380`) + **ARQ** worker — HH, Disk sync, inbox router, transcribe |
+| **Мессенджер** | Messaging Gateway → TelegramProvider; inbound: webhook **или** long-poll (`telegram_poller`) |
+| **ИИ** | OpenAI-совместимый API (RouterAI по умолчанию) — `ai_json.py`; модель переопределяется в `data/app_settings.json` |
+| **Аудио/видео** | Яндекс SpeechKit + Object Storage (`YANDEX_*`) + `ffmpeg` — job `transcribe_media` |
+| **Интеграции** | HH API, Яндекс.Диск (public sync + OAuth + AI inbox L3), Google Calendar |
+| **Конфиг** | `v2/.env` (+ корневой `.env` для общих ключей), `data/app_settings.json` для UI-настроек |
+| **Запуск** | `v2/docker-compose.yml` (db/redis/api/frontend/worker; profile `messaging` → poller) |
 
-**Зависимости:** `requirements.txt` — streamlit, openai, aiogram, requests, PyPDF2, python-docx, openpyxl, google-api-python-client и др.
-
-**Конфигурация:** `.env` (токены, ключи API), `hri_full_v1_config.yaml` (промпты и параметры ИИ).
-
----
-
-## Ограничения текущей версии (важно для миграции)
-
-| Тема | Как сейчас |
-|------|------------|
-| **Долгие задачи** | Генерация, расшифровка, синхронизация выполняются синхронно в обработчике кнопки Streamlit (`st.spinner`). UI сессии блокируется; параллельная работа в той же сессии ненадёжна. |
-| **Клиенты / тенанты** | `client_id` + `departments.json` — подразделения одной установки, без жёсткой изоляции и логина. |
-| **Доступ заказчика** | `/client?dept=Название`, `/master` — без auth. |
-| **Мессенджер** | Жёсткая привязка к Telegram (`telegram_*` модули, поля `telegram_posts`). |
-| **Конфликты записи** | Streamlit и бот пишут в один `vacancies_db.json`; смягчение — file lock + `merge_vacancy_candidates_from_disk`. |
-
-Целевое решение этих ограничений — в [`ARCHITECTURE_TARGET.md`](./ARCHITECTURE_TARGET.md).
+**Не на текущем этапе:** auth/роли в UI, dual-write в Streamlit JSON, OCR сканов в inbox, cron auto-inbox.
 
 ---
 
-## Структура проекта
+## Общая схема
+
+```mermaid
+flowchart TB
+  subgraph ui [Next.js :3000]
+    HUB[Главная / хаб]
+    SEARCH[Поиск сотрудников]
+    SETTINGS[Настройки]
+    JOBS[Задачи]
+  end
+
+  subgraph api [FastAPI :8000]
+    REST["/api/v1"]
+    MSG[Messaging Gateway]
+  end
+
+  subgraph workers [ARQ + poller]
+    ARQ[ARQ worker]
+    POLL[telegram_poller]
+  end
+
+  subgraph data [Данные]
+    PG[(PostgreSQL)]
+    REDIS[(Redis)]
+    APPSET["data/app_settings.json"]
+    YDTOKEN["data/yandex_disk_oauth.json"]
+  end
+
+  subgraph ext [Внешние]
+    TG[Telegram]
+    HH[HeadHunter]
+    YD[Яндекс.Диск]
+    AI[RouterAI / ИИ]
+    CAL[Google Calendar]
+  end
+
+  HUB --> REST
+  SEARCH --> REST
+  SETTINGS --> REST
+  JOBS --> REST
+  REST --> PG
+  REST --> REDIS
+  REST --> APPSET
+  REST --> ARQ
+  ARQ --> PG
+  ARQ --> HH
+  ARQ --> YD
+  ARQ --> AI
+  MSG --> TG
+  POLL --> MSG
+  MSG --> PG
+  REST --> YDTOKEN
+  REST --> CAL
+```
+
+---
+
+## Структура `v2/`
 
 ```
-hr_ai_agent/
-├── hri_full_v1.py          # Точка входа Streamlit: вкладки Вакансии / Статистика / Настройки / Инструкции
-├── bot.py                  # Точка входа Telegram-бота (polling, напоминания, команды)
-├── vacancy_store.py        # Чтение/запись JSON, миграции, merge полей бота ↔ UI
-├── models.py               # Этапы воронки (HR stages), константы, нормализация кандидата
-├── ai_helpers.py           # Вызовы ИИ, trim, JSON mode, parse_ai_json_response
-│
-├── candidate_funnel.py     # Карточки кандидатов, воронка, доп. материалы в чат, автозагрузка с Диска
-├── vacancy_tab.py          # Вкладка вакансии: кандидаты, документы, настройки роли
-├── vacancy_prep.py         # Подготовка и обновление документов (мастер, мульти-источники, история)
-├── corporate_ui.py         # Общий UI: баннеры, стили, pending changes
-├── questionnaire_grid.py   # Опросник по интервью
-├── stats_tab.py            # Статистика и отчёты
-├── client_zone.py          # Клиентская зона (оценка заказчиком)
-│
-├── telegram_client.py      # Отправка/редактирование карточек, доп. материалы (reply + update)
-├── telegram_bot_handlers.py# Callback-кнопки, команды, комментарии из чата
-├── telegram_bot_commands.py# Меню команд (/meetings, /candidates, справка)
-├── telegram_workflow.py    # Состояние «ожидаем комментарий» в боте
-├── telegram_reminders.py   # Напоминания о встречах (фоновый tick в bot.py)
-├── telegram_notify.py      # Отправка HTML, статус бота, normalize_chat_id
-├── telegram_chat_id.py     # resolve_vacancy_chat_id: chats_db → runtime → поле вакансии
-├── interview_attendance.py # Подтверждение явки на собеседование
-├── client_actions.py       # Бизнес-логика действий заказчика → запись в JSON
-│
-├── resume_ai.py            # Парсинг резюме, генерация опросника/профиля, ссылки Яндекс.Диск
-├── yandex_disk_ingest.py   # Синхронизация файлов с Яндекс.Диска
-├── google_calendar.py      # События в Google Calendar
-├── interview_schedule.py   # Валидация и напоминания по расписанию
-├── network_ipv4.py         # Принудительный IPv4 для Telegram на VPS/Mac
-│
-├── scripts/                # start_local.sh, stop_local.sh, status_local.sh, install_mac_launcher.sh
-├── pages/                  # Доп. страницы Streamlit (client, master)
-├── data/                   # Данные и секреты (в .gitignore)
-├── deploy/                 # Инструкции деплоя, TELEGRAM_CLIENT.md, sync-to-server.sh
-├── fonts/                  # Шрифты для PDF
-├── .cursor/                # DEVLOG, правила для AI-ассистента
-├── ARCHITECTURE.md         # Этот файл — текущая архитектура (Streamlit)
-├── ARCHITECTURE_TARGET.md  # Планируемая архитектура (v2)
-├── Dockerfile
+v2/
 ├── docker-compose.yml
-└── requirements.txt
+├── .env.example
+├── README.md
+├── CUTOVER.md
+├── backend/
+│   ├── alembic/                 # миграции (при необходимости)
+│   ├── app/
+│   │   ├── main.py              # FastAPI + lifespan
+│   │   ├── api/v1/endpoints.py  # REST
+│   │   ├── core/config.py       # Settings / .env
+│   │   ├── db/models.py         # Organization, Client, Vacancy, Candidate, Job, …
+│   │   ├── schemas.py
+│   │   ├── services/            # домен
+│   │   │   ├── candidate_*.py, vacancy_*.py, stage_schema.py
+│   │   │   ├── hh_*.py, resume_eval.py, hh_manual_eval.py
+│   │   │   ├── yandex_disk_sync.py, yandex_disk_oauth.py, yandex_public.py
+│   │   │   ├── app_settings.py, ai_json.py, jobs.py, stats_service.py
+│   │   │   ├── google_calendar.py, warranty.py, transcription.py
+│   │   │   └── messaging/       # gateway, telegram, inbound, keyboards, …
+│   │   ├── workers/
+│   │   │   ├── tasks.py         # ARQ jobs
+│   │   │   ├── settings.py
+│   │   │   └── telegram_poller.py
+│   │   └── scripts/import_json.py
+│   └── requirements.txt
+└── frontend/
+    ├── app/                     # App Router pages
+    │   ├── page.tsx             # главная (хаб)
+    │   ├── vacancies/, candidates/, stats/, jobs/, history/
+    │   ├── settings/            # хаб + подстраницы
+    │   └── client-zone/         # заготовка
+    ├── components/              # AppShell, HhSearchPanel, CandidateEditor, …
+    └── lib/                     # api.ts, labels.ts, companies.ts
 ```
 
-### Каталог `data/` (основные файлы)
-
-| Файл | Назначение |
-|------|------------|
-| `vacancies_db.json` | **Главная БД:** вакансии, кандидаты, этапы, `extra_materials`, посты в Telegram |
-| `departments.json` | Подразделения / клиенты |
-| `chats_db.json` | Привязка Telegram chat_id к подразделениям (источник для новых вакансий) |
-| `vacancy_templates.json` | Шаблоны вакансий (документы + chat_id) |
-| `history/` | Архив прошлых генераций документов (можно подставить без применения к вакансии) |
-| `google_calendar_*.json` | OAuth-токены Google Calendar |
-| `telegram_scheduler_state.json` | Состояние планировщика напоминаний |
+Legacy Streamlit остаётся в **корне** репозитория (`hri_full_v1.py`, `bot.py`, `vacancy_store.py`, …) для отката и справки.
 
 ---
 
-## Документы по вакансии
+## Модель данных (PostgreSQL)
 
-Генерация и обновление — в `vacancy_prep.py`, UI — «Документы по вакансии» внутри открытой вакансии (`vacancy_tab.py` → `render_existing_documents_zone`).
+| Сущность | Назначение |
+|----------|------------|
+| `organizations` | Тенант-обёртка (сейчас одна org по умолчанию) |
+| `clients` | Компании / подразделения / тестовый чат (`parent_id`, `chat_mode`, `kind`) |
+| `vacancies` | Вакансия: `documents` (JSONB), `payload` (настройки, warranty, yandex_disk, stage_schema) |
+| `candidates` | Кандидат: `hr_stage`, `client_status`, `payload` (JSONB) |
+| `jobs` | Фоновые задачи + прогресс + payload результатов (HH, inbox) |
+| `inbox_items` | Очередь роутинга Яндекс.Диск `_inbox` (status: new/routed/unsorted/error) |
+| `hh_shortlist_items` / `hh_seen_resumes` | Shortlist и «уже смотрели» |
+| `messaging_posts` / channels | Карточки в чатах, inbound-статусы |
+| `document_generations` | История генераций документов |
 
-### Режимы мастера «Создать или обновить документы»
+Импорт snapshot: `python -m app.scripts.import_json --data-dir ../../data` (только чтение `data/`).
 
-| Режим | Когда использовать |
-|-------|-------------------|
-| **Профиль + дополнения** | Есть письменный профиль (в вакансии или файле) + одна или несколько записей/файлов. ИИ объединяет источники с приоритетами: указания HR → профиль → доп. материалы. |
-| **Из материалов** | Один или несколько файлов / аудио / видео / вставленный текст — полный пакет с нуля. |
-| **Готовые документы** | Импорт уже написанных профиля, опросника, текста вакансии, ключевых слов. |
-| **Скорректировать существующие** | Точечные правки: указания HR + опционально новый файл/запись. |
-| **Анкета HR** | Пошаговый wizard (как при создании вакансии). |
-
-Общий поток: сбор источников → генерация в памяти → **предпросмотр** → выбор полей для замены → сохранение в `vacancy.documents` и запись в `data/history/`. Пакет можно **сохранить в историю без применения** к текущей вакансии (другая должность / черновик).
-
-Архивные вакансии: документы обновляются с предупреждением; воронка кандидатов не меняется.
-
-### Создание новой вакансии
-
-`render_creation_zone` — режимы «Из расшифровки», «Импорт», «Анкета HR» только на этапе «Создание новой вакансии». После регистрации вакансии дальнейшие правки — через мастер в карточке вакансии.
+Мелкие настройки UI/оператора (гарантия по умолчанию, модель ИИ, ссылки провайдеров, Disk root/inbox, candidate_comms) — в **`data/app_settings.json`**.
 
 ---
 
-## Как данные попадают из Telegram-бота в базу
+## UI: навигация и разделы
 
-Оба процесса читают и пишут **один файл** `data/vacancies_db.json`. При сохранении из UI `merge_vacancy_candidates_from_disk` не затирает поля, обновлённые ботом (`client_status`, `client_comment`, `hr_stage`, `telegram_posts`, `extra_materials` и др.).
+### Главная `/`
 
-### Схема потока (карточка кандидата)
+Хабы без верхнего меню поиска: **Настройки**, **Разработка документов** (скоро), **Поиск сотрудников**.
+
+### Поиск сотрудников (`AppShell variant=search`)
+
+Верхнее меню: Вакансии · Кандидаты · Статистика · Задачи · История · (клиентская зона — позже).  
+Кнопка «← Вернуться в главное меню».
+
+Карточка вакансии: вкладки кандидаты / документы / HH / Я.Диск; внизу управление вакансией, схема этапов, параметры.
+
+### Настройки (`variant=settings`)
+
+Хаб карточек + боковая панель **Ресурсы** (интерактивные ссылки на RouterAI / Яндекс Облако).
+
+| Страница | Содержание |
+|----------|------------|
+| `/settings/about` | Описание функционала |
+| `/settings/ai` | Имя модели ИИ (без смены ключа), ссылки кабинетов, инструкция смены платформы |
+| `/settings/yandex-disk` | OAuth, корень, ИИ-роутинг inbox + unsorted |
+| `/settings/candidate-comms` | Zoom / Телемост / мессенджеры / шаблоны (хранение; интеграции позже) |
+| `/settings/companies` | Компании, режим чатов, подразделения |
+| `/settings/test-chat` | Тестовый чат |
+| `/settings/telegram` | Статус бота, каналы |
+| `/settings/calendar` | Google Calendar OAuth |
+| `/settings/appearance` | Тема + масштаб шрифта (localStorage) |
+| `/settings/warranty` | Срок гарантии по умолчанию |
+
+---
+
+## Доменные потоки
+
+### Воронка кандидата
+
+- Этапы HR и статусы заказчика — **системные ключи** (`resume_screening`, `offer`, `wait`, …) в `candidate_write` / `labels.ts`.
+- На вакансии: **`payload.stage_schema`** — подписи и вкл/выкл; при наличии кандидатов структура заморожена (только labels).
+- В списках — цветовой маркер этапа (`StageMarker`).
+- Telegram: outbound карточка + inline-кнопки; inbound обновляет `client_status` / комментарии в PG.
+
+### HH cold search
+
+1. Вкладка **«Пресет»**: форма = точные параметры `GET /resumes` (`vacancy.documents.hh_preset`: `api` + `soft` + `run`).
+2. Soft-правила (must-have / reject / комментарий) → только скринер ИИ; в HH API не уходят.
+3. Job `hh_cold_search` читает `payload.preset` → `search_resume_items_from_preset` → prefilter → оценка → `jobs.payload.results`.
+4. Legacy `hh_search_criteria` / `hh_search_plan` ещё в коде; при первом открытии criteria мигрируется в preset. UI плана скрыт (`HH_ADVANCED_UI=false`).
+5. **«Вручную»**: оценка ссылок HH + soften checklist.
+
+API: `GET/PUT /vacancies/{id}/hh-preset`, старт через `POST /jobs` с `payload.preset`.
+
+### Яндекс.Диск
+
+| Режим | Как работает |
+|-------|----------------|
+| **Public sync** | Публичная ссылка → list/download → привязка PDF/видео/заданий по ФИО |
+| **OAuth L1** | Токен → `/HR_AI_Agent` + `_inbox` → mkdir/publish папок вакансии |
+| **Inbox L3** | PDF из `_inbox` → ИИ-роутинг → `Резюме/` вакансии + кандидат; низкая уверенность → `_unsorted` + UI привязки; таблица `inbox_items`; job `disk_inbox_router` |
+
+SpeechKit (`YANDEX_*`) и Disk OAuth — **разные** креды. Ключи inbox: `disk_inbox_confidence` / `disk_inbox_auto` / `disk_inbox_evaluate` в `app_settings.json`.
+
+### Документы вакансии
+
+Редактор + генерация через ИИ (`document_generate`); история в `document_generations` / UI History.
+**Из записи/материалов:** `POST …/documents/from-materials` (upload + ссылки Я.Диска) → job `vacancy_docs_from_materials` → пакет в docs + конспект `meeting_brief` + история; apply из History. Шаблоны: `/templates`.
+
+### Фоновые задачи
+
+ARQ: `hh_cold_search`, `yandex_disk_sync`, `disk_inbox_router`, `transcribe_media`, demo/import. UI: `/jobs` + прогресс в панели HH.
+
+---
+
+## Messaging Gateway
 
 ```mermaid
 flowchart LR
-    subgraph HR_UI["Streamlit (hri_full_v1.py)"]
-        A[Карточка кандидата] --> B[telegram_client.py]
-    end
-
-    subgraph Telegram
-        B --> C[Telegram API / групповой чат]
-        C --> D[Inline-кнопки / команды / текст]
-    end
-
-    subgraph Bot["bot.py + aiogram"]
-        D --> E[telegram_bot_handlers.py]
-        E --> F[client_actions.py]
-        F --> G[vacancy_store.save_vacancies]
-    end
-
-    G --> H[(data/vacancies_db.json)]
-    H --> HR_UI
+  UI[Next.js / API] --> GW[gateway]
+  GW --> TG[telegram_provider]
+  TG --> API[Telegram Bot API]
+  API --> POLL[telegram_poller / webhook]
+  POLL --> IN[inbound]
+  IN --> PG[(candidates / posts)]
 ```
 
-### Доп. материалы в чат
-
-HR указывает название и ссылку в карточке кандидата → `send_extra_material_to_chat`: **reply** на основную карточку + **редактирование** основной карточки (блок материалов) → поля `extra_materials[]` в JSON.
-
-### Пошагово (статусы заказчика)
-
-1. **HR отправляет кандидата** — `send_candidate_card_to_chat` → inline-клавиатура → `_persist_telegram_post` (`chat_id`, `message_id`, `tg_callback_id`).
-2. **Заказчик нажимает кнопку** — `telegram_bot_handlers` → при необходимости `telegram_workflow` запрашивает комментарий → `client_actions.apply_and_save_client_action`.
-3. **Обновление карточки** — `apply_client_update` → `save_vacancies`.
-4. **Streamlit подхватывает** — при следующей загрузке `merge_vacancy_candidates_from_disk`.
-
-### Дополнительные записи из бота
-
-| Модуль | Что пишет в JSON |
-|--------|------------------|
-| `telegram_reminders.py` | Флаги напоминаний (`interview_reminder_60_sent`, утренние DM) |
-| `interview_attendance.py` | Статус явки, отмена встречи |
-| `client_actions.apply_and_save_confirm_hr_meeting` | `meeting_hr_confirmed` |
-
----
-
-## Привязка Telegram-чата
-
-Цепочка: **группа в Telegram** → **запись в `chats_db.json`** (Настройки) → **выбор чата при создании вакансии** → поле `vacancy.chat_id` и `client_id` (подразделение).
-
-Разрешение chat_id при отправке: `telegram_chat_id.resolve_vacancy_chat_id` — сначала чат подразделения из `chats_db.json`, иначе поле вакансии.
-
-Подробная пошаговая инструкция для HR — вкладка **«Инструкции»** в приложении и блок **«Мои чаты Telegram»** в Настройках. Техническая справка: `deploy/TELEGRAM_CLIENT.md`.
-
----
-
-## Запуск локально
-
-### По клику с рабочего стола (macOS)
-
-```bash
-cd /path/to/hr_ai_agent
-./scripts/install_mac_launcher.sh
-```
-
-На рабочем столе: **Start HR Agent** / **Stop HR Agent**. Запуск в фоне (`nohup`), логи: `run/logs/`. Скрипт добавляет Homebrew в `PATH` (нужно для `ffmpeg` при запуске из Finder).
-
-Только веб без бота: `HR_LOCAL_SKIP_BOT=1 ./scripts/start_local.sh`
-
-Проверка: `./scripts/status_local.sh` · остановка: `./scripts/stop_local.sh`
-
-### Вручную в терминале
-
-```bash
-# Веб-приложение
-streamlit run hri_full_v1.py
-
-# Бот (отдельный терминал) — обязателен для кнопок и команд в чате
-python bot.py
-```
-
-Оба процесса должны видеть одну папку `data/` и файл `.env`.
-
-**Важно:** не запускайте два экземпляра `bot.py` с одним `TELEGRAM_BOT_TOKEN` — polling конфликтует, кнопки перестают отвечать.
+| Флаг | Смысл |
+|------|--------|
+| `MESSAGING_OUTBOUND_ENABLED` | Отправка карточек/дайджестов |
+| `MESSAGING_INBOUND_ENABLED` | Приём callback/сообщений в PG |
+| `MESSAGING_POLL_ENABLED` | Локальный getUpdates (не вместе с legacy `bot.py`) |
 
 ---
 
@@ -221,12 +244,65 @@ python bot.py
 
 | Переменная | Назначение |
 |------------|------------|
-| `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather |
-| `TELEGRAM_HR_CONFIRM_USERNAME` | Username HR для подтверждения встреч в чате |
-| `TELEGRAM_HR_USER_ID` | Личный chat_id HR (утренние напоминания) |
-| `ROUTERAI_API_KEY` | Ключ ИИ API |
-| `YANDEX_API_KEY` | SpeechKit (расшифровка) |
-| `TELEGRAM_PROXY` | Прокси, если `api.telegram.org` недоступен |
-| `PUBLIC_APP_BASE_URL` | Базовый URL для ссылок клиентских зон на VPS |
+| `DATABASE_URL` | PostgreSQL |
+| `REDIS_URL` | Redis для ARQ |
+| `TELEGRAM_BOT_TOKEN` | Бот Messaging Gateway |
+| `MESSAGING_*` | outbound / inbound / poll |
+| `ROUTERAI_API_KEY` / `AI_BASE_URL` / `AI_MODEL_NAME` | ИИ (модель ещё можно переопределить в app_settings) |
+| `HH_ACCESS_TOKEN` / `HH_USER_AGENT` | Холодный поиск HH |
+| `YANDEX_API_KEY` (+ bucket keys) | SpeechKit / Object Storage |
+| `YANDEX_DISK_OAUTH_TOKEN` / `YANDEX_DISK_CLIENT_ID` | Создание папок и inbox на Диске |
+| `GOOGLE_CALENDAR_*` | Календарь встреч |
+| `NEXT_PUBLIC_API_URL` | Базовый URL API для фронта |
+| `CORS_ORIGINS` | CORS FastAPI |
 
-Полный список: `.env.example`.
+Полные шаблоны: `v2/.env.example`, корневой `.env.example`.
+
+---
+
+## Запуск (кратко)
+
+```bash
+cd v2
+cp .env.example .env   # + ключи из корневого .env при необходимости
+docker compose up -d db redis
+# API
+cd backend && source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+# Worker
+arq app.workers.settings.WorkerSettings
+# Poller (если inbound без webhook)
+python -m app.workers.telegram_poller
+# UI
+cd ../frontend && npm run dev   # :3000
+```
+
+Или `docker compose up --build` (+ profile `messaging` для poller).
+
+**Важно:** один poller / один процесс на токен Telegram.
+
+---
+
+## Ограничения текущей версии
+
+| Тема | Как сейчас |
+|------|------------|
+| Auth / роли | Нет; один оператор |
+| Клиентская веб-зона | Заготовка; заказчик — в Telegram |
+| Disk inbox OCR | Сканы без текста → error / ручной разбор |
+| Cron auto inbox | Флаг `disk_inbox_auto`; по умолчанию ручной запуск |
+| Смена платформы ИИ | Модель из UI; base URL/ключ — через `.env` + перезапуск |
+| Legacy Streamlit | Только откат / справочный код |
+
+Планируемое развитие — в [`ARCHITECTURE_TARGET.md`](./ARCHITECTURE_TARGET.md).
+
+---
+
+## Связанные документы
+
+| Файл | Содержание |
+|------|------------|
+| [`v2/README.md`](./v2/README.md) | MVP-статус, быстрый старт |
+| [`v2/CUTOVER.md`](./v2/CUTOVER.md) | Cutover 2026-08-03, откат |
+| [`ARCHITECTURE_TARGET.md`](./ARCHITECTURE_TARGET.md) | Долгосрочная цель / оставшиеся фазы |
+| [`.cursor/DEVLOG.md`](./.cursor/DEVLOG.md) | Журнал изменений по сессиям |

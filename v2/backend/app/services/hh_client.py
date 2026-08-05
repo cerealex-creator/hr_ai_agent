@@ -91,10 +91,16 @@ class HhClient:
     def _set_access_token(self, token: str) -> None:
         self.session.headers["Authorization"] = f"Bearer {token}"
 
-    def _get(self, path: str, *, params: dict | None = None, _retried: bool = False) -> Any:
+    def _get(
+        self,
+        path: str,
+        *,
+        params: dict | list[tuple[str, Any]] | None = None,
+        _retried: bool = False,
+    ) -> Any:
         url = f"{self.base}{path}"
         try:
-            resp = self.session.get(url, params=params or {}, timeout=60)
+            resp = self.session.get(url, params=params if params is not None else {}, timeout=60)
         except requests.RequestException as exc:
             raise HhApiError(f"HH сеть: {exc}") from exc
         if resp.status_code >= 400:
@@ -120,6 +126,7 @@ class HhClient:
         schedule: str | None = None,
         salary_to: int | None = None,
         period: int | None = None,
+        text_logic: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -135,8 +142,24 @@ class HhClient:
             params["salary_to"] = salary_to
         if period is not None:
             params["period"] = max(1, min(365, int(period)))
+        logic = (text_logic or "").strip().lower()
+        if logic in ("any", "all", "except", "phrase"):
+            params["text.logic"] = logic
         if extra_params:
             params.update(extra_params)
+        return self._get("/resumes", params=params)
+
+    def search_resumes_params(
+        self,
+        base_params: list[tuple[str, Any]],
+        *,
+        page: int = 0,
+        per_page: int = 20,
+    ) -> dict[str, Any]:
+        """GET /resumes with multi-value params (text triads, areas, roles, …)."""
+        params: list[tuple[str, Any]] = list(base_params)
+        params.append(("page", page))
+        params.append(("per_page", min(50, max(1, per_page))))
         return self._get("/resumes", params=params)
 
     def get_resume(self, resume_id: str) -> dict[str, Any]:
@@ -158,21 +181,36 @@ def search_resume_items(
     schedule: str | None = None,
     salary_to: int | None = None,
     period: int | None = None,
+    keywords_and: str = "",
+    keywords_logic: str = "any",
+    criteria: dict[str, Any] | None = None,
     extra_params: dict[str, Any] | None = None,
     prioritized: bool = True,
 ) -> list[dict[str, Any]]:
-    from app.services.hh_prefilter import query_quotas, split_queries
+    from app.services.hh_prefilter import query_quotas
+    from app.services.hh_search_criteria import build_hh_text_queries
 
-    keywords = (keywords or "").strip()
-    if not keywords:
+    if criteria is not None:
+        query_specs = build_hh_text_queries(criteria)
+    else:
+        query_specs = build_hh_text_queries(
+            keywords=keywords,
+            keywords_and=keywords_and,
+            keywords_logic=keywords_logic,
+        )
+    if not query_specs:
         raise HhApiError("Пустые ключевые слова для поиска")
-    queries = split_queries(keywords)
-    quotas = query_quotas(len(queries), max_items) if prioritized else [max_items] * len(queries)
+
+    quotas = (
+        query_quotas(len(query_specs), max_items)
+        if prioritized
+        else [max_items] * len(query_specs)
+    )
 
     seen: set[str] = set()
     collected: list[dict[str, Any]] = []
 
-    def _pull(q: str, rank: int, limit: int) -> None:
+    def _pull(q: str, logic: str, rank: int, limit: int) -> None:
         nonlocal collected
         if limit <= 0:
             return
@@ -188,6 +226,7 @@ def search_resume_items(
                 schedule=schedule,
                 salary_to=salary_to,
                 period=period,
+                text_logic=logic,
                 extra_params=extra_params,
             )
             items = data.get("items") or []
@@ -201,6 +240,7 @@ def search_resume_items(
                     seen.add(rid)
                 tagged = dict(item)
                 tagged["_source_query"] = q
+                tagged["_source_logic"] = logic
                 tagged["_source_rank"] = rank
                 collected.append(tagged)
                 got += 1
@@ -212,17 +252,65 @@ def search_resume_items(
             page += 1
             time.sleep(pause_s)
 
-    # Pass 1: per-query quotas (earlier lines get more slots)
-    for rank, (q, quota) in enumerate(zip(queries, quotas)):
-        _pull(q, rank, quota)
+    for rank, (spec, quota) in enumerate(zip(query_specs, quotas)):
+        _pull(spec["text"], spec.get("logic") or "any", rank, quota)
         time.sleep(pause_s)
 
-    # Pass 2: backfill shortfall in query priority order
     if len(collected) < max_items:
-        for rank, q in enumerate(queries):
+        for rank, spec in enumerate(query_specs):
             if len(collected) >= max_items:
                 break
-            _pull(q, rank, max_items - len(collected))
+            _pull(spec["text"], spec.get("logic") or "any", rank, max_items - len(collected))
             time.sleep(pause_s)
 
+    return collected[:max_items]
+
+
+def search_resume_items_from_preset(
+    client: HhClient,
+    preset: dict[str, Any],
+    *,
+    max_items: int = 20,
+    per_page: int = 20,
+    pause_s: float = 0.35,
+) -> list[dict[str, Any]]:
+    """Cold search driven solely by hh_preset.api (exact HH params)."""
+    from app.services.hh_preset import compile_hh_query_params, normalize_preset
+
+    p = normalize_preset(preset)
+    base = compile_hh_query_params(p)
+    texts = [t for t in p["api"]["texts"] if (t.get("text") or "").strip()]
+    if not texts:
+        raise HhApiError("Пустые ключевые слова в пресете")
+
+    # One HH call with all text triads + filters (mirrors HH UI multi-text).
+    # If several OR synonym blocks are needed as separate queries later, split here.
+    seen: set[str] = set()
+    collected: list[dict[str, Any]] = []
+    page = 0
+    label = " · ".join(t["text"] for t in texts[:3])
+    while len(collected) < max_items:
+        batch = min(per_page, max_items - len(collected))
+        data = client.search_resumes_params(base, page=page, per_page=batch)
+        items = data.get("items") or []
+        if not items:
+            break
+        for item in items:
+            rid = str(item.get("id") or "")
+            if rid and rid in seen:
+                continue
+            if rid:
+                seen.add(rid)
+            tagged = dict(item)
+            tagged["_source_query"] = label
+            tagged["_source_logic"] = texts[0].get("logic") or "any"
+            tagged["_source_rank"] = 0
+            collected.append(tagged)
+            if len(collected) >= max_items:
+                break
+        pages = int(data.get("pages") or 1)
+        if page >= pages - 1:
+            break
+        page += 1
+        time.sleep(pause_s)
     return collected[:max_items]

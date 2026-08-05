@@ -67,6 +67,9 @@ PATCHABLE_PAYLOAD_FIELDS = (
     "questionnaire_recruiter_notes",
     "office_interview_date",
     "office_interview_time",
+    "remote_interview",
+    "office_interview",
+    "meeting_link",
 )
 
 
@@ -152,6 +155,9 @@ def patch_candidate(
             payload[key] = val.strip()
         else:
             payload[key] = val
+    from app.services.meeting_links import maybe_attach_meeting_link
+
+    payload = maybe_attach_meeting_link(payload)
     candidate.payload = payload
     flag_modified(candidate, "payload")
     return candidate
@@ -234,6 +240,9 @@ def set_stage(
         payload["office_interview_date"] = office_interview_date.strip()
     if office_interview_time is not None:
         payload["office_interview_time"] = office_interview_time.strip()
+    from app.services.meeting_links import maybe_attach_meeting_link
+
+    payload = maybe_attach_meeting_link(payload)
     candidate.payload = payload
     flag_modified(candidate, "payload")
 

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import models
-from app.services.candidate_query import serialize_list_item, vacancy_meta_maps
+from app.services.candidate_query import last_contact_map, serialize_list_item, vacancy_meta_maps
 
 
 @dataclass
@@ -83,12 +83,14 @@ def search_candidates(
     hits.sort(key=lambda h: (-h.score, (h.candidate.name or "").casefold()))
     hits = hits[: max(1, min(limit, 100))]
     titles, client_names = vacancy_meta_maps(db, list({h.vacancy.id: h.vacancy for h in hits}.values()))
+    posts = last_contact_map(db, [h.candidate.id for h in hits])
     out = []
     for h in hits:
         item = serialize_list_item(
             h.candidate,
             vacancy_title=titles.get(h.candidate.vacancy_id),
             client_name=client_names.get(h.candidate.vacancy_id),
+            last_contact_at=posts.get(h.candidate.id),
         )
         item["match_in"] = h.match_in
         item["score"] = h.score

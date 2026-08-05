@@ -4,9 +4,11 @@ from app.core.config import get_settings
 from app.workers.tasks import (
     candidate_interview_process,
     demo_progress,
+    disk_inbox_router,
     hh_cold_search,
     import_legacy,
     transcribe_media,
+    vacancy_docs_from_materials,
     yandex_disk_sync,
 )
 
@@ -21,6 +23,8 @@ class WorkerSettings:
         candidate_interview_process,
         hh_cold_search,
         yandex_disk_sync,
+        disk_inbox_router,
+        vacancy_docs_from_materials,
     ]
     redis_settings = RedisSettings.from_dsn(_settings.redis_url)
     max_jobs = 2

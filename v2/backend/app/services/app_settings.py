@@ -262,6 +262,37 @@ def set_candidate_comms(patch: dict[str, Any]) -> dict[str, Any]:
     return get_candidate_comms()
 
 
+DEFAULT_FUNCTIONS: dict[str, Any] = {
+    # HH cold-search (ARQ job: hh_cold_search) + UI "Поиск HH".
+    "hh_search_enabled": True,
+}
+
+
+def get_functions() -> dict[str, Any]:
+    raw = _load().get("functions")
+    base = dict(DEFAULT_FUNCTIONS)
+    if not isinstance(raw, dict):
+        return base
+    # Only take known keys; ignore unknown to keep config forward-compatible.
+    for key in DEFAULT_FUNCTIONS.keys():
+        if key in raw:
+            base[key] = bool(raw.get(key))
+    return base
+
+
+def set_functions(patch: dict[str, Any]) -> dict[str, Any]:
+    data = _load()
+    cur = get_functions()
+    if not isinstance(patch, dict):
+        return cur
+    for key in DEFAULT_FUNCTIONS.keys():
+        if key in patch:
+            cur[key] = bool(patch.get(key))
+    data["functions"] = cur
+    _save(data)
+    return cur
+
+
 def get_app_settings() -> dict:
     from app.services.yandex_disk_oauth import get_disk_paths
 
@@ -272,6 +303,7 @@ def get_app_settings() -> dict:
         "ai_provider": get_ai_provider(),
         "provider_links": get_provider_links(),
         "candidate_comms": get_candidate_comms(),
+        "functions": get_functions(),
         "yandex_disk_root": disk_paths["root"],
         "yandex_disk_inbox": disk_paths["inbox_name"],
         "path": str(_settings_path()),

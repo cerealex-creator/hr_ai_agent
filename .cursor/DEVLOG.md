@@ -5,6 +5,252 @@
 
 ---
 
+## 2026-08-05 — Выключатель функции: поиск в HH
+
+**Тип:** `feature`
+
+**Сделано:**
+- Добавлен флаг `functions.hh_search_enabled` в `app_settings.json` (UI: `/settings/functions`).
+- UI вакансии: при выключенном флаге скрывается таб “Поиск HH”.
+- Backend: `POST /api/v1/jobs` запрещает создание `job_type=hh_cold_search`, если флаг выключен.
+
+**Файлы:** `app_settings.py`, `endpoints.py`, `settings/page.tsx`, `settings/functions/page.tsx`, `vacancies/[id]/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- В браузере выключить флаг и проверить: таб пропадает и запуск `hh_cold_search` возвращает 403.
+
+## 2026-08-05 — HH статус резюме: откат функции
+
+**Тип:** `decision`
+
+**Сделано:**
+- Убраны UI (карточка + колонка «Обновлено»), endpoint `POST …/hh-resume-status`, авто-refresh при PATCH, сервис `hh_resume_status.py`.
+- Причина: `GET /resumes/{id}` часто 404 даже когда сайт показывает резюме — нужен другой подход.
+
+**Файлы:** удален `hh_resume_status.py`; правки в `endpoints.py`, `schemas.py`, `candidate_fields.py`, `CandidateEditor.tsx`, `HhSearchPanel.tsx`, `api.ts`
+
+**Данные / конфиг:** поля в `candidate.payload` оставлены (безвредный мусор)
+
+**Следующий шаг:**
+- Новый подход к свежести/доступности HH-резюме (не через простой GET по ссылке).
+
+---
+
+## 2026-08-05 — HH статус: 404 = неактивен + явная причина
+
+**Тип:** `fix`
+
+**Сделано:**
+- На Квядаравичюте: `GET /resumes/{id}` → 404, поиск по ФИО/телефону → 0; дата с API недоступна.
+- В payload пишем `hh_resume_unavailable_reason`; в карточке — «неактивен» + причина, без ложного «обновлено —».
+
+**Файлы:** `hh_resume_status.py`, `candidate_fields.py`, `schemas.py`, `CandidateEditor.tsx`, `api.ts`
+
+**Следующий шаг:**
+- Если нужно показывать дату при 404 — отдельное решение (ручной ввод / другая HH-сессия).
+
+---
+
+## 2026-08-05 — HH резюме: активен/неактивен + дата обновления
+
+**Тип:** `feature`
+
+**Сделано:**
+- Статус резюме HH: «активен» = `GET /resumes/{id}` успешен; «неактивен» = 404/403/ошибка.
+- Парсинг id из ссылки; сохранение в payload кандидата (`hh_resume_available`, `hh_resume_status_label`, `hh_resume_updated_at`, `hh_resume_checked_at`).
+- API `POST /candidates/{id}/hh-resume-status`; авто-проверка при смене `hh_resume_link` в PATCH.
+- UI карточки: статус + дата + «Обновить с HH»; в таблице HH-поиска колонка «Обновлено».
+
+**Файлы:** `hh_resume_status.py`, `endpoints.py`, `schemas.py`, `candidate_fields.py`, `CandidateEditor.tsx`, `HhSearchPanel.tsx`, `api.ts`
+
+**Данные / конфиг:** поля в `candidate.payload` (без миграции схемы)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перезапустить API; на карточке кандидата с ссылкой HH нажать «Обновить с HH».
+
+---
+
+## 2026-08-05 — Документы из записи + шаблоны + meeting link + last contact
+
+**Тип:** `feature`
+
+**Сделано:**
+- Пакет документов из upload/ссылок (аудио/видео/docx/xlsx/pdf) → ARQ `vacancy_docs_from_materials` → сразу в docs + `meeting_brief` Q&A.
+- История: «Применить к вакансии»; UI шаблонов `/templates`.
+- Zoom/Телемост: default-ссылка из настроек → `meeting_link` при remote.
+- Поиск/список кандидатов: колонка «Последний контакт».
+
+**Файлы:** `vacancy_docs_pack.py`, `source_extract.py`, `transcription.py`, `tasks.py`, `endpoints.py`, `DocumentsFromMaterials.tsx`, `DocumentsEditor.tsx`, `templates/page.tsx`, `HistoryApplyButton.tsx`, `CandidateEditor.tsx`, `candidate_query.py`
+
+**Данные / конфиг:** deps `python-docx`, `openpyxl`, `pypdf`, `python-multipart`; uploads в `data/tmp/vacancy_docs/`
+
+**Следующий шаг:**
+- Перезапустить API + ARQ worker; проверить сценарий с реальной записью и ссылкой Я.Диска.
+
+---
+
+## 2026-08-04 — HH preset: русские подписи в селектах
+
+**Тип:** `fix`
+
+**Сделано:**
+- Подписи `form_options` (логика/поле/период текста, образование, label, сортировка и др.) на русском.
+
+**Файлы:** `hh_preset.py`, `HhPresetBlock.tsx`
+
+**Следующий шаг:**
+- Prefill ИИ → draft preset; cron + Telegram digest.
+
+---
+
+## 2026-08-04 — HH preset: модель + UI + worker
+
+**Тип:** `feature`
+
+**Сделано:**
+- SoT поиска: `vacancy.documents.hh_preset` (`api` / `soft` / `run`); миграция из `hh_search_criteria`.
+- API `GET/PUT …/hh-preset`; `POST /jobs` и worker `hh_cold_search` гоняют только params из preset.
+- UI: вкладки **Пресет | Результаты | Вручную**; форма зеркалит фильтры HH (text triad, area, role, experience…).
+- Live smoke: role=50 + area=2 + «казначей» → резюме «Казначей», СПб.
+
+**Файлы:** `hh_preset.py`, `hh_client.py`, `tasks.py`, `endpoints.py`, `schemas.py`, `HhPresetBlock.tsx`, `HhSearchPanel.tsx`, `ARCHITECTURE.md`
+
+**Следующий шаг:**
+- Prefill ИИ → draft preset; cron + Telegram digest; вычистить dead plan/criteria UI.
+
+---
+
+## 2026-08-04 — HH preset: этап 0 (smoke API)
+
+**Тип:** `decision`
+
+**Сделано:**
+- Smoke `GET /resumes` живым employer-токеном: auth OK; почти все фильтры HH реально меняют `found`.
+- Подтверждено: `age_from/to`, `gender`, `professional_role` (id `50` = Казначей), multi-`text` + triad.
+- `specialization` — 200, но `found` не меняется (игнор/deprecated); `text.period=last_six_months` — `bad_argument`.
+- Зафиксированы слоты формы vs soft vs unavailable; черновик `hh_preset` schema в чате.
+
+**Файлы:** (код не трогали) smoke через Settings/`hh_client`
+
+**Следующий шаг:**
+- Этап 1: `hh_preset` model + CRUD API + замена UI настроек поиска.
+
+---
+
+## 2026-08-04 — HH text.logic: ИЛИ / И как на сайте
+
+**Тип:** `feature`
+
+**Сделано:**
+- Правила HH в стратеге: `keywords` = ИЛИ (любое из), `keywords_and` = И (напр. 1С).
+- API: `text.logic=any|all`; (A|B) AND C → запросы `A C`, `B C`.
+- В плане UI — строка «ИЛИ / И»; в job — `query_plan`.
+
+**Файлы:** `hh_search_criteria.py`, `hh_client.py`, `hh_search_plan.py`, `tasks.py`, `HhSearchPlanBlock.tsx`
+
+**Следующий шаг:**
+- Перегенерировать план и прогнать поиск по Казначею
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Удаление поиска из БД + «Очистить failed/queued»; в списке результатов — только оценённые.
+- Hard-отсев другого города до ИИ; `schedule` больше не уходит в HH API (мешал гибрид/remote).
+- period по умолчанию 7; стратег — многословные запросы («бухгалтер банк-клиент»).
+- После поиска — debrief: статистика отсева + предложения ИИ что менять.
+
+**Файлы:** `hh_prefilter.py`, `hh_search_criteria.py`, `hh_search_plan.py`, `hh_search_debrief.py`, `jobs.py`, `endpoints.py`, `tasks.py`, `HhSearchPanel.tsx`
+
+**Следующий шаг:**
+- Перегенерировать план на вакансии и прогнать поиск (старый approved plan ещё со schedule/period=30).
+
+---
+
+
+**Тип:** `fix`
+
+**Сделано:**
+- Баг: после «Утвердить и начать поиск» `onStart` видел старый `plan.status` и отменял job — передаём `fromApprove` + criteria сразу.
+- Лимиты «найти / оценить» снова в UI плана (были только в скрытой «воронке»).
+- На результатах показываются лимиты и счётчики found/evaluated.
+
+**Файлы:** `HhSearchPanel.tsx`, `HhSearchPlanBlock.tsx`
+
+**Риски/регрессии:**
+- Если ARQ worker не запущен или `HH_ACCESS_TOKEN` просрочен — job упадёт (раньше в логах был `token-expired`).
+
+**Следующий шаг:**
+- Перезапустить worker при необходимости; обновить HH OAuth token
+
+---
+
+## 2026-08-04 — HH UI: только план + результаты
+
+**Тип:** `ux`
+
+**Сделано:**
+- В `HhSearchPanel` флаг `HH_ADVANCED_UI = false`: скрыты вкладки «Расшир.» / «Вручную» и футер «Искать на HH».
+- Остались вкладки **План** и **Результаты**; код расширенных форм не удалён (вернуть: `true`).
+- Поиск из плана: утвердить → автозапуск; без approve — ошибка.
+
+**Файлы:** `HhSearchPanel.tsx`, `HhSearchPlanBlock.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Прогнать сценарий план → правка → поиск на живой вакансии
+
+---
+
+## 2026-08-03 — HH план поиска + Disk inbox L3
+
+**Тип:** `feature`
+
+**Сделано:**
+- HH: вкладка «План» — generate/revise/approve (`hh_search_plan`); machine → criteria + `soft_rules` в оценку; расширенные критерии в «Расшир.»
+- Disk L3: таблица `inbox_items`, `disk_inbox_router` (download → PDF text → ИИ → move в `Резюме/` / `_unsorted` → кандидат)
+- API: inbox process/bind/settings; UI `/settings/yandex-disk` — порог, роутинг, привязка unsorted
+- Документы: `ARCHITECTURE.md` обновлён (план + L3); TARGET — оставшиеся OCR/cron/auth
+
+**Файлы:** `hh_search_plan.py`, `hh_search_criteria.py`, `disk_inbox_router.py`, `models.py`, `endpoints.py`, `tasks.py`, `HhSearchPlanBlock.tsx`, `HhSearchPanel.tsx`, `settings/yandex-disk/page.tsx`, `ARCHITECTURE.md`
+
+**Данные / конфиг:** `inbox_items` (create_all); `disk_inbox_confidence` / `disk_inbox_auto` / `disk_inbox_evaluate` в `app_settings.json`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Риски/регрессии:**
+- Сканы без текста → error; OCR нет
+- Синхронный process из UI (job ARQ есть, UI пока вызывает sync endpoint)
+
+**Следующий шаг:**
+- Проверить на живом Диске: PDF в `_inbox` → роутинг; HH утвердить план и поиск
+
+---
+
+## 2026-08-03 — ARCHITECTURE.md = текущая SoT v2
+
+**Тип:** `docs`
+
+**Сделано:**
+- `ARCHITECTURE.md` переписан под PostgreSQL + Next/FastAPI/ARQ после cutover.
+- `ARCHITECTURE_TARGET.md` — шапка: оставшиеся фазы, ссылка на актуальный ARCHITECTURE.
+
+**Файлы:** `ARCHITECTURE.md`, `ARCHITECTURE_TARGET.md`
+
+**Git:** незакоммичено (или вместе со следующим коммитом docs)
+
+**Следующий шаг:**
+- При желании закоммитить docs на `feature/v2`.
+
+---
+
 ## 2026-08-03 — Пресет этапов вакансии + Яндекс.Диск L1/L2-stub
 
 **Тип:** `feature`

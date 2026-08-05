@@ -246,3 +246,22 @@ class HhSeenResume(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class InboxItem(Base):
+    """Yandex Disk _inbox routing queue (L3)."""
+
+    __tablename__ = "inbox_items"
+    __table_args__ = (UniqueConstraint("disk_path", name="uq_inbox_disk_path"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    disk_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="new", index=True)
+    # new | routed | unsorted | error
+    vacancy_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("vacancies.id"), nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    extracted: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

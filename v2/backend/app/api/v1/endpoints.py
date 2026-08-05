@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from app.schemas import (
     ActivityStatsOut,
     HealthOut,
     HhSearchCriteriaIn,
+    HhPresetIn,
     HhSeenItemOut,
     HhSeenRejectIn,
     HhShortlistCreateIn,
@@ -96,6 +97,8 @@ ALLOWED_JOB_TYPES = frozenset(
         "candidate_interview_process",
         "hh_cold_search",
         "yandex_disk_sync",
+        "disk_inbox_router",
+        "vacancy_docs_from_materials",
     }
 )
 ARQ_FUNCTION_BY_TYPE = {
@@ -105,6 +108,8 @@ ARQ_FUNCTION_BY_TYPE = {
     "candidate_interview_process": "candidate_interview_process",
     "hh_cold_search": "hh_cold_search",
     "yandex_disk_sync": "yandex_disk_sync",
+    "disk_inbox_router": "disk_inbox_router",
+    "vacancy_docs_from_materials": "vacancy_docs_from_materials",
 }
 
 router = APIRouter()
@@ -602,6 +607,7 @@ def patch_settings_app(body: dict) -> dict:
         set_candidate_comms,
         set_default_warranty_months,
         set_provider_links,
+        set_functions,
     )
     from app.services.yandex_disk_oauth import set_disk_paths
 
@@ -623,6 +629,8 @@ def patch_settings_app(body: dict) -> dict:
             root=body.get("yandex_disk_root") if "yandex_disk_root" in body else None,
             inbox_name=body.get("yandex_disk_inbox") if "yandex_disk_inbox" in body else None,
         )
+    if "functions" in body and isinstance(body.get("functions"), dict):
+        set_functions(body.get("functions") or {})
     return get_app_settings()
 
 
@@ -668,12 +676,60 @@ def yandex_disk_ensure_root() -> dict:
 
 @router.get("/integrations/yandex-disk/inbox")
 def yandex_disk_inbox(db: Session = Depends(get_db)) -> dict:
+    from app.services.disk_inbox_router import inbox_settings, list_inbox_db
     from app.services.yandex_disk_oauth import DiskApiError, suggest_inbox_routes
 
     try:
-        return suggest_inbox_routes(db)
+        live = suggest_inbox_routes(db)
     except DiskApiError as exc:
+        live = {"items": [], "message": str(exc), "inbox_path": ""}
+    return {
+        **live,
+        "db_items": list_inbox_db(db, limit=80),
+        "unsorted": list_inbox_db(db, status="unsorted", limit=50),
+        "settings": inbox_settings(),
+    }
+
+
+@router.post("/integrations/yandex-disk/inbox/process")
+def yandex_disk_inbox_process(body: dict | None = None, db: Session = Depends(get_db)) -> dict:
+    from app.services.disk_inbox_router import process_inbox
+    from app.services.yandex_disk_oauth import DiskApiError
+
+    body = body or {}
+    try:
+        return process_inbox(db, limit=int(body.get("limit") or 20))
+    except (DiskApiError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/integrations/yandex-disk/inbox/{item_id}/bind")
+def yandex_disk_inbox_bind(item_id: str, body: dict, db: Session = Depends(get_db)) -> dict:
+    from uuid import UUID
+
+    from app.services.disk_inbox_router import bind_unsorted
+    from app.services.yandex_disk_oauth import DiskApiError
+
+    try:
+        iid = UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid id") from exc
+    try:
+        return bind_unsorted(db, iid, int(body.get("vacancy_id")))
+    except (DiskApiError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/integrations/yandex-disk/inbox/settings")
+def yandex_disk_inbox_settings_patch(body: dict) -> dict:
+    from app.services.disk_inbox_router import set_inbox_settings
+
+    conf = body.get("confidence")
+    return set_inbox_settings(
+        auto=body.get("auto") if "auto" in body else None,
+        confidence=float(conf) if conf is not None else None,
+        evaluate_on_route=body.get("evaluate_on_route") if "evaluate_on_route" in body else None,
+    )
 
 
 @router.post("/vacancies/{vacancy_id}/yandex-disk/ensure-folders")
@@ -778,6 +834,9 @@ def vacancy_documents_editor(vacancy_id: int, db: Session = Depends(get_db)) -> 
         "vacancy_id": vacancy.id,
         "keys": list(EDITABLE_DOCUMENT_KEYS),
         "documents": documents_for_editor(vacancy.documents),
+        "meeting_brief": (vacancy.documents or {}).get("meeting_brief") or {},
+        "meeting_transcript": str((vacancy.documents or {}).get("meeting_transcript") or ""),
+        "meeting_conflicts": list((vacancy.documents or {}).get("meeting_conflicts") or []),
     }
 
 
@@ -832,6 +891,104 @@ def generate_vacancy_document(
         applied=applied,
         documents=vacancy.documents or {},
     )
+
+
+@router.post("/vacancies/{vacancy_id}/documents/from-materials", status_code=202)
+async def vacancy_documents_from_materials(
+    vacancy_id: int,
+    files: list[UploadFile] | None = File(default=None),
+    source_urls: str = Form(default=""),
+    hr_instructions: str = Form(default=""),
+    notes: str = Form(default=""),
+    profile_text: str = Form(default=""),
+    use_existing_profile: bool = Form(default=True),
+    gen_profile: bool = Form(default=True),
+    gen_questions: bool = Form(default=True),
+    gen_vacancy_text: bool = Form(default=True),
+    gen_keywords: bool = Form(default=True),
+    db: Session = Depends(get_db),
+) -> JobCreateOut:
+    """Upload media/docs and/or Yandex Disk URLs → ARQ pack generation into vacancy docs."""
+    import uuid as uuid_mod
+    from pathlib import Path
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+
+    urls = [u.strip() for u in (source_urls or "").replace(";", "\n").splitlines() if u.strip()]
+    file_list = list(files or [])
+    if not file_list and not urls and not (profile_text or "").strip() and not use_existing_profile:
+        raise HTTPException(status_code=400, detail="Добавьте файлы, ссылки или текст профиля")
+
+    settings = get_settings()
+    base = settings.resolved_legacy_data_dir() / "tmp" / "vacancy_docs" / str(uuid_mod.uuid4())
+    base.mkdir(parents=True, exist_ok=True)
+    saved_paths: list[str] = []
+    try:
+        for up in file_list:
+            raw_name = Path(up.filename or "upload.bin").name
+            safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in raw_name)[:180]
+            dest = base / safe
+            content = await up.read()
+            if len(content) > 600 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"Файл слишком большой: {safe}")
+            dest.write_bytes(content)
+            saved_paths.append(str(dest))
+    except HTTPException:
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"Не удалось сохранить файлы: {exc}") from exc
+
+    payload = {
+        "vacancy_id": vacancy_id,
+        "upload_dir": str(base),
+        "file_paths": saved_paths,
+        "source_urls": urls,
+        "hr_instructions": hr_instructions or "",
+        "notes": notes or "",
+        "profile_text": profile_text or "",
+        "use_existing_profile": bool(use_existing_profile),
+        "doc_flags": {
+            "profile": bool(gen_profile),
+            "questions": bool(gen_questions),
+            "vacancy_text": bool(gen_vacancy_text),
+            "keywords": bool(gen_keywords),
+        },
+    }
+    job = job_svc.create_job_row(
+        db,
+        job_type="vacancy_docs_from_materials",
+        vacancy_id=vacancy_id,
+        client_id=vacancy.client_id,
+        payload=payload,
+    )
+    try:
+        pool = await get_arq_pool()
+        await pool.enqueue_job(
+            "vacancy_docs_from_materials",
+            str(job.id),
+            _job_id=str(job.id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+        job_svc.update_job(
+            db,
+            job.id,
+            status="failed",
+            progress_label="Не удалось поставить в очередь",
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail=f"Redis/ARQ unavailable: {exc}") from exc
+    return JobCreateOut(id=job.id, status=job.status, job_type=job.job_type)
 
 
 @router.get("/vacancies/{vacancy_id}/yandex-disk", response_model=YandexDiskConfigOut)
@@ -979,21 +1136,170 @@ def list_hr_stages() -> list[StageOptionOut]:
 
 @router.get("/vacancies/{vacancy_id}/hh-search-defaults")
 def vacancy_hh_search_defaults(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_preset import (
+        form_options,
+        preset_from_vacancy_documents,
+        save_preset_to_documents,
+        warnings_for_preset,
+    )
+    from app.services.hh_search_plan import get_plan_from_vacancy, mark_plan_stale_if_needed
+    from sqlalchemy.orm.attributes import flag_modified
+
     vacancy = db.get(models.Vacancy, vacancy_id)
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
+    if mark_plan_stale_if_needed(vacancy):
+        db.commit()
+        db.refresh(vacancy)
     criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+    preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+    # Persist migration so UI and worker share one SoT
+    if not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
+        vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
+        flag_modified(vacancy, "documents")
+        db.add(vacancy)
+        db.commit()
+        db.refresh(vacancy)
     return {
         "vacancy_id": vacancy.id,
         "title": vacancy.title,
         "criteria": criteria,
-        "warnings": warnings_for(criteria),
+        "preset": preset,
+        "plan": get_plan_from_vacancy(vacancy),
+        "warnings": warnings_for_preset(preset),
         "needs_prefill": needs_ai_prefill(vacancy.documents),
         "schedule_options": SCHEDULE_OPTIONS,
         "area_presets": AREA_PRESETS,
+        "form_options": form_options(),
         "keywords": criteria.get("keywords") or "",
-        "max_search_default": criteria.get("max_search") or 20,
-        "max_evaluate_default": criteria.get("max_evaluate") or 10,
+        "max_search_default": preset["run"].get("max_search") or 40,
+        "max_evaluate_default": preset["run"].get("max_evaluate") or 15,
+    }
+
+
+@router.get("/vacancies/{vacancy_id}/hh-preset")
+def get_hh_preset(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_preset import (
+        form_options,
+        preset_from_vacancy_documents,
+        save_preset_to_documents,
+        warnings_for_preset,
+    )
+    from sqlalchemy.orm.attributes import flag_modified
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+    if not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
+        vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
+        flag_modified(vacancy, "documents")
+        db.add(vacancy)
+        db.commit()
+        db.refresh(vacancy)
+    return {
+        "vacancy_id": vacancy.id,
+        "preset": preset,
+        "warnings": warnings_for_preset(preset),
+        "form_options": form_options(),
+    }
+
+
+@router.put("/vacancies/{vacancy_id}/hh-preset")
+def upsert_hh_preset(
+    vacancy_id: int,
+    body: HhPresetIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.services.hh_preset import (
+        approve_preset,
+        ensure_soft_portrait,
+        form_options,
+        normalize_preset,
+        save_preset_to_documents,
+        warnings_for_preset,
+    )
+    from sqlalchemy.orm.attributes import flag_modified
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    preset = ensure_soft_portrait(normalize_preset(body.preset), rebuild=body.rebuild_portrait)
+    if body.approve:
+        try:
+            preset = approve_preset(preset)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
+    flag_modified(vacancy, "documents")
+    db.add(vacancy)
+    db.commit()
+    db.refresh(vacancy)
+    return {
+        "vacancy_id": vacancy.id,
+        "preset": preset,
+        "warnings": warnings_for_preset(preset),
+        "form_options": form_options(),
+    }
+
+
+@router.get("/vacancies/{vacancy_id}/hh-search-plan")
+def get_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_search_plan import get_plan_from_vacancy, mark_plan_stale_if_needed
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    if mark_plan_stale_if_needed(vacancy):
+        db.commit()
+        db.refresh(vacancy)
+    return {"vacancy_id": vacancy.id, "plan": get_plan_from_vacancy(vacancy)}
+
+
+@router.post("/vacancies/{vacancy_id}/hh-search-plan/generate")
+def generate_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_search_plan import generate_plan
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    try:
+        plan = generate_plan(db, vacancy, settings=get_settings())
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"vacancy_id": vacancy.id, "plan": plan}
+
+
+@router.post("/vacancies/{vacancy_id}/hh-search-plan/revise")
+def revise_hh_search_plan(vacancy_id: int, body: dict, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_search_plan import revise_plan
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    try:
+        plan = revise_plan(db, vacancy, str(body.get("note") or ""), settings=get_settings())
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"vacancy_id": vacancy.id, "plan": plan}
+
+
+@router.post("/vacancies/{vacancy_id}/hh-search-plan/approve")
+def approve_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.hh_search_plan import approve_plan
+
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    try:
+        result = approve_plan(db, vacancy)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "vacancy_id": vacancy.id,
+        "plan": result["plan"],
+        "criteria": result["criteria"],
+        "warnings": warnings_for(result["criteria"]),
     }
 
 
@@ -1355,6 +1661,7 @@ def list_candidates(
     """Drill-down list for stats (same scope/preset semantics as /stats/funnel)."""
     from app.services.candidate_query import (
         CANDIDATE_PRESETS,
+        last_contact_map,
         list_candidates_filtered,
         serialize_list_item,
         vacancy_meta_maps,
@@ -1387,12 +1694,14 @@ def list_candidates(
         titles.update(more_titles)
         client_names.update(more_clients)
 
+    posts = last_contact_map(db, [c.id for c in rows])
     return [
         CandidateListItem(
             **serialize_list_item(
                 c,
                 vacancy_title=titles.get(c.vacancy_id),
                 client_name=client_names.get(c.vacancy_id),
+                last_contact_at=posts.get(c.id),
             )
         )
         for c in rows
@@ -2325,6 +2634,7 @@ def list_history(
             created_at_legacy=r.created_at_legacy,
             imported_at=r.imported_at,
             preview=history_preview(r.documents_snapshot),
+            vacancy_id=r.vacancy_id,
         )
         for r in rows
     ]
@@ -2350,7 +2660,111 @@ def get_history_item(generation_id: str, db: Session = Depends(get_db)) -> Docum
         imported_at=row.imported_at,
         preview=history_preview(row.documents_snapshot),
         documents_snapshot=row.documents_snapshot or {},
+        vacancy_id=row.vacancy_id,
     )
+
+
+@router.post("/history/{generation_id}/apply")
+def apply_history_to_vacancy(
+    generation_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Apply a generation snapshot into a vacancy's documents."""
+    from uuid import UUID
+
+    from app.services.vacancy_docs_pack import apply_history_pack_to_vacancy
+
+    try:
+        gid = UUID(generation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid history id") from exc
+    row = db.get(models.DocumentGeneration, gid)
+    if not row:
+        raise HTTPException(status_code=404, detail="History item not found")
+    vacancy_id = body.get("vacancy_id") or row.vacancy_id
+    if vacancy_id is None:
+        raise HTTPException(status_code=400, detail="Укажите vacancy_id")
+    vacancy = db.get(models.Vacancy, int(vacancy_id))
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    keys = body.get("keys") if isinstance(body.get("keys"), list) else None
+    try:
+        apply_history_pack_to_vacancy(db, vacancy, row, keys=keys)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "vacancy_id": vacancy.id,
+        "generation_id": str(row.id),
+        "title": vacancy.title,
+    }
+
+
+@router.get("/vacancy-templates")
+def list_vacancy_templates(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    rows = db.scalars(
+        select(models.VacancyTemplate).order_by(models.VacancyTemplate.title.asc()).limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "legacy_key": r.legacy_key,
+                "title": r.title,
+                "client_id": r.client_id,
+                "has_profile": bool((r.documents or {}).get("profile")),
+                "has_questions": bool((r.documents or {}).get("questions")),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/vacancy-templates/{template_id}/create-vacancy", status_code=201)
+def create_vacancy_from_template(
+    template_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+) -> VacancyDetail:
+    from uuid import UUID
+
+    from app.services.vacancy_write import VacancyWriteError, create_vacancy
+    from app.services.vacancy_documents_write import save_documents
+
+    try:
+        tid = UUID(template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid template id") from exc
+    tmpl = db.get(models.VacancyTemplate, tid)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    title = str(body.get("title") or tmpl.title or "").strip()
+    client_id = body.get("client_id")
+    if client_id is None:
+        client_id = tmpl.client_id
+    try:
+        vacancy = create_vacancy(
+            db,
+            title=title,
+            client_id=int(client_id) if client_id is not None else None,
+            chat_id=str(body.get("chat_id") or tmpl.chat_id or "") or None,
+            is_test=bool(body.get("is_test", False)),
+        )
+    except VacancyWriteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    docs = dict(tmpl.documents or {})
+    updates = {
+        k: docs[k]
+        for k in ("profile", "vacancy_text", "questions", "keywords", "notes")
+        if k in docs
+    }
+    if updates:
+        save_documents(db, vacancy, updates)
+    return _vacancy_detail(db, vacancy)
 
 
 @router.get("/jobs", response_model=JobsListOut)
@@ -2409,6 +2823,15 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
             detail=f"Unknown job_type. Allowed: {', '.join(sorted(ALLOWED_JOB_TYPES))}",
         )
     payload = dict(body.payload or {})
+
+    if body.job_type == "hh_cold_search":
+        from app.services.app_settings import get_functions
+
+        if not bool(get_functions().get("hh_search_enabled", True)):
+            raise HTTPException(
+                status_code=403,
+                detail="Поиск резюме HH отключен в настройках (hh_search_enabled=false).",
+            )
     if body.job_type == "transcribe_media":
         source_url = str(payload.get("source_url") or "").strip()
         if not source_url:
@@ -2418,6 +2841,14 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
             )
         payload["source_url"] = source_url
     if body.job_type == "hh_cold_search":
+        from app.services.hh_preset import (
+            criteria_view_from_preset,
+            ensure_soft_portrait,
+            normalize_preset,
+            preset_from_vacancy_documents,
+            save_preset_to_documents,
+        )
+
         vacancy_id = body.vacancy_id or payload.get("vacancy_id")
         if vacancy_id is None:
             raise HTTPException(
@@ -2427,23 +2858,25 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
         vacancy = db.get(models.Vacancy, int(vacancy_id))
         if not vacancy:
             raise HTTPException(status_code=404, detail="Vacancy not found")
-        criteria = normalize_criteria(payload.get("criteria") or {})
-        if not criteria.get("keywords"):
-            stored = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
-            criteria = stored
-        if not (criteria.get("keywords") or "").strip():
+        preset = normalize_preset(payload.get("preset") or {})
+        texts_ok = any((t.get("text") or "").strip() for t in preset["api"]["texts"])
+        if not texts_ok:
+            preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
+        texts_ok = any((t.get("text") or "").strip() for t in preset["api"]["texts"])
+        if not texts_ok:
             raise HTTPException(
                 status_code=400,
-                detail="Нет keywords: заполните критерии поиска вакансии",
+                detail="Нет ключевых слов в пресете поиска HH",
             )
-        criteria = ensure_portrait(criteria)
-        # Persist latest criteria used for search
-        vacancy.documents = save_criteria_to_documents(vacancy.documents, criteria)
+        preset = ensure_soft_portrait(preset)
+        vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
         from sqlalchemy.orm.attributes import flag_modified
 
         flag_modified(vacancy, "documents")
         db.add(vacancy)
         db.commit()
+        criteria = criteria_view_from_preset(preset)
+        payload["preset"] = preset
         payload["criteria"] = criteria
         payload["keywords"] = criteria["keywords"]
         payload["vacancy_id"] = int(vacancy_id)
@@ -2493,6 +2926,34 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
         )
         raise HTTPException(status_code=503, detail=f"Redis/ARQ unavailable: {exc}") from exc
     return JobCreateOut(id=job.id, status=job.status, job_type=job.job_type)
+
+
+@router.delete("/jobs/{job_id}", status_code=204)
+def delete_job_endpoint(job_id: str, db: Session = Depends(get_db)) -> None:
+    try:
+        from uuid import UUID
+
+        jid = UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid job id") from exc
+    job = job_svc.get_job(db, jid)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("queued", "running"):
+        raise HTTPException(status_code=400, detail="Сначала отмените активный job")
+    if not job_svc.delete_job(db, jid):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return None
+
+
+@router.post("/vacancies/{vacancy_id}/hh-search-history/cleanup")
+def cleanup_hh_search_history(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    """Remove failed/cancelled/stuck-queued HH searches from DB."""
+    vacancy = db.get(models.Vacancy, vacancy_id)
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    deleted = job_svc.delete_hh_jobs(db, vacancy_id=vacancy_id, only_problematic=True)
+    return {"deleted": deleted}
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)

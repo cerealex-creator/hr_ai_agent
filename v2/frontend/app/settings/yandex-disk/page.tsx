@@ -13,23 +13,30 @@ type DiskStatus = {
   inbox_path?: string;
   authorize_url?: string | null;
   token_path?: string;
-  token_from_env?: boolean;
 };
 
-type InboxItem = {
-  name: string;
-  suggested_vacancy_hint?: string;
-  suggestion?: { vacancy_id: number; title: string; confidence: number } | null;
-  needs_review?: boolean;
+type UnsortedItem = {
+  id: string;
+  file_name: string;
+  confidence?: string | null;
+  vacancy_id?: number | null;
+  extracted?: { full_name?: string; phone?: string; reason?: string };
+  note?: string | null;
 };
+
+type VacancyOpt = { id: number; title: string };
 
 export default function YandexDiskSettingsPage() {
   const [status, setStatus] = useState<DiskStatus | null>(null);
   const [token, setToken] = useState("");
   const [root, setRoot] = useState("/HR_AI_Agent");
   const [inbox, setInbox] = useState("_inbox");
-  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  const [unsorted, setUnsorted] = useState<UnsortedItem[]>([]);
   const [inboxMsg, setInboxMsg] = useState("");
+  const [processLog, setProcessLog] = useState<string[]>([]);
+  const [vacancies, setVacancies] = useState<VacancyOpt[]>([]);
+  const [bindVacancy, setBindVacancy] = useState<Record<string, string>>({});
+  const [threshold, setThreshold] = useState(0.75);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -41,10 +48,17 @@ export default function YandexDiskSettingsPage() {
     const data = await res.json();
     setStatus(data);
     if (data.root) setRoot(data.root);
-    if (data.inbox_path) {
-      const name = String(data.inbox_path).split("/").filter(Boolean).pop();
-      if (name) setInbox(name);
-    }
+  };
+
+  const loadInbox = async () => {
+    const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox`, {
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`);
+    setUnsorted(data.unsorted || []);
+    setInboxMsg(data.message || "");
+    if (data.settings?.confidence != null) setThreshold(Number(data.settings.confidence));
   };
 
   useEffect(() => {
@@ -56,6 +70,18 @@ export default function YandexDiskSettingsPage() {
         if (d.yandex_disk_inbox) setInbox(d.yandex_disk_inbox);
       })
       .catch(() => undefined);
+    fetch(`${getApiBase()}/api/v1/vacancies?active=true`)
+      .then((r) => r.json())
+      .then((d) => {
+        const items = (Array.isArray(d) ? d : d.items || []) as {
+          id: number;
+          title: string;
+          active?: boolean;
+        }[];
+        setVacancies(items.map((v) => ({ id: v.id, title: v.title })));
+      })
+      .catch(() => undefined);
+    loadInbox().catch(() => undefined);
   }, []);
 
   const saveToken = async () => {
@@ -72,7 +98,7 @@ export default function YandexDiskSettingsPage() {
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`);
       setStatus(data);
       setToken("");
-      setMsg(data.warning ? `Токен сохранён, но: ${data.warning}` : "Токен сохранён, корень проверен");
+      setMsg(data.warning ? `Токен сохранён, но: ${data.warning}` : "Токен сохранён");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -92,7 +118,7 @@ export default function YandexDiskSettingsPage() {
       if (!res.ok) throw new Error("Не удалось сохранить пути");
       await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/ensure-root`, { method: "POST" });
       await loadStatus();
-      setMsg("Пути сохранены, папки проверены");
+      setMsg("Пути сохранены");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -100,17 +126,53 @@ export default function YandexDiskSettingsPage() {
     }
   };
 
-  const loadInbox = async () => {
+  const runRouter = async () => {
     setBusy(true);
     setErr(null);
+    setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox`, {
-        cache: "no-store",
+      await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confidence: threshold }),
+      });
+      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 20 }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`);
-      setInboxItems(data.items || []);
-      setInboxMsg(data.message || "");
+      setProcessLog(data.details || []);
+      setMsg(
+        `Готово: routed ${data.routed || 0}, unsorted ${data.unsorted || 0}, errors ${data.errors || 0}`,
+      );
+      await loadInbox();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bindItem = async (id: string) => {
+    const vid = Number(bindVacancy[id]);
+    if (!vid) {
+      setErr("Выберите вакансию");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/${id}/bind`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vacancy_id: vid }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      setMsg(`Привязано к вакансии #${vid}`);
+      await loadInbox();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -125,9 +187,8 @@ export default function YandexDiskSettingsPage() {
       </Link>
       <h1 className="page-title">Яндекс.Диск</h1>
       <p className="muted">
-        Один раз подключите Диск (OAuth-токен). Приложение создаст корневую папку и{" "}
-        <code>_inbox</code>, а для вакансий — подпапки Резюме/Записи/Задания. Старый режим
-        «публичная ссылка на папку» по-прежнему работает.
+        OAuth → корень + inbox. Роутинг: ИИ читает PDF из <code>_inbox</code>, переносит в папку
+        вакансии и создаёт кандидата (низкая уверенность → <code>_unsorted</code>).
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
@@ -143,20 +204,6 @@ export default function YandexDiskSettingsPage() {
         ) : (
           <p className="muted">Загрузка…</p>
         )}
-        <ol className="about-list">
-          <li>
-            Создайте приложение на{" "}
-            <a href="https://oauth.yandex.ru/" target="_blank" rel="noreferrer">
-              oauth.yandex.ru
-            </a>{" "}
-            с правами Disk.
-          </li>
-          <li>
-            Получите OAuth-токен (или укажите{" "}
-            <code>YANDEX_DISK_CLIENT_ID</code> в .env и откройте ссылку авторизации).
-          </li>
-          <li>Вставьте токен ниже — он сохранится в data/yandex_disk_oauth.json.</li>
-        </ol>
         {status?.authorize_url ? (
           <p>
             <a href={status.authorize_url} target="_blank" rel="noreferrer">
@@ -173,14 +220,14 @@ export default function YandexDiskSettingsPage() {
             placeholder="y0_…"
           />
         </label>
-        <div className="hh-footer-actions" style={{ justifyContent: "flex-start" }}>
-          <button type="button" className="chip chip-active" disabled={busy || !token.trim()} onClick={saveToken}>
-            Сохранить токен
-          </button>
-        </div>
-        {status?.token_path ? (
-          <p className="muted hh-micro">Файл токена: {status.token_path}</p>
-        ) : null}
+        <button
+          type="button"
+          className="chip chip-active"
+          disabled={busy || !token.trim()}
+          onClick={saveToken}
+        >
+          Сохранить токен
+        </button>
       </section>
 
       <section className="card-edit">
@@ -199,41 +246,95 @@ export default function YandexDiskSettingsPage() {
       </section>
 
       <section className="card-edit">
-        <h2>Inbox (черновик L2)</h2>
-        <p className="muted">
-          Кладёте PDF в inbox как <code>НазваниеВакансии__ФИО.pdf</code> — система подскажет
-          вакансию. Авто-перенос пока не включён.
+        <h2>Inbox — ИИ-роутинг</h2>
+        <p className="muted hh-micro">
+          Кидайте любые PDF в <code>{status?.inbox_path || "/HR_AI_Agent/_inbox"}</code>. Имя файла
+          не обязательно. Порог confidence ниже — в unsorted.
         </p>
-        <button type="button" className="chip" disabled={busy} onClick={loadInbox}>
-          Показать очередь inbox
-        </button>
         {inboxMsg ? <p className="muted">{inboxMsg}</p> : null}
-        {inboxItems.length ? (
+        <label className="hh-field">
+          <span className="hh-label">Порог confidence · {Math.round(threshold * 100)}%</span>
+          <input
+            type="range"
+            min={40}
+            max={95}
+            step={5}
+            value={Math.round(threshold * 100)}
+            disabled={busy}
+            onChange={(e) => setThreshold(Number(e.target.value) / 100)}
+          />
+        </label>
+        <div className="hh-footer-actions" style={{ justifyContent: "flex-start" }}>
+          <button type="button" className="chip chip-active" disabled={busy} onClick={runRouter}>
+            {busy ? "…" : "Запустить роутинг сейчас"}
+          </button>
+          <button type="button" className="chip" disabled={busy} onClick={() => loadInbox()}>
+            Обновить список
+          </button>
+        </div>
+        {processLog.length ? (
+          <ul className="yd-log muted">
+            {processLog.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
+
+        <h3 className="hh-subhead">Нужен разбор (unsorted)</h3>
+        {unsorted.length ? (
           <table>
             <thead>
               <tr>
                 <th>Файл</th>
-                <th>Подсказка</th>
+                <th>ФИО</th>
+                <th>ИИ</th>
                 <th>Вакансия</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {inboxItems.map((it) => (
-                <tr key={it.name}>
-                  <td>{it.name}</td>
-                  <td>{it.suggested_vacancy_hint || "—"}</td>
+              {unsorted.map((it) => (
+                <tr key={it.id}>
+                  <td>{it.file_name}</td>
+                  <td>{it.extracted?.full_name || "—"}</td>
+                  <td className="row-meta">
+                    {it.confidence || "—"}
+                    {it.extracted?.reason ? ` · ${it.extracted.reason}` : ""}
+                    {it.note ? ` · ${it.note}` : ""}
+                  </td>
                   <td>
-                    {it.suggestion
-                      ? `${it.suggestion.title} (${Math.round(it.suggestion.confidence * 100)}%)`
-                      : it.needs_review
-                        ? "нужен разбор"
-                        : "—"}
+                    <select
+                      value={bindVacancy[it.id] || ""}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setBindVacancy((prev) => ({ ...prev, [it.id]: e.target.value }))
+                      }
+                    >
+                      <option value="">Выберите…</option>
+                      {vacancies.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.title}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="chip chip-active"
+                      disabled={busy}
+                      onClick={() => bindItem(it.id)}
+                    >
+                      Привязать
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        ) : null}
+        ) : (
+          <p className="muted">Очередь unsorted пуста.</p>
+        )}
       </section>
     </AppShell>
   );

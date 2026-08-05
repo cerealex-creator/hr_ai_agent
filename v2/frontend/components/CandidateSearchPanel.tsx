@@ -73,6 +73,7 @@ export function CandidateSearchPanel() {
               <th>Имя</th>
               <th>Вакансия</th>
               <th>Этап</th>
+              <th>Последний контакт</th>
               <th>Где нашли</th>
             </tr>
           </thead>
@@ -86,12 +87,13 @@ export function CandidateSearchPanel() {
                 <td>
                   <StageMarker stage={c.hr_stage} /> · {clientStatusLabel(c.client_status)}
                 </td>
+                <td>{formatContact(c.last_contact_at)}</td>
                 <td>{c.match_in || "—"}</td>
               </tr>
             ))}
             {!rows.length ? (
               <tr>
-                <td colSpan={4}>Ничего не найдено</td>
+                <td colSpan={5}>Ничего не найдено</td>
               </tr>
             ) : null}
           </tbody>
@@ -99,4 +101,11 @@ export function CandidateSearchPanel() {
       ) : null}
     </section>
   );
+}
+
+function formatContact(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString("ru-RU");
 }

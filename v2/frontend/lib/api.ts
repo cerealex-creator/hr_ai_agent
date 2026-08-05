@@ -56,6 +56,7 @@ export type CandidateListItem = {
   city: string | null;
   vacancy_title?: string | null;
   client_name?: string | null;
+  last_contact_at?: string | null;
 };
 
 export type CandidateDetail = CandidateListItem & {
@@ -86,6 +87,7 @@ export type CandidateDetail = CandidateListItem & {
   control_word_note?: string | null;
   office_interview_date: string | null;
   office_interview_time: string | null;
+  hh_resume_id?: string | null;
   payload: Record<string, unknown>;
 };
 
@@ -118,6 +120,7 @@ export type HistoryItem = {
   created_at_legacy: string | null;
   imported_at: string;
   preview: string | null;
+  vacancy_id?: number | null;
 };
 
 export type HistoryDetail = HistoryItem & {

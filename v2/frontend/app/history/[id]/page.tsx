@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { DocumentBlock } from "@/components/DocumentBlock";
+import { HistoryApplyButton } from "@/components/HistoryApplyButton";
 import { docLabel, apiGet, type HistoryDetail } from "@/lib/api";
 import { formatLegacyStamp } from "@/lib/dates";
 
@@ -17,7 +18,11 @@ export default async function HistoryDetailPage({ params }: Props) {
     error = e instanceof Error ? e.message : "Ошибка API";
   }
 
-  const keys = item ? Object.keys(item.documents_snapshot || {}) : [];
+  const keys = item
+    ? Object.keys(item.documents_snapshot || {}).filter(
+        (k) => !["meeting_brief", "meeting_transcript", "conflicts", "source_label"].includes(k),
+      )
+    : [];
 
   return (
     <AppShell activePath="/history">
@@ -30,7 +35,10 @@ export default async function HistoryDetailPage({ params }: Props) {
           <h1 className="page-title">{item.title || "Без названия"}</h1>
           <p className="muted">
             {formatLegacyStamp(item.created_at_legacy)} · {item.source_filename}
+            {item.vacancy_id ? ` · вакансия #${item.vacancy_id}` : ""}
           </p>
+
+          <HistoryApplyButton generationId={id} defaultVacancyId={item.vacancy_id ?? null} />
 
           <div className="doc-stack">
             {keys.map((key) => (

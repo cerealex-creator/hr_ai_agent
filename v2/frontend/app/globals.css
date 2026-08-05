@@ -1934,6 +1934,42 @@ details[open] > .doc-summary .doc-summary-main::before {
   margin-top: 0.75rem;
 }
 
+.hh-plan-card {
+  margin-top: 0.5rem;
+}
+
+.hh-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.hh-preset .hh-plan-card {
+  padding: 0.75rem;
+  border: 1px solid var(--border, var(--line));
+  border-radius: 10px;
+}
+
+.hh-plan-text {
+  white-space: pre-wrap;
+  line-height: 1.45;
+  font-size: 0.98rem;
+}
+
+.hh-plan-machine {
+  margin-top: 0.65rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card) 70%, var(--line));
+  font-size: 0.75rem;
+  overflow: auto;
+  max-height: 240px;
+}
+
+.hh-plan .hh-field {
+  margin-top: 0.85rem;
+}
+
 .soften-checklist {
   list-style: none;
   margin: 0.5rem 0 1rem;
