@@ -132,6 +132,12 @@ export default function SettingsHubPage() {
       hint: botHint,
     },
     {
+      href: "/settings/bitrix",
+      title: "Bitrix24",
+      text: "Задача заказчику при отправке кандидата и синхронизация статуса через UF-поля.",
+      hint: "задачи + webhook",
+    },
+    {
       href: "/settings/calendar",
       title: "Google Calendar",
       text: "OAuth и подключение календаря для встреч.",

@@ -12,6 +12,7 @@ import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { LinkField } from "@/components/LinkField";
 import { ActionBanner } from "@/components/ActionBanner";
 import { daysBetween, daysLabel, formatDateRu, isEventPassed, parseLocalDate } from "@/lib/dates";
+import { resolveNextAction } from "@/lib/nextAction";
 
 type Props = { initial: CandidateDetail };
 
@@ -171,12 +172,14 @@ export function CandidateEditor({ initial }: Props) {
   const [stageOpen, setStageOpen] = useState(false);
   const [anketaOpen, setAnketaOpen] = useState(false);
   const [questOpen, setQuestOpen] = useState(false);
-  const [telegramOpen, setTelegramOpen] = useState(false);
+  const [clientOpen, setClientOpen] = useState(false);
+  const [notifyChannels, setNotifyChannels] = useState<string[]>(["telegram"]);
   const [aiSectionOpen, setAiSectionOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<CandidateDetail | null>(null);
+  const [bannerTone, setBannerTone] = useState<"success" | "warning" | "error">("success");
   const [actionSection, setActionSection] = useState<
-    "anketa" | "stage" | "telegram" | "top" | null
+    "anketa" | "stage" | "client" | "top" | null
   >(null);
 
   const sections = useMemo(() => {
@@ -195,6 +198,28 @@ export function CandidateEditor({ initial }: Props) {
   const meetingHrConfirmed = Boolean(c.payload?.meeting_hr_confirmed);
   const attendanceStatus = String(c.payload?.interview_attendance_status || "").trim();
   const meetingFormat = meetingFormatLabel(c);
+  const telegramNotifyEnabled = notifyChannels.includes("telegram");
+  const bitrixNotifyEnabled = notifyChannels.includes("bitrix");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const ch = data?.client_notify?.channels;
+        if (!cancelled && Array.isArray(ch) && ch.length) {
+          setNotifyChannels(ch);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!scoreJumpPending || !aiSectionOpen) return;
@@ -240,6 +265,20 @@ export function CandidateEditor({ initial }: Props) {
 
   const inWorkDays = daysBetween(c.created_at);
   const waiting = useMemo(() => resolveWaiting(c), [c]);
+  const nextAction = useMemo(() => resolveNextAction(c), [c]);
+
+  useEffect(() => {
+    if (!nextAction) return;
+    const section = nextAction.section;
+    if (section === "anketa") setAnketaOpen(true);
+    else if (section === "stage") setStageOpen(true);
+    else if (section === "quest") setQuestOpen(true);
+    else if (section === "client") setClientOpen(true);
+    else if (section === "ai") {
+      setAiSectionOpen(true);
+      setAiCommentOpen(true);
+    }
+  }, [nextAction?.label, nextAction?.section]);
   const hasQuestionnaire = Array.isArray(c.interview_questionnaire) && c.interview_questionnaire.length > 0;
 
   const applyCandidate = (next: CandidateDetail) => {
@@ -329,13 +368,15 @@ export function CandidateEditor({ initial }: Props) {
   }, []);
 
   const setFeedback = (
-    section: "anketa" | "stage" | "telegram" | "top",
+    section: "anketa" | "stage" | "client" | "top",
     nextMsg: string | null,
     nextErr: string | null = null,
+    tone: "success" | "warning" | "error" = nextErr ? "error" : "success",
   ) => {
     setActionSection(section);
     setMsg(nextMsg);
     setErr(nextErr);
+    setBannerTone(tone);
   };
 
   const saveCard = async () => {
@@ -456,7 +497,7 @@ export function CandidateEditor({ initial }: Props) {
 
   const remind = async (kind: "evaluate" | "decide") => {
     setBusy(true);
-    setFeedback("telegram", null);
+    setFeedback("client", null);
     try {
       const res = await fetch(
         `${getApiBase()}/api/v1/candidates/${c.id}/remind?kind=${kind}`,
@@ -464,17 +505,17 @@ export function CandidateEditor({ initial }: Props) {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : await res.text());
-      setFeedback("telegram", data.message || "Напоминание отправлено");
+      setFeedback("client", data.message || "Напоминание отправлено");
     } catch (e) {
-      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+      setFeedback("client", null, e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy(false);
     }
   };
 
-  const refreshTelegramCard = async () => {
+  const refreshClientCard = async () => {
     setBusy(true);
-    setFeedback("telegram", null);
+    setFeedback("client", null);
     try {
       const res = await fetch(
         `${getApiBase()}/api/v1/candidates/${c.id}/refresh-telegram?notify=true`,
@@ -482,9 +523,9 @@ export function CandidateEditor({ initial }: Props) {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Ошибка");
-      setFeedback("telegram", data.message || "Карточка в чате обновлена");
+      setFeedback("client", data.message || "Карточка в чате обновлена");
     } catch (e) {
-      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+      setFeedback("client", null, e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy(false);
     }
@@ -492,7 +533,7 @@ export function CandidateEditor({ initial }: Props) {
 
   const sendMaterial = async () => {
     setBusy(true);
-    setFeedback("telegram", null);
+    setFeedback("client", null);
     try {
       const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/extra-material`, {
         method: "POST",
@@ -504,10 +545,10 @@ export function CandidateEditor({ initial }: Props) {
       if (data.candidate) applyCandidate(data.candidate);
       setMaterialTitle("");
       setMaterialUrl("");
-      setFeedback("telegram", data.message || "Материал отправлен");
+      setFeedback("client", data.message || "Материал отправлен");
       router.refresh();
     } catch (e) {
-      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка");
+      setFeedback("client", null, e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy(false);
     }
@@ -577,7 +618,7 @@ export function CandidateEditor({ initial }: Props) {
 
   const sendToChat = async () => {
     setBusy(true);
-    setFeedback("telegram", null);
+    setFeedback("client", null);
     try {
       const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/send-to-chat`, {
         method: "POST",
@@ -596,11 +637,40 @@ export function CandidateEditor({ initial }: Props) {
         );
       }
       if (data.candidate) applyCandidate(data.candidate as CandidateDetail);
-      setFeedback("telegram", data.message || "Отправлено в чат");
+      const partial =
+        Array.isArray(data.errors) && data.errors.length > 0 && Boolean(data.ok);
+      setFeedback(
+        "client",
+        data.message || "Отправлено заказчику",
+        null,
+        partial ? "warning" : "success",
+      );
       setStage(data.hr_stage || c.hr_stage);
       router.refresh();
     } catch (e) {
-      setFeedback("telegram", null, e instanceof Error ? e.message : "Ошибка отправки в Telegram");
+      setFeedback("client", null, e instanceof Error ? e.message : "Ошибка отправки заказчику");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmMeeting = async () => {
+    setBusy(true);
+    setFeedback("client", null);
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/confirm-meeting`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.detail;
+        throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+      }
+      applyCandidate(data as CandidateDetail);
+      setFeedback("client", "Встреча подтверждена HR");
+      router.refresh();
+    } catch (e) {
+      setFeedback("client", null, e instanceof Error ? e.message : "Ошибка подтверждения");
     } finally {
       setBusy(false);
     }
@@ -690,7 +760,7 @@ export function CandidateEditor({ initial }: Props) {
   const clientComments = splitClientComments(c.client_comment);
   const bannerFor = (section: typeof actionSection) =>
     actionSection === section ? (
-      <ActionBanner msg={msg} err={err} />
+      <ActionBanner msg={msg} err={err} tone={bannerTone} />
     ) : null;
 
   return (
@@ -779,14 +849,25 @@ export function CandidateEditor({ initial }: Props) {
                 {" · "}
                 {meetingHrConfirmed ? "встреча подтверждена HR" : "ожидает подтверждения HR"}
               </span>
-              {attendanceStatus === "confirmed" ? (
-                <span className="cand-summary-confirm is-yes"> · кандидат подтвердил приход</span>
+              {meetingHrConfirmed && attendanceStatus === "confirmed" ? (
+                <span className="cand-summary-confirm is-yes"> · кандидат подтвердил явку</span>
               ) : null}
-              {attendanceStatus === "cancelled_candidate" ? (
-                <span className="cand-summary-confirm is-no"> · кандидат отменил</span>
+              {meetingHrConfirmed && attendanceStatus === "cancelled_candidate" ? (
+                <span className="cand-summary-confirm is-no"> · кандидат отменил в день встречи</span>
               ) : null}
-              {attendanceStatus === "cancelled_client" ? (
-                <span className="cand-summary-confirm is-no"> · отменено заказчиком</span>
+              {meetingHrConfirmed && attendanceStatus === "cancelled_client" ? (
+                <span className="cand-summary-confirm is-no"> · заказчик отменил в день встречи</span>
+              ) : null}
+              {!meetingHrConfirmed ? (
+                <button
+                  type="button"
+                  className="chip"
+                  disabled={busy}
+                  onClick={confirmMeeting}
+                  style={{ marginLeft: "0.5rem", verticalAlign: "middle" }}
+                >
+                  Подтвердить встречу
+                </button>
               ) : null}
             </span>
           </div>
@@ -836,6 +917,46 @@ export function CandidateEditor({ initial }: Props) {
         </div>
       ) : null}
 
+      {nextAction ? (
+        <div className="cand-next-action" role="status">
+          <div className="cand-next-action-body">
+            <span className="cand-next-action-kicker">Следующий шаг</span>
+            <strong>{nextAction.label}</strong>
+            {nextAction.detail ? (
+              <span className="cand-next-action-detail">{nextAction.detail}</span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="chip chip-active"
+            onClick={() => {
+              const section = nextAction.section;
+              if (section === "anketa") {
+                setAnketaOpen(true);
+                document.getElementById("cand-anketa")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              } else if (section === "stage") {
+                setStageOpen(true);
+                document.getElementById("cand-stage")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              } else if (section === "quest") {
+                setQuestOpen(true);
+                document.getElementById("questionnaire")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              } else if (section === "client") {
+                setClientOpen(true);
+                document.getElementById("cand-client")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              } else if (section === "ai") {
+                setAiSectionOpen(true);
+                setAiCommentOpen(true);
+                document.getElementById("ai-comment-block")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              } else {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
+          >
+            Открыть
+          </button>
+        </div>
+      ) : null}
+
       <StageProgress stage={c.hr_stage} />
 
       {(actionSection === null ||
@@ -869,6 +990,7 @@ export function CandidateEditor({ initial }: Props) {
       ) : null}
 
       <CollapsibleCard
+        id="cand-anketa"
         title="Анкета"
         hint={[phone, city].filter(Boolean).join(" · ") || undefined}
         open={anketaOpen}
@@ -987,6 +1109,7 @@ export function CandidateEditor({ initial }: Props) {
       </CollapsibleCard>
 
       <CollapsibleCard
+        id="cand-stage"
         title="Этап"
         hint={hrStageLabel(stage || c.hr_stage)}
         open={stageOpen}
@@ -1214,20 +1337,28 @@ export function CandidateEditor({ initial }: Props) {
       </CollapsibleCard>
 
       <CollapsibleCard
-        title="Telegram"
+        id="cand-client"
+        title="Заказчик"
         hint={
           c.client_status === "wait"
             ? clientStatusLabelForCard(c.hr_stage, c.client_status)
             : clientStatusLabel(c.client_status)
         }
-        open={telegramOpen}
-        onOpenChange={setTelegramOpen}
+        open={clientOpen}
+        onOpenChange={setClientOpen}
       >
-        {bannerFor("telegram")}
+        {bannerFor("client")}
         <p className="muted hh-micro">
-          Отправка карточки в чат вакансии с кнопками статуса. Если кнопки на старом
-          сообщении не срабатывают — «Отправить в чат» ещё раз (новая карточка v2). «Обновить
-          данные» пересобирает карточку и пишет в чат, что изменилось.
+          {telegramNotifyEnabled && bitrixNotifyEnabled
+            ? "Отправка в Telegram и Bitrix24 (каналы в настройках Bitrix24)."
+            : bitrixNotifyEnabled
+              ? "Отправка создаёт задачу в Bitrix24 со ссылками решения."
+              : telegramNotifyEnabled
+                ? "Отправка карточки в Telegram-чат с кнопками статуса."
+                : "Включите канал в настройках Bitrix24."}
+          {telegramNotifyEnabled
+            ? " «Обновить данные» пересобирает карточку в Telegram."
+            : null}
         </p>
         <label className="hh-check">
           <input
@@ -1240,20 +1371,30 @@ export function CandidateEditor({ initial }: Props) {
         </label>
         <div className="hh-row-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
           <button type="button" className="chip chip-active" disabled={busy} onClick={sendToChat}>
-            Отправить в чат заказчика
+            Отправить заказчику
           </button>
-          <button type="button" className="chip" disabled={busy} onClick={refreshTelegramCard}>
-            Обновить данные по кандидату
-          </button>
-          <button type="button" className="chip" disabled={busy} onClick={() => remind("evaluate")}>
-            Напомнить о кандидате
-          </button>
-          <button type="button" className="chip" disabled={busy} onClick={() => remind("decide")}>
-            Напомнить принять решение
-          </button>
+          {telegramNotifyEnabled ? (
+            <>
+              <button type="button" className="chip" disabled={busy} onClick={refreshClientCard}>
+                Обновить данные по кандидату
+              </button>
+              <button
+                type="button"
+                className="chip"
+                disabled={busy}
+                onClick={() => remind("evaluate")}
+              >
+                Напомнить о кандидате
+              </button>
+              <button type="button" className="chip" disabled={busy} onClick={() => remind("decide")}>
+                Напомнить принять решение
+              </button>
+            </>
+          ) : null}
         </div>
+        {telegramNotifyEnabled ? (
         <div className="hh-field" style={{ marginTop: "0.75rem" }}>
-          <label className="hh-label">Доп. материал в чат</label>
+          <label className="hh-label">Доп. материал в Telegram</label>
           <input
             value={materialTitle}
             onChange={(e) => setMaterialTitle(e.target.value)}
@@ -1277,7 +1418,9 @@ export function CandidateEditor({ initial }: Props) {
             Отправить материал
           </button>
         </div>
-        {Array.isArray(c.payload?.extra_materials) &&
+        ) : null}
+        {telegramNotifyEnabled &&
+        Array.isArray(c.payload?.extra_materials) &&
         (c.payload.extra_materials as unknown[]).length ? (
           <ul className="muted" style={{ marginTop: "0.5rem", paddingLeft: "1.1rem" }}>
             {(

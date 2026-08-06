@@ -89,10 +89,15 @@ def upsert_seen(
 
 
 def mark_ai_low_scores(db: Session, vacancy_id: int, results: list[dict[str, Any]]) -> int:
-    """Persist resumes with ai_score <= AI_LOW_MAX from a completed search."""
+    """Persist resumes with ai_score <= AI_LOW_MAX from a completed search.
+
+    Skips rows with eval errors / parse failures (must not poison the ban list).
+    """
     n = 0
     for r in results:
         if r.get("skipped_eval") or r.get("skipped_prefilter") or r.get("skipped_seen"):
+            continue
+        if r.get("error") or r.get("parse_error"):
             continue
         score = r.get("ai_score")
         try:

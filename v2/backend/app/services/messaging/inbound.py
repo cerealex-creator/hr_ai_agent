@@ -44,6 +44,26 @@ from app.services.messaging.telegram_provider import (
 )
 
 
+def _sync_bitrix_decision_task(
+    db: Session,
+    candidate: models.Candidate,
+    status_key: str,
+    *,
+    client_comment: str | None = None,
+) -> None:
+    try:
+        from app.services.bitrix.task_sync import sync_decision_task_for_candidate
+
+        sync_decision_task_for_candidate(
+            db,
+            candidate,
+            status_key=status_key,
+            client_comment=client_comment,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -381,6 +401,8 @@ def _complete_action(action: models.MessagingAction, result: dict | None = None)
 
 
 def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
+    from app.services.messaging.idempotency import already_processed, mark_processed
+
     data = str(cq.get("data") or "")
     cq_id = str(cq.get("id") or "")
     user = cq.get("from") or {}
@@ -388,6 +410,16 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     message_id = message.get("message_id")
+
+    if cq_id and already_processed(db, provider="telegram", external_id=cq_id):
+        answer_callback_query(cq_id, text="Уже обработано")
+        return {
+            "type": "telegram.callback_query",
+            "handled": True,
+            "duplicate": True,
+            "callback_query_id": cq_id,
+        }
+
     parts = data.split(":")
     if len(parts) < 2:
         answer_callback_query(cq_id, text="Некорректные данные", show_alert=True)
@@ -419,12 +451,26 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
         "candidate_id": str(candidate.id),
     }
 
+    def _done(result: dict[str, Any]) -> dict[str, Any]:
+        if cq_id and result.get("handled"):
+            mark_processed(
+                db, provider="telegram", external_id=cq_id, kind="callback_query"
+            )
+        return result
+
     # --- status ---
     if prefix == "cs" and len(parts) >= 3:
         status_key = parts[2]
         if status_key not in ("ready", "think", "reject", "offer"):
             answer_callback_query(cq_id, text="Неизвестный статус", show_alert=True)
             return {**event, "handled": False}
+
+        if (
+            status_key not in STATUSES_REQUIRE_COMMENT
+            and (candidate.client_status or "") == status_key
+        ):
+            answer_callback_query(cq_id, text="Статус уже установлен")
+            return _done({**event, "handled": True, "status_key": status_key, "noop": True})
 
         if status_key in STATUSES_REQUIRE_COMMENT:
             if not post:
@@ -462,9 +508,17 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
                 action.completed_at = _now()
                 db.commit()
                 return {**event, "handled": False, "error": err or "prompt failed"}
-            return {**event, "handled": True, "awaiting": "status_comment", "status_key": status_key}
+            return _done(
+                {
+                    **event,
+                    "handled": True,
+                    "awaiting": "status_comment",
+                    "status_key": status_key,
+                }
+            )
 
         apply_client_update(candidate, status_key=status_key, actor="telegram", actor_note=actor)
+        _sync_bitrix_decision_task(db, candidate, status_key)
         if post:
             db.add(
                 models.MessagingAction(
@@ -492,7 +546,7 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
                             build_interview_date_keyboard(cid),
                         )
         answer_callback_query(cq_id, text="Статус сохранён")
-        return {**event, "handled": True, "status_key": status_key}
+        return _done({**event, "handled": True, "status_key": status_key})
 
     # --- free comment ---
     if prefix == "cc":
@@ -636,26 +690,15 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
             db.commit()
         else:
             db.commit()
+        _sync_bitrix_decision_task(db, candidate, "ready")
         # Notify HR to confirm meeting
         try:
-            from app.core.config import get_settings
-            from app.services.messaging.attendance import (
-                build_hr_confirm_message,
-                hr_confirm_keyboard,
-                set_meeting_hr_confirmed,
-            )
+            from app.services.bitrix.hr_notify import notify_hr_meeting_pending
+            from app.services.messaging.attendance import set_meeting_hr_confirmed
 
             set_meeting_hr_confirmed(candidate, False)
             db.commit()
-            hr = (get_settings().telegram_hr_user_id or "").strip()
-            if hr:
-                cid = ensure_tg_callback_id(candidate)
-                vac = db.get(models.Vacancy, candidate.vacancy_id)
-                send_html_message(
-                    hr,
-                    build_hr_confirm_message(candidate, vac.title if vac else ""),
-                    reply_markup=hr_confirm_keyboard(cid),
-                )
+            notify_hr_meeting_pending(db, candidate)
         except Exception:  # noqa: BLE001
             pass
         answer_callback_query(cq_id, text="Встреча сохранена")
@@ -708,6 +751,12 @@ def handle_callback_query(db: Session, cq: dict) -> dict[str, Any]:
         client_post = find_client_chat_post(db, candidate) or post
         if prefix == "mhc":
             set_meeting_hr_confirmed(candidate, True)
+            try:
+                from app.services.bitrix.task_sync import sync_meeting_task_hr_status
+
+                sync_meeting_task_hr_status(db, candidate, confirmed=True)
+            except Exception:  # noqa: BLE001
+                pass
             db.commit()
             if client_post:
                 refresh_card_message(db, candidate, client_post, mode="auto")
@@ -897,6 +946,8 @@ def handle_message(db: Session, message: dict) -> dict[str, Any]:
             actor="telegram",
             actor_note=actor or payload.get("actor") or "",
         )
+        if status_key:
+            _sync_bitrix_decision_task(db, candidate, str(status_key), client_comment=text)
         _complete_action(action, {"status_key": status_key, "comment": text})
         db.commit()
         refresh_card_message(db, candidate, post, mode="auto")
@@ -958,11 +1009,20 @@ def handle_message(db: Session, message: dict) -> dict[str, Any]:
 
 
 def process_telegram_update(db: Session, payload: dict) -> list[dict[str, Any]]:
+    from app.services.messaging.idempotency import mark_processed
+
     events: list[dict[str, Any]] = []
     if not isinstance(payload, dict):
         return events
     if payload.get("callback_query"):
-        events.append(handle_callback_query(db, payload["callback_query"]))
+        cq = payload["callback_query"] or {}
+        ev = handle_callback_query(db, cq)
+        events.append(ev)
+        cq_id = str(cq.get("id") or "")
+        if cq_id and ev.get("handled") and not ev.get("duplicate"):
+            mark_processed(
+                db, provider="telegram", external_id=cq_id, kind="callback_query"
+            )
     elif payload.get("message"):
         events.append(handle_message(db, payload["message"]))
     return events

@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -106,6 +107,12 @@ def apply_hr_stage(
     if new_stage == CLIENT_ZONE_ENTRY_STAGE and old != CLIENT_ZONE_ENTRY_STAGE:
         candidate.client_status = "wait"
         candidate.status_updated_at = _now_iso()
+        candidate.payload = payload
+        flag_modified(candidate, "payload")
+        from app.services.messaging.client_apply import clear_client_meeting
+
+        clear_client_meeting(candidate)
+        payload = dict(candidate.payload or {})
     elif _reached_hr_stage(payload, new_stage, CLIENT_ZONE_ENTRY_STAGE):
         mapped = HR_STAGE_TO_CLIENT_STATUS.get(new_stage)
         if mapped and candidate.client_status != mapped:
@@ -219,6 +226,19 @@ def create_candidate(
 
 
 def delete_candidate(db: Session, candidate: models.Candidate) -> None:
+    cand_id = candidate.id
+    post_ids = list(
+        db.scalars(
+            select(models.MessagingPost.id).where(models.MessagingPost.candidate_id == cand_id)
+        ).all()
+    )
+    if post_ids:
+        db.execute(
+            delete(models.MessagingAction).where(models.MessagingAction.post_id.in_(post_ids))
+        )
+        db.execute(
+            delete(models.MessagingPost).where(models.MessagingPost.id.in_(post_ids))
+        )
     db.delete(candidate)
     db.commit()
 

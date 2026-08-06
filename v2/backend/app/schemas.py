@@ -189,6 +189,7 @@ class CandidateListItem(BaseModel):
     vacancy_title: str | None = None
     client_name: str | None = None
     last_contact_at: str | None = None
+    attention_reason: str | None = None
 
 
 class CandidateDetail(BaseModel):
@@ -521,14 +522,15 @@ class CandidateSendToChatIn(BaseModel):
 class CandidateSendToChatOut(BaseModel):
     ok: bool = True
     message: str
-    post_id: str
-    external_message_id: str
-    channel_id: str
-    chat_id: str
+    post_id: str = ""
+    external_message_id: str = ""
+    channel_id: str = ""
+    chat_id: str = ""
     stage_changed: bool = False
     hr_stage: str
     candidate: CandidateDetail | None = None
-
+    results: list[dict] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 class YandexDiskConfigOut(BaseModel):
     vacancy_id: int
@@ -619,4 +621,114 @@ class WebhookAckOut(BaseModel):
     provider: str
     events: list[dict] = Field(default_factory=list)
     note: str = ""
+
+
+# --- M9: typed request bodies (was bare dict) ---
+
+
+class VacancySettingsPatchIn(BaseModel):
+    is_test: bool | None = None
+    show_portfolio_field: bool | None = None
+    control_word_enabled: bool | None = None
+    control_word: str | None = None
+    chat_id: str | None = None
+
+
+class WarrantyApplyIn(BaseModel):
+    candidate_id: UUID
+    start_date: str
+    months: int | None = None
+
+
+class AppSettingsPatchIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    default_warranty_months: int | None = None
+    ai_provider: dict | None = None
+    ai_model: str | None = None
+    provider_links: list | None = None
+    candidate_comms: dict | None = None
+    yandex_disk_root: str | None = None
+    yandex_disk_inbox: str | None = None
+    functions: dict | None = None
+    client_notify: dict | None = None
+    bitrix: dict | None = None
+
+
+class OauthTokenIn(BaseModel):
+    token: str | None = None
+    access_token: str | None = None
+
+
+class InboxProcessIn(BaseModel):
+    limit: int | None = 20
+
+
+class InboxBindIn(BaseModel):
+    vacancy_id: int
+
+
+class InboxSettingsPatchIn(BaseModel):
+    auto: bool | None = None
+    confidence: float | None = None
+    evaluate_on_route: bool | None = None
+
+
+class StageSchemaPatchIn(BaseModel):
+    """Whole stage-schema document; allow arbitrary keys."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class GoogleOAuthCompleteIn(BaseModel):
+    code: str = ""
+
+
+class HhSearchPlanReviseIn(BaseModel):
+    note: str = ""
+
+
+class HhManualEvaluateIn(BaseModel):
+    text: str | None = None
+    refs: str | None = None
+    criteria: dict | None = None
+
+
+class HhSoftenSuggestionsIn(BaseModel):
+    criteria: dict | None = None
+    search_results: list | None = None
+    good_resumes: list | None = None
+
+
+class HhSoftenApplyIn(BaseModel):
+    criteria: dict | None = None
+    suggestions: list = Field(default_factory=list)
+    selected_ids: list = Field(default_factory=list)
+    persist: bool = True
+
+
+class CandidateCopyIn(BaseModel):
+    target_vacancy_id: int
+
+
+class MessagingTestMessageIn(BaseModel):
+    chat_id: str
+    text: str | None = None
+
+
+class ExtraMaterialIn(BaseModel):
+    title: str | None = None
+    url: str = ""
+
+
+class HistoryApplyIn(BaseModel):
+    vacancy_id: int | None = None
+    keys: list[str] | None = None
+
+
+class TemplateCreateVacancyIn(BaseModel):
+    title: str | None = None
+    client_id: int | None = None
+    chat_id: str | None = None
+    is_test: bool = False
 

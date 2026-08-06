@@ -192,6 +192,16 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
 
   return (
     <div className="docs-editor">
+      {!isFilled(drafts.profile) ? (
+        <div className="card-edit" style={{ marginBottom: "1rem", borderColor: "var(--accent)" }}>
+          <h3 className="hh-subhead">С чего начать</h3>
+          <p className="muted" style={{ marginBottom: "0.5rem" }}>
+            Профиль ещё пуст. Загрузите запись встречи или файлы ниже («Документы из материалов»)
+            либо сгенерируйте профиль по названию вакансии в блоке «Профиль».
+          </p>
+        </div>
+      ) : null}
+
       <DocumentsFromMaterials
         vacancyId={vacancyId}
         onDone={() => {

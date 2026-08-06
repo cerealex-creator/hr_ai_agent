@@ -5,7 +5,8 @@
   set -a && source ../../.env && set +a
   .venv/bin/python scripts/hh_oauth.py
 
-После успеха скопируйте выведенные строки в корневой .env и перезапустите API + ARQ worker.
+После успеха токены пишутся в ``data/hh_oauth.json``; строки .env печатаются как запасной вариант.
+Перезапустите API + ARQ worker.
 """
 
 from __future__ import annotations
@@ -125,11 +126,35 @@ def main() -> None:
     else:
         print(f"  /me: HTTP {status}")
 
-    print("\n--- Добавьте в корневой .env ---\n")
+    print("\n--- Добавьте в корневой .env (опционально; предпочтительно файл) ---\n")
     print(f"HH_ACCESS_TOKEN={access}")
     if refresh:
         print(f"HH_REFRESH_TOKEN={refresh}")
     print(f"HH_USER_AGENT={user_agent}")
+
+    data_dir = Path(os.environ.get("LEGACY_DATA_DIR") or (ROOT / "data"))
+    token_path = data_dir / "hh_oauth.json"
+    try:
+        from datetime import datetime, timezone
+
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(
+            __import__("json").dumps(
+                {
+                    "access_token": access,
+                    "refresh_token": refresh,
+                    "saved_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"\nТокены сохранены в {token_path} (приоритет над .env после refresh).")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nНе удалось записать {token_path}: {exc}", file=sys.stderr)
+
     print("\nЗатем перезапустите uvicorn и arq worker.")
 
 

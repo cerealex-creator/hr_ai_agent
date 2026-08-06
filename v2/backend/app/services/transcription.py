@@ -236,6 +236,33 @@ def upload_to_s3_and_get_url(
     return f"https://storage.yandexcloud.net/{bucket}/{object_name}"
 
 
+def delete_s3_object(
+    object_name: str,
+    *,
+    bucket: str,
+    access_key: str,
+    secret_key: str,
+) -> None:
+    """Best-effort delete of SpeechKit PCM (audit M10). Never raises."""
+    name = (object_name or "").strip()
+    if not name or not bucket:
+        return
+    try:
+        from boto3 import client
+
+        s3_client = client(
+            "s3",
+            endpoint_url="https://storage.yandexcloud.net",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+        s3_client.delete_object(Bucket=bucket, Key=name)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("S3 delete failed for %s/%s", bucket, name)
+
+
 def recognize_long_audio(
     audio_url: str,
     api_key: str,
@@ -243,6 +270,7 @@ def recognize_long_audio(
     on_progress: ProgressCb | None = None,
     should_cancel: Callable[[], bool] | None = None,
     poll_seconds: float = 5.0,
+    max_wait_seconds: float = 900.0,
 ) -> str:
     response = requests.post(
         "https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize",
@@ -267,9 +295,14 @@ def recognize_long_audio(
         )
     operation_id = response.json()["id"]
     ticks = 0
+    deadline = time.monotonic() + max(60.0, float(max_wait_seconds))
     while True:
         if should_cancel and should_cancel():
             raise RuntimeError("Отменено")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"SpeechKit: превышено время ожидания ({int(max_wait_seconds)} с)"
+            )
         ticks += 1
         # progress 70→95 while waiting
         pct = min(95, 70 + ticks)
@@ -355,6 +388,7 @@ def transcribe_from_url(
         raise RuntimeError("Отменено")
     media_path = download_media(direct, on_progress=on_progress)
     pcm_path = None
+    s3_object_name: str | None = None
     try:
         if should_cancel and should_cancel():
             raise RuntimeError("Отменено")
@@ -367,6 +401,7 @@ def transcribe_from_url(
         audio_url = upload_to_s3_and_get_url(
             pcm_path, bucket=bucket, access_key=access_key, secret_key=secret_key
         )
+        s3_object_name = os.path.basename(pcm_path)
 
         _progress(on_progress, 70, "Запрос в SpeechKit")
         text = recognize_long_audio(
@@ -385,6 +420,13 @@ def transcribe_from_url(
             "preview": text[:280] + ("…" if len(text) > 280 else ""),
         }
     finally:
+        if s3_object_name:
+            delete_s3_object(
+                s3_object_name,
+                bucket=bucket,
+                access_key=access_key,
+                secret_key=secret_key,
+            )
         for path in (media_path, pcm_path):
             if path and os.path.exists(path):
                 try:
@@ -412,6 +454,7 @@ def transcribe_from_path(
     if not media_path or not os.path.exists(media_path):
         raise RuntimeError(f"Медиафайл не найден: {media_path}")
     pcm_path = None
+    s3_object_name: str | None = None
     try:
         if should_cancel and should_cancel():
             raise RuntimeError("Отменено")
@@ -423,6 +466,7 @@ def transcribe_from_path(
         audio_url = upload_to_s3_and_get_url(
             pcm_path, bucket=bucket, access_key=access_key, secret_key=secret_key
         )
+        s3_object_name = os.path.basename(pcm_path)
         _progress(on_progress, 70, "Запрос в SpeechKit")
         text = recognize_long_audio(
             audio_url,
@@ -440,6 +484,13 @@ def transcribe_from_path(
             "preview": text[:280] + ("…" if len(text) > 280 else ""),
         }
     finally:
+        if s3_object_name:
+            delete_s3_object(
+                s3_object_name,
+                bucket=bucket,
+                access_key=access_key,
+                secret_key=secret_key,
+            )
         if pcm_path and os.path.exists(pcm_path):
             try:
                 os.unlink(pcm_path)

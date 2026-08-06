@@ -58,7 +58,10 @@ docker compose up -d db
 # API
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-alembic upgrade head   # или: python -m app.db.init_db
+alembic upgrade head   # baseline M1; предпочтительнее init_db
+# Опционально после импорта старых данных / перед сменой схемы:
+# python -m app.scripts.normalize_jsonb --dry-run
+# python -m app.scripts.normalize_jsonb
 python -m app.scripts.import_json --data-dir ../../data
 uvicorn app.main:app --reload --port 8000
 # Worker (другой терминал; нужен Redis на 6380)

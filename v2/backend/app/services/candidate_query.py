@@ -16,7 +16,42 @@ from app.services.stats_service import (
 )
 from app.services.vacancy_outcome import HIRE_STAGES
 
-CANDIDATE_PRESETS = frozenset({"sent_to_client", "in_client_zone", "hires"})
+CANDIDATE_PRESETS = frozenset({"sent_to_client", "in_client_zone", "hires", "attention"})
+
+
+def attention_reason(c: models.Candidate) -> str | None:
+    """Why this candidate needs HR attention (inbox). None = skip."""
+    stage = c.hr_stage or ""
+    if stage in ("rejected",) or stage in HIRE_STAGES:
+        return None
+    p = c.payload or {}
+    meeting_date = str(p.get("office_interview_date") or "").strip()
+    meeting_time = str(p.get("office_interview_time") or "").strip()
+    meeting_set = bool(meeting_date and meeting_time)
+    hr_confirmed = bool(p.get("meeting_hr_confirmed"))
+    video = str(p.get("video_link") or "").strip()
+    transcript = str(p.get("transcript") or "").strip()
+    ai_score = p.get("ai_score")
+    interview_ai = p.get("interview_ai_score")
+
+    if meeting_set and not hr_confirmed and stage in ("interview_scheduled", "client_meeting"):
+        return "Подтвердить встречу HR"
+    if stage in ("interview_scheduled", "interview_done"):
+        if video and not transcript and interview_ai is None:
+            return "Обработать запись собеседования"
+        if not video and stage == "interview_scheduled":
+            return "Добавить ссылку на запись"
+    if stage in ("resume_screening", "primary_contact") and ai_score is None:
+        return "Оценить резюме ИИ"
+    if stage in ("client_review", "client_pause"):
+        st = c.client_status or "wait"
+        if st == "wait":
+            return "Ждёт решения заказчика"
+        if st == "think":
+            return "Заказчик думает"
+    if stage in ("resume_screening", "primary_contact") and not str(p.get("phone") or "").strip():
+        return "Нет телефона"
+    return None
 
 
 def list_candidates_filtered(
@@ -66,6 +101,17 @@ def list_candidates_filtered(
     elif preset == "hires":
         candidates = [c for c in candidates if c.hr_stage in HIRE_STAGES]
         label = "Выходы / стажировки"
+    elif preset == "attention":
+        kept: list[models.Candidate] = []
+        for c in candidates:
+            reason = attention_reason(c)
+            if not reason:
+                continue
+            # ephemeral, not persisted
+            setattr(c, "_attention_reason", reason)
+            kept.append(c)
+        candidates = kept
+        label = "Требуют внимания"
 
     candidates.sort(
         key=lambda c: (
@@ -111,6 +157,7 @@ def serialize_list_item(
         "vacancy_title": vacancy_title,
         "client_name": client_name,
         "last_contact_at": contact,
+        "attention_reason": getattr(c, "_attention_reason", None),
     }
 
 

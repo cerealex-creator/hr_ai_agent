@@ -87,7 +87,7 @@ export function CreateVacancyForm({
       }
       resetForm();
       setOpen(false);
-      router.push(`/vacancies/${data.id}`);
+      router.push(`/vacancies/${data.id}?section=docs`);
       router.refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка создания");

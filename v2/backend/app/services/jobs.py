@@ -55,9 +55,48 @@ def update_job(
     return job
 
 
+def update_job_isolated(
+    job_id: uuid.UUID,
+    *,
+    status: str | None = None,
+    progress_pct: int | None = None,
+    progress_label: str | None = None,
+    result_ref: str | None = None,
+    error: str | None = None,
+    payload_patch: dict | None = None,
+) -> models.Job | None:
+    """Own Session — safe from worker threads / asyncio.to_thread callbacks (audit M5)."""
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return update_job(
+            db,
+            job_id,
+            status=status,
+            progress_pct=progress_pct,
+            progress_label=progress_label,
+            result_ref=result_ref,
+            error=error,
+            payload_patch=payload_patch,
+        )
+    finally:
+        db.close()
+
+
 def is_cancelled(db: Session, job_id: uuid.UUID) -> bool:
     job = db.get(models.Job, job_id)
     return bool(job and job.status == "cancelled")
+
+
+def is_cancelled_isolated(job_id: uuid.UUID) -> bool:
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return is_cancelled(db, job_id)
+    finally:
+        db.close()
 
 
 def create_job_row(
@@ -190,3 +229,22 @@ def find_active_job_for_candidate(
         if str((job.payload or {}).get("candidate_id") or "").strip() == cid:
             return job
     return None
+
+
+def find_active_job_for_vacancy(
+    db: Session,
+    *,
+    job_type: str,
+    vacancy_id: int,
+) -> models.Job | None:
+    """Return newest queued/running job of this type for a vacancy (audit M8)."""
+    return db.scalars(
+        select(models.Job)
+        .where(
+            models.Job.job_type == job_type,
+            models.Job.vacancy_id == int(vacancy_id),
+            models.Job.status.in_(("queued", "running")),
+        )
+        .order_by(models.Job.created_at.desc())
+        .limit(1)
+    ).first()

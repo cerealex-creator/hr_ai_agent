@@ -123,16 +123,25 @@ def run() -> int:
         for upd in data.get("result") or []:
             if _stop:
                 break
-            offset = int(upd["update_id"]) + 1
+            uid = int(upd["update_id"])
             keys = [k for k in upd if k != "update_id"]
-            logger.info("update %s %s", upd.get("update_id"), keys)
+            logger.info("update %s %s", uid, keys)
             db = SessionLocal()
             try:
+                from app.services.log_sanitize import sanitize_for_log
+
                 events = process_telegram_update(db, upd)
-                logger.info("events: %s", json.dumps(events, ensure_ascii=False)[:800])
+                logger.info(
+                    "events: %s",
+                    sanitize_for_log(json.dumps(events, ensure_ascii=False), max_len=800),
+                )
+                offset = uid + 1
             except Exception as exc:  # noqa: BLE001
-                logger.exception("process error: %s", exc)
+                from app.services.log_sanitize import sanitize_for_log
+
+                logger.exception("process error: %s", sanitize_for_log(exc))
                 db.rollback()
+                # Do not advance offset — Telegram will redeliver; callbacks are idempotent.
             finally:
                 db.close()
 

@@ -1,19 +1,54 @@
 from contextlib import asynccontextmanager
+import logging
+import threading
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from app.api.v1.endpoints import router as v1_router
 from app.core.config import get_settings
 from app.workers.redis_pool import close_arq_pool
 
 settings = get_settings()
+logger = logging.getLogger("hr_api")
+_bitrix_tick_stop = threading.Event()
+
+
+def _bitrix_tick_loop() -> None:
+    while not _bitrix_tick_stop.wait(60):
+        from app.db.session import SessionLocal
+        from app.services.app_settings import get_bitrix
+        from app.services.bitrix.think_followup import run_bitrix_maintenance_tick
+
+        if not get_bitrix().get("enabled"):
+            continue
+        db = SessionLocal()
+        try:
+            result = run_bitrix_maintenance_tick(db)
+            think = result.get("think_followup") or {}
+            if think.get("scheduled") or think.get("created"):
+                logger.info("bitrix maintenance tick: %s", result)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("bitrix maintenance tick error: %s", exc)
+            db.rollback()
+        finally:
+            db.close()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    from app.db.session import SessionLocal
+    from app.db.base import Base
+    from app.db import models  # noqa: F401
+    from app.db.session import SessionLocal, engine
     from app.services.clients_write import migrate_legacy_clients
+
+    # Schema: use `alembic upgrade head` (M1 baseline). Optional create_all
+    # remains as a safety net for local bootstraps that skipped Alembic.
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:  # noqa: BLE001
+        print(f"create_all skipped: {exc}")
 
     db = SessionLocal()
     try:
@@ -22,7 +57,10 @@ async def lifespan(_app: FastAPI):
         print(f"clients migrate skipped: {exc}")
     finally:
         db.close()
+    tick_thread = threading.Thread(target=_bitrix_tick_loop, daemon=True, name="bitrix-tick")
+    tick_thread.start()
     yield
+    _bitrix_tick_stop.set()
     await close_arq_pool()
 
 
@@ -45,30 +83,130 @@ app.include_router(v1_router, prefix="/api/v1")
 
 
 @app.post("/integrations/{provider}/webhook")
-def integrations_webhook_root(provider: str, payload: dict) -> dict:
+async def integrations_webhook_root(provider: str, request: Request) -> dict:
     """Architecture path; same handler as /api/v1/integrations/.../webhook."""
+    from app.api.v1.endpoints import _parse_webhook_payload
     from app.core.config import get_settings
     from app.db.session import SessionLocal
     from app.services.messaging.gateway import parse_inbound_webhook
 
     settings = get_settings()
+    payload = await _parse_webhook_payload(request)
     db = SessionLocal()
     try:
         events = parse_inbound_webhook(provider, payload or {}, db=db)
     finally:
         db.close()
     handled = any(bool(e.get("handled")) for e in events)
+    provider_l = (provider or "").strip().lower()
+    if provider_l in ("bitrix", "bitrix24"):
+        note = "bitrix inbound"
+    elif settings.messaging_inbound_enabled:
+        note = "inbound enabled"
+    else:
+        note = "inbound disabled — Streamlit bot keeps polling until cutover"
     return {
         "ok": True,
         "handled": handled,
         "provider": provider,
         "events": events,
-        "note": (
-            "inbound enabled"
-            if settings.messaging_inbound_enabled
-            else "inbound disabled — Streamlit bot keeps polling until cutover"
-        ),
+        "note": note,
     }
+
+
+def _bitrix_decide_response(
+    db,
+    token: str,
+    comment: str | None = None,
+    *,
+    meeting_date: str | None = None,
+    meeting_time: str | None = None,
+    meeting_format: str | None = None,
+) -> HTMLResponse:
+    from app.services.bitrix.decide import DecideError, apply_decide_token
+    from app.services.bitrix.pages import comment_form_html, error_html, meeting_form_html, success_html
+
+    try:
+        result = apply_decide_token(
+            db,
+            token,
+            comment=comment,
+            meeting_date=meeting_date,
+            meeting_time=meeting_time,
+            meeting_format=meeting_format,
+        )
+    except DecideError as exc:
+        return HTMLResponse(error_html(exc.message), status_code=exc.status_code)
+    except Exception as exc:  # noqa: BLE001
+        return HTMLResponse(error_html(str(exc) or "Ошибка"), status_code=500)
+
+    if result.get("needs_comment"):
+        return HTMLResponse(
+            comment_form_html(
+                name=str(result.get("candidate_name") or ""),
+                status_label=str(result.get("status_label") or ""),
+                token=token,
+            )
+        )
+    if result.get("needs_meeting"):
+        return HTMLResponse(
+            meeting_form_html(
+                name=str(result.get("candidate_name") or ""),
+                status_label=str(result.get("status_label") or ""),
+                token=token,
+            )
+        )
+    meeting_when = ""
+    if result.get("meeting_date") and result.get("meeting_time"):
+        try:
+            from datetime import datetime
+
+            d = datetime.strptime(str(result["meeting_date"]), "%Y-%m-%d").strftime("%d.%m.%Y")
+            meeting_when = f"{d} {result['meeting_time']}"
+        except ValueError:
+            meeting_when = f"{result['meeting_date']} {result['meeting_time']}"
+    return HTMLResponse(
+        success_html(
+            name=str(result.get("candidate_name") or ""),
+            status_label=str(result.get("status_label") or ""),
+            meeting_when=meeting_when or None,
+        )
+    )
+
+
+@app.get("/integrations/bitrix/decide", response_class=HTMLResponse)
+def bitrix_decide_get(t: str = "") -> HTMLResponse:
+    from app.db.session import SessionLocal
+
+    session = SessionLocal()
+    try:
+        return _bitrix_decide_response(session, t)
+    finally:
+        session.close()
+
+
+@app.post("/integrations/bitrix/decide", response_class=HTMLResponse)
+def bitrix_decide_post(
+    t: str = Form(default=""),
+    comment: str = Form(default=""),
+    meeting_date: str = Form(default=""),
+    meeting_time: str = Form(default=""),
+    meeting_format: str = Form(default="o"),
+) -> HTMLResponse:
+    from app.db.session import SessionLocal
+
+    session = SessionLocal()
+    try:
+        return _bitrix_decide_response(
+            session,
+            t,
+            comment=comment,
+            meeting_date=meeting_date,
+            meeting_time=meeting_time,
+            meeting_format=meeting_format,
+        )
+    finally:
+        session.close()
 
 
 @app.get("/")
@@ -81,4 +219,6 @@ def root() -> dict:
         "jobs": "/api/v1/jobs",
         "messaging": "/api/v1/messaging/status",
         "webhook_stub": "/integrations/telegram/webhook",
+        "bitrix_webhook": "/integrations/bitrix/webhook",
+        "bitrix_decide": "/integrations/bitrix/decide",
     }

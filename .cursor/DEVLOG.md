@@ -5,7 +5,239 @@
 
 ---
 
-## 2026-08-05 — Выключатель функции: поиск в HH
+## 2026-08-06 — v2: M9 Pydantic + M6 split endpoints
+
+**Тип:** `refactor`
+
+**Сделано:**
+- M9: typed request bodies вместо `dict` (settings, tokens, HH, messaging, history…).
+- M6: API разбит на `routes/*` + `common.py` + `router.py`; `endpoints.py` — shim.
+
+**Файлы:** `schemas.py`, `app/api/v1/{common,router,endpoints,routes/*}.py`, `AUDIT.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Волна D / target architecture (auth, SSE jobs) или коммит накопленного.
+
+---
+
+## 2026-08-06 — v2: M8 HH dedup + M10 S3 + M7 UX inbox
+
+**Тип:** `fix` + `ux`
+
+**Сделано:**
+- M8: reuse active `hh_cold_search` per vacancy (`reused=true`).
+- M10: delete PCM from Yandex Object Storage in STT `finally`.
+- M7: sticky next-action на карточке; `/candidates` hub + `preset=attention`.
+
+**Файлы:** `jobs.py`, `endpoints.py`, `transcription.py`, `candidate_query.py`, `nextAction.ts`, `CandidateEditor.tsx`, `candidates/page.tsx`, `schemas.py`, `api.ts`, `globals.css`, `AUDIT.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- M9 Pydantic / M6 split endpoints.
+
+---
+
+## 2026-08-06 — v2: M4 HH 429 + M5 job Session isolation
+
+**Тип:** `fix`
+
+**Сделано:**
+- HH `_get`: 429 → Retry-After / exponential backoff, до 5 retries.
+- `update_job_isolated` / `is_cancelled_isolated`; callbacks STT в to_thread используют их.
+
+**Файлы:** `hh_client.py`, `jobs.py`, `tasks.py`, `v2/AUDIT.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Волна B: M8 HH job dedup / M10 S3 cleanup / M7 UX.
+
+---
+
+## 2026-08-06 — v2: M2 AI JSON + M3 HH token persist
+
+**Тип:** `refactor` + `fix`
+
+**Сделано:**
+- M2: `parse_ai_json` с repair как в legacy; `resume_eval` / `hh_criteria_prefill` → `chat_json`.
+- M3: `hh_oauth.json` persist после refresh; файл приоритетнее `.env`; один `HhClient` на HH job.
+- `hh_oauth.py` пишет токены в `data/hh_oauth.json`.
+
+**Файлы:** `ai_json.py`, `resume_eval.py`, `hh_criteria_prefill.py`, `hh_tokens.py`, `hh_client.py`, `tasks.py`, `scripts/hh_oauth.py`, `v2/AUDIT.md`
+
+**Данные / конфиг:** новый файл `data/hh_oauth.json` (секреты; не коммитить)
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Волна B: M4 HH 429 backoff.
+
+---
+
+## 2026-08-06 — v2: M11 JSONB normalize + M1 Alembic baseline
+
+**Тип:** `infra`
+
+**Сделано:**
+- Скрипт `normalize_jsonb` + defaults: deep-fill missing keys в payload/documents (без overwrite).
+- Применено на локальной БД: 99 candidates, 12 vacancies.
+- Alembic baseline `d22a995b8f9c` (create_all + indexes clients); `alembic upgrade head` на локальной БД.
+- README: `alembic upgrade head` + пример normalize; AUDIT: M11/M1 done.
+
+**Файлы:** `v2/backend/app/services/jsonb_defaults.py`, `v2/backend/app/scripts/normalize_jsonb.py`, `v2/backend/alembic/versions/d22a995b8f9c_baseline_v2_schema.py`, `v2/backend/app/main.py`, `v2/README.md`, `v2/AUDIT.md`
+
+**Данные / конфиг:** изменена JSONB в Postgres (добавлены missing keys); alembic_version → `d22a995b8f9c`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Волна B: M2 единый AI JSON repair.
+
+---
+
+## 2026-08-06 — Bitrix: синхронизация DESCRIPTION + комментарий
+
+**Тип:** `feature`
+
+**Сделано:**
+- При смене статуса (Встреча/Подумать/Отказ/Оффер) — обновление блока «Текущий статус» в DESCRIPTION задачи оценки + комментарий в ленте.
+- При подтверждении HR — блок «Встреча подтверждена HR» в задаче встречи + комментарий.
+- Маркеры `---HRA_STATUS---` / `---HRA_MEETING---` для безопасной подмены блока.
+- Синхронизация из Bitrix decide, Telegram-кнопок, confirm-meeting.
+
+**Файлы:** `bitrix/task_sync.py`, `client.py`, `decide.py`, `outbound.py`, `meeting_task.py`, `inbound.py`, `endpoints.py`
+
+**Следующий шаг:**
+- Перезапустить backend; сменить статус / подтвердить встречу — проверить описание и ленту задачи.
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- **A:** кнопка «Подтвердить встречу» в карточке → `POST …/confirm-meeting`.
+- **B:** после назначения встречи (Bitrix/Telegram) — Telegram HR с кнопкой подтверждения.
+- Задача Bitrix «Встреча: …» с DEADLINE/START_DATE_PLAN на дату встречи.
+- «Подумать»: при закрытии задачи решения — follow-up через 3 рабочих дня (пн–пт); polling каждые 60 с в фоне API; webhook OnTaskUpdate тоже.
+- Новая задача «Принять решение» при истечении срока; цикл повторяется, пока статус think и вакансия активна.
+
+**Файлы:** `bitrix/hr_notify.py`, `meeting_task.py`, `think_followup.py`, `decide.py`, `inbound.py`, `main.py`, `endpoints.py`, `CandidateEditor.tsx`
+
+**Конфиг:** `TELEGRAM_HR_USER_ID` для варианта B.
+
+**Следующий шаг:**
+- Перезапустить backend; проверить встречу + подтверждение + сценарий «Подумать» → закрыть задачу → через 3 раб. дня новая задача.
+
+---
+
+
+**Тип:** `fix`
+
+**Сделано:**
+- Повторная отправка в Bitrix сбрасывает старую встречу и статус → «ждёт оценки».
+- Переход на этап «На оценке у заказчика» очищает дату/время прошлой встречи.
+- Кнопка «Встреча» в Bitrix открывает форму (дата, время, формат), как в Telegram.
+
+**Файлы:** `bitrix/decide.py`, `bitrix/pages.py`, `bitrix/outbound.py`, `candidate_write.py`, `main.py`
+
+**Следующий шаг:**
+- Перезапустить backend, переотправить Чупрову, назначить встречу через форму.
+
+---
+
+
+**Тип:** `fix`
+
+**Сделано:**
+- `client_notify_has()` — единая проверка канала в настройках.
+- `send-to-chat` не трогает Telegram, если галочка снята; нет fallback на telegram по умолчанию при пустом списке.
+- Напоминания, доп. материал, refresh карточки — пропуск без сетевых вызовов.
+- В карточке кандидата Telegram-кнопки скрыты, если канал отключён.
+
+**Файлы:** `app_settings.py`, `gateway.py`, `ops.py`, `CandidateEditor.tsx`
+
+**Следующий шаг:**
+- Сохранить настройки (только Bitrix), перезапустить backend, отправить кандидата.
+
+---
+
+
+**Тип:** `fix` / `ux`
+
+**Сделано:**
+- `send_candidate_to_client`: каналы Telegram и Bitrix параллельно (отдельные DB-сессии), этап меняется один раз.
+- Короткие сообщения об ошибках (таймаут Telegram, ngrok); частичный успех — жёлтый баннер.
+- Раздел карточки переименован «Telegram» → «Заказчик».
+- В настройках Bitrix — предупреждение: ngrok должен быть запущен, старые ссылки умирают при смене URL.
+
+**Файлы:** `messaging/gateway.py`, `CandidateEditor.tsx`, `ActionBanner.tsx`, `settings/bitrix/page.tsx`
+
+**Риски:** при обоих каналах Telegram-таймаут всё ещё возможен — снимите галочку Telegram, если используете только Bitrix локально.
+
+**Следующий шаг:**
+- Запустить `ngrok http 8000`, обновить `public_api_base`, переотправить кандидата для новых ссылок в задаче.
+
+---
+
+
+**Тип:** `ux`
+
+**Сделано:**
+- Описание задачи: `DESCRIPTION_IN_BBCODE=Y`, ссылки `[url=…]подпись[/url]` вместо голых URL.
+- Блоки «Материалы» и «Ваше решение» с иконками (🟢🟡🔴🟣) как в Telegram.
+- Убраны `candidate_id` и длинные decide-URL из видимого текста.
+
+**Файлы:** `bitrix/outbound.py`, `bitrix/tokens.py`, `settings/bitrix/page.tsx`
+
+**Следующий шаг:**
+- Отправить кандидата заново и проверить вид задачи в Bitrix.
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Облачный Bitrix через входящий webhook не даёт `task.item.userfield.*` (`Action not allowed`) — отказались от UF как основного пути.
+- В описании задачи — HMAC-ссылки ready/think/reject/offer → `GET/POST /integrations/bitrix/decide`.
+- Для think/reject — HTML-форма комментария; иначе сразу `apply_client_update`.
+- Настройка `public_api_base` (публичный HTTPS API); `decide_secret` генерируется при сохранении.
+- UI `/settings/bitrix` и инструкция обновлены под ссылки.
+
+**Файлы:** `bitrix/tokens.py`, `decide.py`, `pages.py`, `outbound.py`, `app_settings.py`, `main.py`, `settings/bitrix/page.tsx`
+
+**Данные / конфиг:** `bitrix.public_api_base`, `bitrix.decide_secret`
+
+**Следующий шаг:**
+- Указать public_api_base (ngrok/прод), включить канал Bitrix, проверить create task + клик по ссылке.
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Настройки `bitrix` + `client_notify.channels` (telegram / bitrix / оба) в `app_settings.json`.
+- UI `/settings/bitrix`: подключение, UF-поля, маппинг enum, инструкция настройки портала.
+- `send-to-chat` диспатчит по выбранным каналам; Bitrix создаёт задачу (`tasks.task.add`) со сроком N часов и ссылками.
+- Webhook `POST /integrations/bitrix/webhook` (`OnTaskUpdate`) → чтение UF → `apply_client_update` (те же статусы, что в Telegram).
+- Задел: `vacancy.payload.bitrix_responsible_id` перекрывает глобальный `default_responsible_id`.
+
+**Файлы:** `app_settings.py`, `services/bitrix/*`, `messaging/gateway.py`, `endpoints.py`, `main.py`, `schemas.py`, `settings/bitrix/page.tsx`, `settings/page.tsx`
+
+**Данные / конфиг:** ключи в `app_settings.json`: `bitrix`, `client_notify`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- На реальном портале: входящий/исходящий webhook, UF-поля, проверить create task + смену статуса.
+
+---
+
 
 **Тип:** `feature`
 
@@ -1469,6 +1701,45 @@
 **Следующий шаг:**
 - …
 ```
+
+---
+
+## 2026-08-06 — Волна A хвост: Q6 Q7 Q9 Q10
+
+**Тип:** `feature` + `fix`
+
+**Сделано:**
+- После создания вакансии редирект на `?section=docs` + CTA при пустом профиле.
+- Полные `JOB_TYPE_LABELS` на `/jobs`.
+- Пауза 0.4 с между HH AI-оценками; job errors через `_safe_err`.
+- `loading.tsx` + skeleton CSS на vacancies/candidates/jobs/stats.
+
+**Файлы:** `CreateVacancyForm.tsx`, `DocumentsEditor.tsx`, `jobs/page.tsx`, `tasks.py`, `app/**/loading.tsx`, `globals.css`, `v2/AUDIT.md`
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- M11 JSONB normalize script → M1 Alembic baseline.
+
+---
+
+## 2026-08-06 — AUDIT.md + Волна A (Q1–Q4, Q8, Q11, Q12)
+
+**Тип:** `docs` + `fix`
+
+**Сделано:**
+- Оформлен `v2/AUDIT.md` (findings + волны + Q11/Q12/M11 + оговорки).
+- Волна A: AI JSON fail→`ai_error_logs` без HH-бана; SpeechKit deadline; delete candidate/vacancy FK cleanup; Telegram idempotency + offset; sanitize PII; AI input truncate 12k.
+- `create_all` при старте API для новых таблиц до Alembic.
+
+**Файлы:** `v2/AUDIT.md`, `models.py`, `ai_errors.py`, `log_sanitize.py`, `ai_json.py`, `resume_eval.py`, `hh_seen.py`, `transcription.py`, `candidate_write.py`, `vacancy_write.py`, `messaging/idempotency.py`, `inbound.py`, `telegram_poller.py`, `tasks.py`, `main.py`
+
+**Данные / конфиг:** новые таблицы `ai_error_logs`, `processed_messaging_updates` (через create_all)
+
+**Git:** не закоммичено
+
+**Следующий шаг:**
+- Перезапустить API/worker/poller; smoke delete + HH eval parse-fail; затем Волна A UX (Q6/Q7/Q9/Q10) или B/M11.
 
 ---
 

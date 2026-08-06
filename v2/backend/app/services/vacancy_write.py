@@ -232,6 +232,7 @@ def delete_vacancy(db: Session, vacancy: models.Vacancy) -> None:
         )
     db.execute(delete(models.HhShortlistItem).where(models.HhShortlistItem.vacancy_id == vac_id))
     db.execute(delete(models.HhSeenResume).where(models.HhSeenResume.vacancy_id == vac_id))
+    db.execute(delete(models.InboxItem).where(models.InboxItem.vacancy_id == vac_id))
     db.execute(delete(models.Candidate).where(models.Candidate.vacancy_id == vac_id))
     # Keep history/jobs rows but detach
     for row in db.scalars(

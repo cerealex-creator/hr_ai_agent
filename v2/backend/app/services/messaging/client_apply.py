@@ -74,6 +74,9 @@ def clear_client_meeting(candidate: models.Candidate) -> bool:
     payload["remote_interview"] = False
     payload["office_interview"] = False
     payload["meeting_hr_confirmed"] = False
+    payload["interview_attendance_status"] = ""
+    payload["interview_attendance_morning_date"] = ""
+    payload["interview_attendance_morning_last_sent_at"] = ""
     candidate.payload = payload
     flag_modified(candidate, "payload")
     return had
@@ -139,6 +142,14 @@ def apply_client_update(
             clear_client_meeting(candidate)
             payload = dict(candidate.payload or {})
 
+        if status_key != old_status and old_status == "think" and status_key != "think":
+            from app.services.bitrix.think_followup import clear_think_state as clear_bitrix_think
+
+            candidate.payload = payload
+            flag_modified(candidate, "payload")
+            clear_bitrix_think(candidate)
+            payload = dict(candidate.payload or {})
+
     if comment is not None:
         text = comment.strip()
         if actor == "telegram" and text:
@@ -170,6 +181,9 @@ def apply_client_update(
             payload["interview_reminder_10_sent"] = False
             payload["interview_reminder_60_sent"] = False
             payload["meeting_hr_confirmed"] = False
+            payload["interview_attendance_status"] = ""
+            payload["interview_attendance_morning_date"] = ""
+            payload["interview_attendance_morning_last_sent_at"] = ""
 
     candidate.payload = payload
     flag_modified(candidate, "payload")

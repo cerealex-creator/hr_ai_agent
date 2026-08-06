@@ -28,6 +28,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   transcribe_media: "Расшифровка (SpeechKit)",
   hh_cold_search: "Поиск резюме HH (холодный)",
   yandex_disk_sync: "Синхронизация Я.Диска",
+  disk_inbox_router: "Inbox Я.Диска (маршрутизация)",
+  vacancy_docs_from_materials: "Документы из материалов",
   candidate_interview_process: "Обработка собеседования",
 };
 

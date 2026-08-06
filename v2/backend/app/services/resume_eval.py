@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
-import requests
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.services.ai_errors import log_ai_error
+from app.services.ai_json import MAX_AI_INPUT_CHARS, chat_json, truncate_ai_input
 
 EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени соответствие резюме профилю на этапе холодного отбора.
 Шкала rating: 0–4 (целое число).
@@ -49,25 +49,6 @@ EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени соо�
 Контактов в резюме может не быть — оценивай по опыту и навыкам."""
 
 
-def _parse_json(content: str) -> dict[str, Any]:
-    text = (content or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                return data if isinstance(data, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
-
-
 def evaluate_resume_text(
     resume_text: str,
     profile_text: str,
@@ -75,56 +56,64 @@ def evaluate_resume_text(
     settings: Settings,
     *,
     selection_rules: str = "",
+    db: Session | None = None,
 ) -> dict[str, Any]:
-    api_key = (settings.routerai_api_key or settings.ai_api_key or "").strip()
-    if not api_key:
-        raise RuntimeError(
-            "Нет ключа ИИ (ROUTERAI_API_KEY / AI_API_KEY). Нужен для оценки резюме."
-        )
-    from app.services.app_settings import resolve_ai_model_name
-
-    base = (settings.ai_base_url or "https://routerai.ru/api/v1").rstrip("/")
-    model = resolve_ai_model_name(settings.ai_model_name)
-
-    profile = (profile_text or "").strip()[:5000]
-    resume = (resume_text or "").strip()[:8000]
-    rules = (selection_rules or "").strip()[:4000]
+    # Budget: title/rules short; rest shared under MAX_AI_INPUT_CHARS
+    rules = (selection_rules or "").strip()[:2000]
+    title = (job_title or "").strip()[:500]
+    header = f"Должность: {title}"
+    if rules:
+        header += f"\n\n{rules}"
+    budget = max(2000, MAX_AI_INPUT_CHARS - len(header) - 64)
+    profile_budget = min(5000, budget // 3)
+    resume_budget = budget - profile_budget
+    profile = truncate_ai_input((profile_text or "").strip(), profile_budget)
+    resume = truncate_ai_input((resume_text or "").strip(), resume_budget)
     if not resume:
         raise RuntimeError("Пустой текст резюме для оценки")
 
-    user_parts = [f"Должность: {job_title}"]
-    if rules:
-        user_parts.append(f"\n{rules}")
-    user_parts.append(f"\nПРОФИЛЬ:\n{profile or '—'}")
-    user_parts.append(f"\nРЕЗЮМЕ:\n{resume}")
+    user_content = f"{header}\n\nПРОФИЛЬ:\n{profile or '—'}\n\nРЕЗЮМЕ:\n{resume}"
+    user_content = truncate_ai_input(user_content, MAX_AI_INPUT_CHARS)
 
-    payload = {
-        "model": model,
-        "temperature": 0.3,
-        "max_tokens": 1500,
-        "messages": [
-            {"role": "system", "content": EVAL_SYSTEM + "\n\n/no_think\nОтвечай сразу валидным JSON."},
-            {"role": "user", "content": "\n".join(user_parts)},
-        ],
-    }
-    resp = requests.post(
-        f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=120,
+    result = chat_json(
+        settings,
+        system=EVAL_SYSTEM,
+        user=user_content,
+        temperature=0.3,
+        max_tokens=1500,
+        db=db,
+        task="resume_eval",
     )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"ИИ API {resp.status_code}: {resp.text[:300]}")
-    data = resp.json()
-    content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
-    result = _parse_json(content)
-    rating = result.get("rating", 0)
+    if not isinstance(result, dict) or "rating" not in result:
+        if isinstance(result, dict) and result:
+            log_ai_error(
+                db,
+                task="resume_eval",
+                error_kind="schema",
+                error_message="missing rating in parsed JSON",
+                raw_response=str(result)[:2000],
+                meta={"job_title": title[:120]},
+            )
+        raise RuntimeError("ИИ вернул невалидный JSON (оценка резюме)")
+
     try:
-        rating = int(rating)
-    except (TypeError, ValueError):
-        rating = 0
+        rating = int(result.get("rating"))
+    except (TypeError, ValueError) as exc:
+        log_ai_error(
+            db,
+            task="resume_eval",
+            error_kind="schema",
+            error_message=f"rating not int: {exc}",
+            raw_response=str(result)[:2000],
+            meta={"job_title": title[:120]},
+        )
+        raise RuntimeError("ИИ вернул rating в неверном формате") from exc
     rating = max(0, min(4, rating))
-    sections = result.get("comment_sections") if isinstance(result.get("comment_sections"), dict) else {}
+    sections = (
+        result.get("comment_sections")
+        if isinstance(result.get("comment_sections"), dict)
+        else {}
+    )
     итог = ""
     if sections:
         итог = str(sections.get("итог") or "").strip()

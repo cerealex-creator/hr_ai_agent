@@ -9,6 +9,11 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.services import jobs as job_svc
+from app.services.log_sanitize import sanitize_for_log
+
+
+def _safe_err(exc: BaseException, *, max_len: int = 500) -> str:
+    return sanitize_for_log(exc, max_len=max_len)
 
 
 async def demo_progress(ctx, job_id: str) -> dict:
@@ -44,7 +49,7 @@ async def demo_progress(ctx, job_id: str) -> dict:
             jid,
             status="failed",
             progress_label="Ошибка",
-            error=str(exc),
+            error=_safe_err(exc),
         )
         raise
     finally:
@@ -100,7 +105,7 @@ async def import_legacy(ctx, job_id: str) -> dict:
             jid,
             status="failed",
             progress_label="Ошибка импорта",
-            error=str(exc),
+            error=_safe_err(exc),
         )
         raise
     finally:
@@ -128,13 +133,13 @@ async def transcribe_media(ctx, job_id: str) -> dict:
         settings = get_settings()
 
         def on_progress(pct: int, label: str) -> None:
-            # Refresh cancel from DB each tick
-            if job_svc.is_cancelled(db, jid):
+            # Own Session — called from to_thread (audit M5)
+            if job_svc.is_cancelled_isolated(jid):
                 return
-            job_svc.update_job(db, jid, progress_pct=pct, progress_label=label)
+            job_svc.update_job_isolated(jid, progress_pct=pct, progress_label=label)
 
         def should_cancel() -> bool:
-            return job_svc.is_cancelled(db, jid)
+            return job_svc.is_cancelled_isolated(jid)
 
         def _run():
             from app.services.transcription import transcribe_from_url
@@ -171,7 +176,7 @@ async def transcribe_media(ctx, job_id: str) -> dict:
         )
         return {"ok": True, "chars": result.get("chars")}
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
+        msg = _safe_err(exc)
         if msg == "Отменено" or job_svc.is_cancelled(db, jid):
             job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
             return {"ok": False, "cancelled": True}
@@ -221,12 +226,12 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
         settings = get_settings()
 
         def on_progress(pct: int, label: str) -> None:
-            if job_svc.is_cancelled(db, jid):
+            if job_svc.is_cancelled_isolated(jid):
                 return
-            job_svc.update_job(db, jid, progress_pct=pct, progress_label=label)
+            job_svc.update_job_isolated(jid, progress_pct=pct, progress_label=label)
 
         def should_cancel() -> bool:
-            return job_svc.is_cancelled(db, jid)
+            return job_svc.is_cancelled_isolated(jid)
 
         def _run():
             result = transcribe_from_url(
@@ -279,7 +284,7 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
         )
         return {"ok": True, "candidate_id": str(candidate.id), "ai_score": ev.get("ai_score")}
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
+        msg = _safe_err(exc)
         if msg == "Отменено" or job_svc.is_cancelled(db, jid):
             job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
             return {"ok": False, "cancelled": True}
@@ -374,15 +379,15 @@ async def hh_cold_search(ctx, job_id: str) -> dict:
         if job_svc.is_cancelled(db, jid):
             return {"ok": False, "cancelled": True}
 
-        def _search():
-            client = HhClient(settings)
+        def _search(hh_client: HhClient):
             return search_resume_items_from_preset(
-                client,
+                hh_client,
                 preset,
                 max_items=max_search,
             )
 
-        hits = await asyncio.to_thread(_search)
+        client = HhClient(settings)
+        hits = await asyncio.to_thread(_search, client)
 
         from app.services.hh_prefilter import select_for_evaluation
         from app.services.hh_seen import excluded_map, mark_ai_low_scores, reason_label
@@ -428,7 +433,6 @@ async def hh_cold_search(ctx, job_id: str) -> dict:
         profile = extract_profile_text(vacancy.documents)
         results: list[dict] = []
 
-        client = HhClient(settings)
         for idx, hit in enumerate(to_eval):
             if job_svc.is_cancelled(db, jid):
                 job_svc.update_job(db, jid, progress_label="Отменено")
@@ -485,8 +489,11 @@ async def hh_cold_search(ctx, job_id: str) -> dict:
                 entry["office_fit"] = ev.get("office_fit")
                 entry["commute_ok"] = ev.get("commute_ok")
             except Exception as exc:  # noqa: BLE001
-                entry["error"] = str(exc)
+                entry["error"] = _safe_err(exc)
             results.append(entry)
+            # Soft rate-limit between HH get_resume + AI evals (audit Q9)
+            if idx + 1 < len(to_eval):
+                await asyncio.sleep(0.4)
 
         for hit in not_eval:
             card = resume_card_summary(hit)
@@ -595,7 +602,7 @@ async def hh_cold_search(ctx, job_id: str) -> dict:
             "debrief": debrief,
         }
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
+        msg = _safe_err(exc)
         if job_svc.is_cancelled(db, jid):
             job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
             return {"ok": False, "cancelled": True}
@@ -670,7 +677,7 @@ async def yandex_disk_sync(ctx, job_id: str) -> dict:
             jid,
             status="failed",
             progress_label="Ошибка синхронизации Диска",
-            error=str(exc),
+            error=_safe_err(exc),
         )
         raise
     finally:
@@ -720,7 +727,7 @@ async def disk_inbox_router(ctx, job_id: str) -> dict:
             jid,
             status="failed",
             progress_label="Ошибка inbox-роутинга",
-            error=str(exc),
+            error=_safe_err(exc),
         )
         raise
     finally:
@@ -952,7 +959,7 @@ async def vacancy_docs_from_materials(ctx, job_id: str) -> dict:
         )
         return {"ok": True, "vacancy_id": vacancy_id, "sources": sources_used}
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
+        msg = _safe_err(exc)
         if msg == "Отменено" or job_svc.is_cancelled(db, jid):
             job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
             return {"ok": False, "cancelled": True}

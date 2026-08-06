@@ -642,15 +642,52 @@ tr:last-child td {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem 1rem;
-  margin: 0 0 1rem;
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
   padding: 0.75rem 1rem;
-  border-radius: 10px;
-  border: 1px solid #93c5fd;
-  background: #eff6ff;
-  color: #1e3a8a;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.92rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn, #c45c26) 12%, var(--bg));
+}
+
+.cand-next-action {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent, #2a6f6a) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #2a6f6a) 10%, var(--bg));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.cand-next-action-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.cand-next-action-kicker {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cand-next-action-detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.cand-attention-list {
+  margin-bottom: 1.5rem;
 }
 
 .cand-remote-banner .btn {
@@ -2006,5 +2043,58 @@ details[open] > .doc-summary .doc-summary-main::before {
     margin-left: 0;
     width: 100%;
     text-align: center;
+  }
+}
+
+/* Route loading skeletons (audit Q10) */
+.page-loading {
+  max-width: 48rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.page-loading-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--accent-soft),
+    var(--accent),
+    var(--accent-soft)
+  );
+  background-size: 200% 100%;
+  animation: page-loading-slide 1.2s ease-in-out infinite;
+  margin-bottom: 1rem;
+}
+
+.skeleton-block {
+  height: 3.2rem;
+  border-radius: 0.55rem;
+  background: var(--accent-soft);
+  opacity: 0.55;
+  margin-bottom: 0.65rem;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-block-short {
+  width: 62%;
+}
+
+@keyframes page-loading-slide {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
   }
 }

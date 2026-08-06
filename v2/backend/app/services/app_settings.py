@@ -267,6 +267,36 @@ DEFAULT_FUNCTIONS: dict[str, Any] = {
     "hh_search_enabled": True,
 }
 
+# Who gets "new candidate" on send-to-chat: telegram and/or bitrix.
+DEFAULT_CLIENT_NOTIFY: dict[str, Any] = {
+    "channels": ["telegram"],  # subset of: telegram, bitrix
+}
+
+DEFAULT_BITRIX: dict[str, Any] = {
+    "enabled": False,
+    # Incoming webhook base, e.g. https://portal.bitrix24.ru/rest/1/xxxxx/
+    "incoming_webhook_url": "",
+    # Public HTTPS base of this API (no trailing slash), for decision links in task text.
+    # e.g. https://api.example.com or https://xxxx.ngrok-free.app
+    "public_api_base": "",
+    # HMAC secret for decide links (auto-generated on first use / save).
+    "decide_secret": "",
+    # Token from Bitrix outgoing webhook (auth.application_token) — optional UF fallback.
+    "outgoing_webhook_token": "",
+    # Default Bitrix user id for task RESPONSIBLE_ID.
+    "default_responsible_id": "",
+    # Optional UF fallback (often unavailable on cloud incoming webhooks).
+    "uf_status_field": "",
+    "uf_comment_field": "",
+    "status_enum": {
+        "ready": "",
+        "think": "",
+        "reject": "",
+        "offer": "",
+    },
+    "task_deadline_hours": 24,
+}
+
 
 def get_functions() -> dict[str, Any]:
     raw = _load().get("functions")
@@ -293,10 +323,140 @@ def set_functions(patch: dict[str, Any]) -> dict[str, Any]:
     return cur
 
 
+_ALLOWED_NOTIFY_CHANNELS = frozenset({"telegram", "bitrix"})
+
+
+def client_notify_has(channel: str) -> bool:
+    """True if channel is enabled for send-to-chat / client-facing Telegram ops."""
+    ch = str(channel or "").strip()
+    if ch not in _ALLOWED_NOTIFY_CHANNELS:
+        return False
+    return ch in (get_client_notify().get("channels") or [])
+
+
+def get_client_notify() -> dict[str, Any]:
+    raw = _load().get("client_notify")
+    base = json.loads(json.dumps(DEFAULT_CLIENT_NOTIFY))
+    if not isinstance(raw, dict):
+        return base
+    channels = raw.get("channels")
+    if isinstance(channels, list):
+        cleaned = [str(c).strip() for c in channels if str(c).strip() in _ALLOWED_NOTIFY_CHANNELS]
+        if cleaned:
+            base["channels"] = cleaned
+    return base
+
+
+def set_client_notify(patch: dict[str, Any]) -> dict[str, Any]:
+    data = _load()
+    cur = get_client_notify()
+    if isinstance(patch, dict) and "channels" in patch and isinstance(patch.get("channels"), list):
+        cleaned = [
+            str(c).strip()
+            for c in (patch.get("channels") or [])
+            if str(c).strip() in _ALLOWED_NOTIFY_CHANNELS
+        ]
+        if cleaned:
+            cur["channels"] = cleaned
+        else:
+            cur["channels"] = list(DEFAULT_CLIENT_NOTIFY["channels"])
+    data["client_notify"] = cur
+    _save(data)
+    return cur
+
+
+def get_bitrix() -> dict[str, Any]:
+    raw = _load().get("bitrix")
+    base = json.loads(json.dumps(DEFAULT_BITRIX))
+    if not isinstance(raw, dict):
+        return base
+    if "enabled" in raw:
+        base["enabled"] = bool(raw.get("enabled"))
+    for key in (
+        "incoming_webhook_url",
+        "public_api_base",
+        "decide_secret",
+        "outgoing_webhook_token",
+        "default_responsible_id",
+        "uf_status_field",
+        "uf_comment_field",
+    ):
+        if key in raw and raw.get(key) is not None:
+            base[key] = str(raw.get(key) or "").strip()
+    if "task_deadline_hours" in raw:
+        try:
+            hours = int(raw.get("task_deadline_hours") or 24)
+            base["task_deadline_hours"] = max(1, min(hours, 24 * 14))
+        except (TypeError, ValueError):
+            pass
+    enum = raw.get("status_enum")
+    if isinstance(enum, dict):
+        for sk in ("ready", "think", "reject", "offer"):
+            if sk in enum and enum.get(sk) is not None:
+                base["status_enum"][sk] = str(enum.get(sk) or "").strip()
+    return base
+
+
+def set_bitrix(patch: dict[str, Any]) -> dict[str, Any]:
+    data = _load()
+    cur = get_bitrix()
+    if not isinstance(patch, dict):
+        return cur
+    if "enabled" in patch:
+        cur["enabled"] = bool(patch.get("enabled"))
+    for key in (
+        "incoming_webhook_url",
+        "public_api_base",
+        "outgoing_webhook_token",
+        "default_responsible_id",
+        "uf_status_field",
+        "uf_comment_field",
+    ):
+        if key in patch:
+            cur[key] = str(patch.get(key) or "").strip()
+    # decide_secret: only set if explicitly provided non-empty (do not wipe via UI).
+    if "decide_secret" in patch and str(patch.get("decide_secret") or "").strip():
+        cur["decide_secret"] = str(patch.get("decide_secret") or "").strip()
+    if "task_deadline_hours" in patch:
+        try:
+            hours = int(patch.get("task_deadline_hours") or 24)
+            cur["task_deadline_hours"] = max(1, min(hours, 24 * 14))
+        except (TypeError, ValueError):
+            pass
+    if isinstance(patch.get("status_enum"), dict):
+        for sk in ("ready", "think", "reject", "offer"):
+            if sk in patch["status_enum"]:
+                cur["status_enum"][sk] = str(patch["status_enum"].get(sk) or "").strip()
+    # Auto-create decide_secret once when enabling Bitrix / saving with empty secret.
+    if not str(cur.get("decide_secret") or "").strip():
+        import secrets as _secrets
+
+        cur["decide_secret"] = _secrets.token_urlsafe(32)
+    data["bitrix"] = cur
+    _save(data)
+    return cur
+
+
+def resolve_bitrix_responsible_id(vacancy_payload: dict | None = None) -> str:
+    """Vacancy override (payload.bitrix_responsible_id) → global default."""
+    vac = vacancy_payload if isinstance(vacancy_payload, dict) else {}
+    override = str(vac.get("bitrix_responsible_id") or "").strip()
+    if override:
+        return override
+    return str(get_bitrix().get("default_responsible_id") or "").strip()
+
+
 def get_app_settings() -> dict:
     from app.services.yandex_disk_oauth import get_disk_paths
 
     disk_paths = get_disk_paths()
+    bitrix = dict(get_bitrix())
+    # Never expose HMAC secret to the browser settings UI.
+    if bitrix.get("decide_secret"):
+        bitrix["decide_secret_set"] = True
+        bitrix["decide_secret"] = ""
+    else:
+        bitrix["decide_secret_set"] = False
     return {
         "default_warranty_months": get_default_warranty_months(),
         "ai_model": get_ai_model_override(),
@@ -304,6 +464,8 @@ def get_app_settings() -> dict:
         "provider_links": get_provider_links(),
         "candidate_comms": get_candidate_comms(),
         "functions": get_functions(),
+        "client_notify": get_client_notify(),
+        "bitrix": bitrix,
         "yandex_disk_root": disk_paths["root"],
         "yandex_disk_inbox": disk_paths["inbox_name"],
         "path": str(_settings_path()),

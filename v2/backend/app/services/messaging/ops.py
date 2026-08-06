@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
+from app.services.app_settings import client_notify_has
 from app.services.messaging.inbound import find_post_for_candidate, refresh_card_message
 from app.services.messaging.reminders import (
     build_manual_decide_reminder,
@@ -92,6 +93,8 @@ def refresh_candidate_telegram(
     changes: list[str] | None = None,
     before_payload: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
+    if not client_notify_has("telegram"):
+        return True, ""
     post = primary_post(db, candidate)
     if not post:
         return False, "Нет карточки в чате"
@@ -136,6 +139,8 @@ def refresh_candidate_telegram(
 def send_manual_reminder(
     db: Session, candidate: models.Candidate, *, kind: str = "evaluate"
 ) -> tuple[bool, str]:
+    if not client_notify_has("telegram"):
+        return False, "Канал Telegram отключён в настройках"
     vac = db.get(models.Vacancy, candidate.vacancy_id)
     if not vac or not (vac.chat_id or "").strip():
         return False, "Нет chat_id у вакансии"
@@ -186,6 +191,8 @@ def send_extra_material(
     title: str,
     url: str,
 ) -> tuple[bool, str]:
+    if not client_notify_has("telegram"):
+        return False, "Канал Telegram отключён в настройках"
     vac = db.get(models.Vacancy, candidate.vacancy_id)
     if not vac or not (vac.chat_id or "").strip():
         return False, "Нет chat_id"

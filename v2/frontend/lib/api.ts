@@ -57,6 +57,7 @@ export type CandidateListItem = {
   vacancy_title?: string | null;
   client_name?: string | null;
   last_contact_at?: string | null;
+  attention_reason?: string | null;
 };
 
 export type CandidateDetail = CandidateListItem & {

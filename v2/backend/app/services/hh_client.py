@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -11,6 +12,10 @@ import requests
 from app.core.config import Settings
 
 HH_TOKEN_URL = "https://hh.ru/oauth/token"
+MAX_429_RETRIES = 5
+MAX_429_WAIT_S = 90.0
+
+logger = logging.getLogger(__name__)
 
 
 class HhApiError(RuntimeError):
@@ -31,14 +36,31 @@ def _oauth_error_value(body: str) -> str | None:
     return data.get("oauth_error")
 
 
+def _wait_seconds_for_429(resp: requests.Response, attempt: int) -> float:
+    """Prefer Retry-After (seconds); else exponential 1,2,4,… capped."""
+    raw = (resp.headers.get("Retry-After") or resp.headers.get("retry-after") or "").strip()
+    if raw:
+        try:
+            return min(MAX_429_WAIT_S, max(1.0, float(raw)))
+        except ValueError:
+            pass
+    return min(MAX_429_WAIT_S, float(2**attempt))
+
+
 def refresh_hh_access_token(settings: Settings) -> str:
-    refresh = (settings.hh_refresh_token or "").strip()
+    from app.services.hh_tokens import (
+        apply_tokens_to_settings,
+        get_hh_refresh_token,
+        save_hh_tokens,
+    )
+
+    refresh = get_hh_refresh_token(settings)
     client_id = (settings.hh_client_id or "").strip()
     client_secret = (settings.hh_client_secret or "").strip()
     if not refresh:
         raise HhApiError(
-            "HH access token истёк. Задайте HH_REFRESH_TOKEN или получите новую пару "
-            "через scripts/hh_oauth.py"
+            "HH access token истёк. Задайте HH_REFRESH_TOKEN / data/hh_oauth.json "
+            "или получите новую пару через scripts/hh_oauth.py"
         )
     if not client_id or not client_secret:
         raise HhApiError(
@@ -62,20 +84,33 @@ def refresh_hh_access_token(settings: Settings) -> str:
             status=resp.status_code,
             body=resp.text[:1000],
         )
-    access = (resp.json().get("access_token") or "").strip()
+    payload = resp.json()
+    access = (payload.get("access_token") or "").strip()
     if not access:
         raise HhApiError("HH refresh: в ответе нет access_token")
+    new_refresh = (payload.get("refresh_token") or "").strip() or None
+    try:
+        save_hh_tokens(access_token=access, refresh_token=new_refresh)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "HH refresh OK but failed to persist hh_oauth.json"
+        )
+    apply_tokens_to_settings(settings, access_token=access, refresh_token=new_refresh)
     return access
 
 
 class HhClient:
     def __init__(self, settings: Settings):
+        from app.services.hh_tokens import get_hh_access_token
+
         self.settings = settings
-        token = (settings.hh_access_token or "").strip()
+        token = get_hh_access_token(settings)
         if not token:
             raise HhApiError(
                 "Не задан HH_ACCESS_TOKEN (токен менеджера работодателя). "
-                "Добавьте в корневой .env или v2/.env."
+                "Добавьте в .env или выполните scripts/hh_oauth.py → data/hh_oauth.json."
             )
         self.base = (settings.hh_api_base or "https://api.hh.ru").rstrip("/")
         self.session = requests.Session()
@@ -96,19 +131,40 @@ class HhClient:
         path: str,
         *,
         params: dict | list[tuple[str, Any]] | None = None,
-        _retried: bool = False,
+        _oauth_retried: bool = False,
+        _rate_attempt: int = 0,
     ) -> Any:
         url = f"{self.base}{path}"
         try:
             resp = self.session.get(url, params=params if params is not None else {}, timeout=60)
         except requests.RequestException as exc:
             raise HhApiError(f"HH сеть: {exc}") from exc
+        if resp.status_code == 429 and _rate_attempt < MAX_429_RETRIES:
+            wait = _wait_seconds_for_429(resp, _rate_attempt)
+            logger.warning(
+                "HH 429 %s — sleep %.1fs (attempt %s/%s)",
+                path,
+                wait,
+                _rate_attempt + 1,
+                MAX_429_RETRIES,
+            )
+            time.sleep(wait)
+            return self._get(
+                path,
+                params=params,
+                _oauth_retried=_oauth_retried,
+                _rate_attempt=_rate_attempt + 1,
+            )
         if resp.status_code >= 400:
             oauth_err = _oauth_error_value(resp.text[:1000])
-            if not _retried and resp.status_code == 403 and oauth_err == "token_expired":
+            if (
+                not _oauth_retried
+                and resp.status_code == 403
+                and oauth_err == "token_expired"
+            ):
                 new_token = refresh_hh_access_token(self.settings)
                 self._set_access_token(new_token)
-                return self._get(path, params=params, _retried=True)
+                return self._get(path, params=params, _oauth_retried=True, _rate_attempt=0)
             raise HhApiError(
                 f"HH API {resp.status_code}: {resp.text[:400]}",
                 status=resp.status_code,

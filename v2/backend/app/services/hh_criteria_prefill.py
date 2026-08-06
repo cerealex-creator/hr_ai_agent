@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import re
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.db import models
+from app.services.ai_json import chat_json
 from app.services.hh_search_criteria import (
     AREA_PRESETS,
     ensure_portrait,
@@ -53,25 +51,6 @@ PREFILL_SYSTEM = """Ты — старший рекрутер. По матери�
 - keywords — конкретные названия ролей, не общие слова вроде «менеджер».
 - period_days: обычно 7–30 (свежие резюме); null только если явно нужна вся база.
 """
-
-
-def _parse_json(content: str) -> dict[str, Any]:
-    text = (content or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                return data if isinstance(data, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
 
 
 def transcript_from_documents(documents: dict | None) -> str:
@@ -244,10 +223,6 @@ def prefill_criteria_with_ai(
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Returns {criteria, sources, suggestion}."""
-    api_key = (settings.routerai_api_key or settings.ai_api_key or "").strip()
-    if not api_key:
-        raise RuntimeError("Нет ключа ИИ (ROUTERAI_API_KEY) для prefill критериев")
-
     context, sources = build_vacancy_context(vacancy, db)
     if len(context.strip()) < 40:
         raise RuntimeError(
@@ -256,30 +231,17 @@ def prefill_criteria_with_ai(
 
     from app.services.app_settings import resolve_ai_model_name
 
-    base_url = (settings.ai_base_url or "https://routerai.ru/api/v1").rstrip("/")
     model = resolve_ai_model_name(settings.ai_model_name)
-    resp = requests.post(
-        f"{base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "temperature": 0.2,
-            "max_tokens": 2000,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": PREFILL_SYSTEM + "\n\n/no_think\nОтвечай сразу валидным JSON.",
-                },
-                {"role": "user", "content": context},
-            ],
-        },
-        timeout=120,
+    ai = chat_json(
+        settings,
+        system=PREFILL_SYSTEM,
+        user=context,
+        temperature=0.2,
+        max_tokens=2000,
+        db=db,
+        task="hh_criteria_prefill",
     )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"ИИ prefill {resp.status_code}: {resp.text[:300]}")
-    content = (((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
-    ai = _parse_json(content)
-    if not ai:
+    if not isinstance(ai, dict) or not ai:
         raise RuntimeError("ИИ не вернул валидный JSON для критериев")
 
     base = normalize_criteria(existing or {})
