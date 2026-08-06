@@ -107,7 +107,7 @@ M6 split endpoints + M9 Pydantic — **done**.
 | **D2** | Tenancy + Client zone | **done** | Жёсткая изоляция данных по `org_id`; web-зона заказчика (token URL). |
 | **D3** | Bitrix + Telegram flag | **done** | Bitrix + web default; provider registry; TG gated; Bitrix test task. |
 | **D4** | SSE jobs widget | **done** | Same-origin rewrite; SSE poll DB; topbar badge + toast. |
-| **D5** | Polish / deploy | **brief next** | Env, seed, CORS, hardening Timeweb, UX пилота. |
+| **D5** | Polish / deploy | **done** | Fail-fast prod; compose.prod + nginx; DEPLOY.md; empty DB + bootstrap. |
 
 См. детальный бриф текущего этапа в конце файла / в чате.
 
@@ -344,3 +344,19 @@ python -m app.scripts.normalize_jsonb
 - Complete/fail → toast; `/c/*` и login без SSE.
 
 **Файлы:** `routes/events.py`, `router.py`, `next.config.js`, `lib/api.ts`, `JobsLive.tsx`, `AppShell.tsx`, `layout.tsx`, `globals.css`, `docker-compose.yml`
+
+### D5 — Polish / deploy (**done**)
+
+**Решения (одобрено):** один домен + Next rewrite; compose.prod + nginx; пустая БД + bootstrap owner; пример nginx TLS в репо.
+
+**Сделано:**
+- Fail-fast: `APP_ENV=production` → сильный `JWT_SECRET` + `AUTH_COOKIE_SECURE`.
+- `docker-compose.prod.yml`, `deploy/nginx.conf`, `.env.production.example`, `DEPLOY.md`.
+- Login hint «Нет аккаунта?…»; API Dockerfile → `alembic upgrade head`.
+
+**Acceptance:**
+- С `APP_ENV=production` и слабым JWT API не стартует.
+- По runbook: compose.prod + TLS → login owner (bootstrap).
+- Telegram outbound off в prod-примере; Bitrix+web — каналы пилота.
+
+**Файлы:** `core/startup.py`, `main.py`, `Dockerfile`, `docker-compose.prod.yml`, `deploy/*`, `DEPLOY.md`, `.env.production.example`, `login/page.tsx`

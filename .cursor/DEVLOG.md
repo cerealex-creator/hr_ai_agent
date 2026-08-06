@@ -5,6 +5,43 @@
 
 ---
 
+## 2026-08-06 — v2: D5 Polish / deploy
+
+**Тип:** `feature`
+
+**Сделано:**
+- Production fail-fast (JWT_SECRET + AUTH_COOKIE_SECURE).
+- `docker-compose.prod.yml` + `deploy/nginx.conf` (TLS, SSE buffering off).
+- `DEPLOY.md`, `.env.production.example`; login hint; alembic on API boot.
+
+**Файлы:** `core/startup.py`, `main.py`, `Dockerfile`, `docker-compose.prod.yml`, `deploy/*`, `DEPLOY.md`, `.env.production.example`, `login/page.tsx`, `AUDIT.md`
+
+**Данные / конфиг:** prod env keys в `.env.production.example` (не коммитить `.env.prod`)
+
+**Git:** незакоммичено на `feature/v2` (после `f7c229b`)
+
+**Следующий шаг:**
+- Заполнить `.env.prod` + сертификаты; `compose … up`; или коммит D5.
+
+---
+
+## 2026-08-06 — v2: commit D1–D4 + бриф D5
+
+**Тип:** `git` / `docs`
+
+**Сделано:**
+- Commit `f7c229b` — D1 Auth, D2 Tenancy/client zone, D3 Bitrix providers, D4 SSE jobs.
+- Бриф D5 Polish/deploy в `AUDIT.md` (ждёт одобрения).
+
+**Файлы:** весь v2 D1–D4; `v2/AUDIT.md`, `.cursor/DEVLOG.md`
+
+**Git:** `f7c229b` на `feature/v2` (не запушено)
+
+**Следующий шаг:**
+- Одобрение D5 + ответы по неоднозначностям → код.
+
+---
+
 ## 2026-08-06 — v2: demo job stuck (worker + tenancy)
 
 **Тип:** `fix`

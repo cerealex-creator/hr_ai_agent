@@ -6,7 +6,8 @@
 ## План реализации (актуально)
 
 Пилот Timeweb (2–3 пользователя): **Bitrix + Web Client Zone** для заказчика; Telegram — optional (flag).  
-Порядок: см. [`AUDIT.md`](./AUDIT.md) Волна D — D1–D4 **done** → **D5** Polish/deploy.
+Порядок: см. [`AUDIT.md`](./AUDIT.md) Волна D — D1–D5 **done**.  
+Деплой Timeweb: [`DEPLOY.md`](./DEPLOY.md) (`docker-compose.prod.yml` + `deploy/nginx.conf`).
 
 Auth: JWT httpOnly cookies; создать пользователя:
 `cd backend && .venv/bin/python -m app.scripts.create_user --email you@example.com --password '…' --role platform_owner`

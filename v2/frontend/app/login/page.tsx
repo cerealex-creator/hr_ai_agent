@@ -33,6 +33,9 @@ function LoginForm() {
         <p className="login-kicker">HR AI Agent</p>
         <h1 className="login-title">Вход</h1>
         <p className="muted login-lead">Доступ только для приглашённых пользователей.</p>
+        <p className="muted hh-micro" style={{ marginTop: "-0.35rem" }}>
+          Нет аккаунта? Обратитесь к администратору.
+        </p>
         <label className="login-label">
           Email
           <input

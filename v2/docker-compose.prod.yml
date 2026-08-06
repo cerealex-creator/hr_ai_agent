@@ -1,0 +1,129 @@
+# Production compose for Timeweb pilot (D5).
+# One public hostname → nginx (TLS) → Next.js web → rewrite /api/v1/* → api.
+#
+# Usage:
+#   cp .env.production.example .env.prod   # fill secrets
+#   # place TLS files in deploy/certs/ (fullchain.pem + privkey.pem)
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Do NOT expose Postgres/Redis/API on the public internet (no host ports).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hr-v2-prod-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hr_v2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hr_v2}
+    volumes:
+      - hr_v2_prod_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hr_v2} -d ${POSTGRES_DB:-hr_v2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+  redis:
+    image: redis:7-alpine
+    container_name: hr-v2-prod-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+  api:
+    build:
+      context: ./backend
+    container_name: hr-v2-prod-api
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://${PUBLIC_HOST}}
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
+      MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
+      MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
+      MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+  worker:
+    build:
+      context: ./backend
+    container_name: hr-v2-prod-worker
+    command: ["arq", "app.workers.settings.WorkerSettings"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
+      MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
+      MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Browser uses same-origin /api/v1 (empty base). Rewrite target is internal API.
+        NEXT_PUBLIC_API_URL: ""
+        API_REWRITE_URL: http://api:8000
+    container_name: hr-v2-prod-web
+    environment:
+      API_REWRITE_URL: http://api:8000
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: hr-v2-prod-nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+    networks:
+      - hr_v2_prod
+
+volumes:
+  hr_v2_prod_pgdata:
+
+networks:
+  hr_v2_prod:
+    name: hr_v2_prod

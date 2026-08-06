@@ -38,10 +38,13 @@ def _bitrix_tick_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from app.core.startup import validate_startup_settings
     from app.db.base import Base
     from app.db import models  # noqa: F401
     from app.db.session import SessionLocal, engine
     from app.services.clients_write import migrate_legacy_clients
+
+    validate_startup_settings(get_settings())
 
     # Schema: use `alembic upgrade head` (M1 baseline). Optional create_all
     # remains as a safety net for local bootstraps that skipped Alembic.
