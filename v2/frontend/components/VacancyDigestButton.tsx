@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ActionBanner } from "@/components/ActionBanner";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Props = {
   vacancyId: number;
@@ -19,7 +19,7 @@ export function VacancyDigestButton({ vacancyId, hasChatId }: Props) {
     setMsg(null);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/digest-to-chat`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/digest-to-chat`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));

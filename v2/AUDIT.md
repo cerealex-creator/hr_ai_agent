@@ -71,7 +71,7 @@ AI silent `{}`; HH 429/token; Telegram idempotency; SpeechKit bound; unify parse
 | Q11 | Санитизация ПДн в логах | **done** |
 | Q12 | Truncation входа ИИ ≤ 12 000 | **done** |
 
-*Волны A–B закрыты (включая M9). M6 (split endpoints) закрыт. Следующее: Волна D по `ARCHITECTURE_TARGET.md` (auth, messaging multi-provider, SSE jobs, client-zone) или polish.*
+*Волны A–C закрыты. Следующее: **Волна D (пилот Timeweb, 2–3 пользователя)** — порядок D1→D5 ниже.*
 
 ### Волна B — Среднесрочные
 
@@ -89,8 +89,27 @@ AI silent `{}`; HH 429/token; Telegram idempotency; SpeechKit bound; unify parse
 | M9 | Pydantic schemas tighten | **done** |
 | M10 | S3 cleanup after STT | **done** |
 
-### Волна C / D
-Alembic discipline, auth/tenancy, messaging gateway, SSE jobs widget, client-zone — по `ARCHITECTURE_TARGET.md`.
+### Волна C
+M6 split endpoints + M9 Pydantic — **done**.
+
+### Волна D — Пилот (Timeweb, 2–3 пользователя)
+
+**Контекст пилота (зафиксировано 2026-08-06):**
+- Цель: деплой → обратная связь / отзыв → возможная продажа в компанию заказчика.
+- Каналы для заказчика: **Bitrix + Web Client Zone**.
+- Telegram: код остаётся; для клиентов **feature flag off**; опционально только внутренние уведомления рекрутеру.
+- Формат работы: **Бриф → Одобрение → Код** (без кода до «одобрить»).
+- RLS Postgres **не** в D1; жёсткая изоляция по `org_id` — в **D2**.
+
+| ID | Этап | Статус | Суть |
+|----|------|--------|------|
+| **D1** | Auth | **done** | JWT + таблицы `users` / memberships; защита API; login UI. Без RLS. |
+| **D2** | Tenancy + Client zone | **done** | Жёсткая изоляция данных по `org_id`; web-зона заказчика (token URL). |
+| **D3** | Bitrix + Telegram flag | **done** | Bitrix + web default; provider registry; TG gated; Bitrix test task. |
+| **D4** | SSE jobs widget | **done** | Same-origin rewrite; SSE poll DB; topbar badge + toast. |
+| **D5** | Polish / deploy | **brief next** | Env, seed, CORS, hardening Timeweb, UX пилота. |
+
+См. детальный бриф текущего этапа в конце файла / в чате.
 
 ---
 
@@ -215,3 +234,113 @@ python -m app.scripts.normalize_jsonb
 **Что:** монолит `endpoints.py` (~3k) → `common.py` + `routes/{vacancies,hh,candidates,messaging,jobs,…}` + `router.py`; `endpoints.py` — тонкий re-export.  
 **Файлы:** `app/api/v1/common.py`, `router.py`, `routes/*.py`, `endpoints.py`  
 **Проверка:** `app.openapi()` содержит `/api/v1/health`, vacancies, hh-*, candidates (~98 paths).
+
+---
+
+## Волна D — брифы
+
+### D1 — Auth (**done**)
+
+**Проблема:** API/UI без входа — нельзя безопасно отдать пилот 2–3 людям.
+
+**Сделано:**
+- Таблицы `users`, `organization_members`, `refresh_tokens` + Alembic `a1b2c3d4e5f6`.
+- JWT access (cookie `hr_access`) + refresh (`hr_refresh`, rotate); bcrypt passwords.
+- `POST /auth/login|refresh|logout`, `GET /auth/me`; protected v1 router; public: health, auth login/refresh/logout, integrations webhook.
+- `AUTH_DISABLED` only when `APP_ENV!=production`; bootstrap via `AUTH_BOOTSTRAP_*` or `python -m app.scripts.create_user`.
+- Frontend: `/login`, `AuthGate`, `apiFetch` + credentials + SSR cookie forward, logout in shell.
+
+**Файлы:** `core/auth.py`, `services/users.py`, `api/v1/routes/auth.py`, `router.py`, `models.py`, `alembic/versions/a1b2c3d4e5f6_*`, frontend `lib/api.ts`, `AuthGate`, `login/page.tsx`
+
+**Не в D1:** RLS, org data filtering (→ D2), client-zone invites.
+
+### D2 — Tenancy + Client zone (бриф, код после одобрения)
+
+**Проблема:** после D1 любой залогиненный HR видит **все** clients/vacancies/candidates в БД. Для пилота с несколькими компаниями (и позже продажи) утечка между организациями недопустима. Параллельно нужна **веб-зона заказчика** (без Telegram на Timeweb).
+
+**Требования (два слоя):**
+
+**Слой A — изоляция организации (`org_id`) — обязательно**
+- Все list/get/write по `clients`, `vacancies`, `candidates`, `jobs` (где есть client/vacancy), `document_generations`, messaging channels, inbox, HH shortlist/seen — только сущности своей org.
+- Цепочка: `Candidate → Vacancy.client_id → Client.organization_id == AuthUser.org_id` (аналогично для vacancy-less? не допускать orphan вне org).
+- Create client/vacancy всегда с `organization_id` текущего пользователя.
+- IDOR: запрос чужого `vacancy_id` / `candidate_id` → **404** (не 403), чтобы не светить существование.
+- `platform_owner` и `hr_recruiter` в D2: **вся org** (урезание recruiter по назначенным вакансиям — опционально позже, не блокер пилота).
+- Без Postgres RLS (как договорились); фильтры в сервисах + единый helper `assert_org_*`.
+
+**Слой B — Client zone (веб для заказчика)**
+- Роль `hiring_manager` (или доступ по invite-токену без полноценного HR-логина — см. неоднозначности).
+- UI: `/client-zone` (или `/c/[token]`) — список кандидатов «на стороне клиента» по своему `client_id` (+ дочерние departments?), действия: approve / reject / comment / meeting (паритет с Bitrix decide, без HR-полей: телефоны HR-only).
+- Уже есть `Client.client_zone_token` — использовать или заменить на `invitations` / `client_memberships`.
+- HR в настройках компании: «Ссылка / сброс токена клиентской зоны».
+- Заказчик **не** видит: настройки, HH, jobs, чужих клиентов org, ПДн сверх необходимого для решения.
+
+**Неоднозначности:**
+1. Вход заказчика: **A)** magic link / пароль + `client_memberships`, **B)** только секретный URL `?token=` / `/c/{token}` без отдельного user (быстрее к пилоту), **C)** оба.
+2. Scope зоны: один token на **компанию (root client)** или на каждый department?
+3. Действия в зоне в D2: полный паритет Bitrix decide или минимум approve/reject/comment?
+4. `hr_recruiter` видит всю org или только назначенные vacancies? (рекомендация пилота: **вся org**, как owner).
+5. Jobs без `client_id`: показывать только jobs, связанные с vacancy своей org; demo jobs — только своей сессии/org metadata?
+
+**Риски:**
+- Пропустить один list-endpoint без фильтра → утечка.
+- Token в URL утекает через Referer/логи — для B нужен httpOnly session после первого захода или короткий TTL.
+- Смешать «клиент» (company) и «organization» в коде/API.
+- Client zone write без тех же stage-machine правил, что Bitrix → рассинхрон статусов.
+
+**План (после «одобрить»):**
+1. `tenancy.py`: helpers resolve/filter/assert org; пройти list/get/write routes.
+2. Миграция при необходимости: `client_memberships` / invitations; роль `hiring_manager`.
+3. API client-zone (read candidates + apply decision) + UI `/client-zone` или `/c/[token]`.
+4. HR: показать/ротировать `client_zone_token` в карточке компании.
+5. Не трогаем: RLS, SSE (D4), Telegram flags (D3), полный multi-provider messaging.
+
+**Acceptance:**
+- User org1 не получает clients/vacancies org2 (пустой list / 404 по id).
+- Client zone token org1 не открывает кандидатов org2 / другого client.
+- Health и auth без регрессии; Bitrix webhook по-прежнему public.
+
+### D2 — Tenancy + Client zone (**done**)
+
+**Решения:** token URL (без логина заказчика); token на root-компанию (+ departments); действия ready/think/reject + встреча; recruiter = вся org; jobs через vacancy→org.
+
+**Сделано:**
+- `services/tenancy.py` + request ContextVar middleware; `get_*_or_404` на routes.
+- Org filter: vacancies/clients/candidates/search/stats/history/jobs/messaging channels.
+- Public `GET/POST /api/v1/client-zone/{token}…`; UI `/c/[token]`; HR rotate в CompanyEditor.
+- AuthGate пропускает `/c/*`.
+
+**Файлы:** `tenancy.py`, `client_zone.py`, `routes/client_zone.py`, `main.py` middleware, routes/*, `CompanyEditor`, `app/c/[token]/page.tsx`
+
+### D3 — Bitrix + Telegram flag (**done**)
+
+**Решения (одобрено):** UI из реестра провайдеров (TG серый если blocked + WhatsApp/Max stubs); HR-notify только при outbound+`TELEGRAM_HR_USER_ID`; migrate channels → `["bitrix","web"]`; smoke test Bitrix.
+
+**Сделано:**
+- `MessagingProvider` + `providers/registry.py` (bitrix/web/telegram/whatsapp/max).
+- Default + lifespan migrate `client_notify` → bitrix+web; gateway dispatch через registry.
+- Settings UI: provider tiles, checklist, «Отправить тестовую задачу».
+- HR notify gated via `telegram_hr_notify_allowed()`.
+
+**Acceptance:**
+- Свежий settings: заказчику по умолчанию Bitrix+web, не Telegram.
+- `client_notify` без telegram → send-to-chat не дергает Telegram API.
+- Bitrix enabled + webhook → карточка/задача уходит; decide HTML жив.
+- Inbound/poller off на Timeweb без ошибок в логах.
+
+**Файлы:** `messaging/providers/*`, `gateway.py`, `app_settings.py`, `routes/settings.py`, `bitrix/outbound.py`, `frontend/.../bitrix/page.tsx`, `hr_notify.py`
+
+### D4 — SSE jobs widget (**done**)
+
+**Решения (одобрено):** Next rewrite same-origin; SSE poll Postgres ~1.5s; badge + toast; pollers не трогаем.
+
+**Сделано:**
+- `GET /api/v1/events/stream` — org-scoped jobs, snapshot / job.updated / ping, `X-Accel-Buffering: no`.
+- Next `rewrites` `/api/v1/*` → backend; browser `getApiBase()=""`.
+- `JobsLiveProvider` + topbar badge + toast; skip `/login` и `/c/*`.
+
+**Acceptance:**
+- Залогинен → SSE жив; demo job обновляет badge без `/jobs`.
+- Complete/fail → toast; `/c/*` и login без SSE.
+
+**Файлы:** `routes/events.py`, `router.py`, `next.config.js`, `lib/api.ts`, `JobsLive.tsx`, `AppShell.tsx`, `layout.tsx`, `globals.css`, `docker-compose.yml`

@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 def notify_hr_meeting_pending(db: Session, candidate: models.Candidate) -> bool:
     """Send HR a Telegram message to confirm the meeting. Returns True if sent."""
+    from app.services.messaging.providers.registry import telegram_hr_notify_allowed
+
+    if not telegram_hr_notify_allowed():
+        return False
     settings = get_settings()
     hr_chat = (settings.telegram_hr_user_id or "").strip()
     if not hr_chat:

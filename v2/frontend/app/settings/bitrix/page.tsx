@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type BitrixSettings = {
   enabled?: boolean;
@@ -11,6 +11,16 @@ type BitrixSettings = {
   public_api_base?: string;
   default_responsible_id?: string;
   task_deadline_hours?: number;
+  decide_secret_set?: boolean;
+};
+
+type MessagingProvider = {
+  id: string;
+  label: string;
+  kind: "active" | "upcoming" | string;
+  selectable: boolean;
+  unavailable_reason?: string | null;
+  description?: string;
 };
 
 type ClientNotify = {
@@ -20,6 +30,7 @@ type ClientNotify = {
 type AppSettings = {
   bitrix?: BitrixSettings;
   client_notify?: ClientNotify;
+  messaging_providers?: MessagingProvider[];
 };
 
 function detailMessage(data: unknown, fallback: string): string {
@@ -30,10 +41,21 @@ function detailMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
+function checklist(bx: BitrixSettings): { ok: boolean; label: string }[] {
+  return [
+    { ok: Boolean(bx.enabled), label: "Bitrix включён" },
+    { ok: Boolean((bx.incoming_webhook_url || "").trim()), label: "Incoming webhook URL" },
+    { ok: Boolean((bx.public_api_base || "").trim()), label: "Публичный URL API (для decide)" },
+    { ok: Boolean((bx.default_responsible_id || "").trim()), label: "Ответственный (user id)" },
+    { ok: Boolean(bx.decide_secret_set), label: "Секрет decide-ссылок (появится после сохранения)" },
+  ];
+}
+
 export default function BitrixSettingsPage() {
   const [data, setData] = useState<AppSettings | null>(null);
   const [bx, setBx] = useState<BitrixSettings>({});
-  const [channels, setChannels] = useState<string[]>(["telegram"]);
+  const [providers, setProviders] = useState<MessagingProvider[]>([]);
+  const [channels, setChannels] = useState<string[]>(["bitrix", "web"]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -42,12 +64,15 @@ export default function BitrixSettingsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/settings/app`, { cache: "no-store" });
         const d = (await res.json()) as AppSettings;
         if (cancelled) return;
         setData(d);
         setBx(d.bitrix || {});
-        setChannels(d.client_notify?.channels?.length ? d.client_notify.channels : ["telegram"]);
+        setProviders(d.messaging_providers || []);
+        setChannels(
+          d.client_notify?.channels?.length ? d.client_notify.channels : ["bitrix", "web"],
+        );
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Ошибка загрузки");
       }
@@ -57,7 +82,8 @@ export default function BitrixSettingsPage() {
     };
   }, []);
 
-  const toggleChannel = (ch: string) => {
+  const toggleChannel = (ch: string, selectable: boolean) => {
+    if (!selectable) return;
     setChannels((prev) => {
       if (prev.includes(ch)) {
         const next = prev.filter((x) => x !== ch);
@@ -72,7 +98,7 @@ export default function BitrixSettingsPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/settings/app`, {
+      const res = await apiFetch(`/api/v1/settings/app`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -91,7 +117,10 @@ export default function BitrixSettingsPage() {
       const app = next as AppSettings;
       setData(app);
       setBx(app.bitrix || {});
-      setChannels(app.client_notify?.channels?.length ? app.client_notify.channels : ["telegram"]);
+      setProviders(app.messaging_providers || []);
+      setChannels(
+        app.client_notify?.channels?.length ? app.client_notify.channels : ["bitrix", "web"],
+      );
       setMsg("Сохранено");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
@@ -100,15 +129,33 @@ export default function BitrixSettingsPage() {
     }
   }
 
+  async function sendTestTask() {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const res = await apiFetch(`/api/v1/settings/bitrix/test-task`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(detailMessage(body, `HTTP ${res.status}`));
+      setMsg(typeof body.message === "string" ? body.message : "Тестовая задача создана");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка теста");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const checks = checklist(bx);
+
   return (
     <AppShell variant="settings" activePath="/settings">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
-      <h1 className="page-title">Bitrix24</h1>
+      <h1 className="page-title">Каналы заказчика · Bitrix24</h1>
       <p className="muted">
-        Задача ответственному при «Отправить в чат». Решение заказчика — по ссылкам в описании задачи
-        (UF-поля на облаке недоступны через webhook).
+        Пилот: Bitrix + веб-зона. Telegram и другие мессенджеры — в реестре провайдеров (часть
+        недоступна из‑за блокировок / ещё в разработке).
       </p>
 
       {err ? <p className="warn">{err}</p> : null}
@@ -121,26 +168,52 @@ export default function BitrixSettingsPage() {
           <section className="card-edit">
             <h2>Каналы уведомления заказчика</h2>
             <p className="muted hh-micro">
-              Что вызывается кнопкой «Отправить в чат заказчика». Можно выбрать один или оба.
+              Список из реестра провайдеров. Серые пункты — витрина возможностей / недоступны сейчас.
             </p>
-            <label className="hh-field" style={{ marginTop: "0.75rem" }}>
-              <span className="hh-label">Telegram</span>
-              <input
-                type="checkbox"
-                checked={channels.includes("telegram")}
-                disabled={busy}
-                onChange={() => toggleChannel("telegram")}
-              />
-            </label>
-            <label className="hh-field">
-              <span className="hh-label">Bitrix24 (задача)</span>
-              <input
-                type="checkbox"
-                checked={channels.includes("bitrix")}
-                disabled={busy}
-                onChange={() => toggleChannel("bitrix")}
-              />
-            </label>
+            <div className="provider-grid" style={{ marginTop: "0.85rem" }}>
+              {providers.map((p) => {
+                const checked = channels.includes(p.id);
+                const disabled = busy || !p.selectable;
+                const title =
+                  p.unavailable_reason ||
+                  (p.kind === "upcoming" ? "Скоро · расширенная версия" : p.description || "");
+                return (
+                  <label
+                    key={p.id}
+                    className={`provider-tile${p.selectable ? "" : " provider-tile-disabled"}`}
+                    title={title}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked && p.selectable}
+                      disabled={disabled}
+                      onChange={() => toggleChannel(p.id, p.selectable)}
+                    />
+                    <span className="provider-tile-body">
+                      <span className="provider-tile-title">{p.label}</span>
+                      <span className="muted hh-micro">
+                        {p.description ||
+                          (p.kind === "upcoming" ? "Скоро" : p.unavailable_reason || "")}
+                      </span>
+                      {!p.selectable && p.unavailable_reason ? (
+                        <span className="provider-tile-warn">{p.unavailable_reason}</span>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="card-edit">
+            <h2>Чеклист пилота Bitrix</h2>
+            <ul className="cz-checklist">
+              {checks.map((c) => (
+                <li key={c.label} className={c.ok ? "ok" : "warn"}>
+                  {c.ok ? "✓" : "○"} {c.label}
+                </li>
+              ))}
+            </ul>
           </section>
 
           <section className="card-edit">
@@ -172,11 +245,8 @@ export default function BitrixSettingsPage() {
                 onChange={(e) => setBx({ ...bx, public_api_base: e.target.value })}
               />
               <p className="muted hh-micro">
-                Без слэша в конце. Из него собираются ссылки «Встреча / Подумать / Отказ / Оффер» в
-                задаче → <code>/integrations/bitrix/decide</code>. Локально нужен туннель (ngrok /
-                Cloudflare Tunnel), который должен быть запущен постоянно: при остановке или смене
-                URL старые ссылки в задачах перестанут работать — обновите URL и отправьте кандидата
-                заново.
+                Без слэша в конце. Из него собираются ссылки «Встреча / Подумать / Отказ» →{" "}
+                <code>/integrations/bitrix/decide</code>.
               </p>
             </div>
             <div className="hh-field">
@@ -199,43 +269,44 @@ export default function BitrixSettingsPage() {
                 onChange={(e) => setBx({ ...bx, task_deadline_hours: Number(e.target.value || 24) })}
               />
             </div>
-            <button
-              type="button"
-              className="chip chip-active"
-              disabled={busy}
-              style={{ marginTop: "0.75rem" }}
-              onClick={() => void save()}
-            >
-              Сохранить
-            </button>
+            <div className="chip-row" style={{ marginTop: "0.75rem" }}>
+              <button
+                type="button"
+                className="chip chip-active"
+                disabled={busy}
+                onClick={() => void save()}
+              >
+                Сохранить
+              </button>
+              <button
+                type="button"
+                className="chip"
+                disabled={busy || !bx.enabled}
+                onClick={() => void sendTestTask()}
+                title="Создаёт короткую задачу в Bitrix для проверки webhook"
+              >
+                Отправить тестовую задачу
+              </button>
+            </div>
           </section>
 
           <section className="card-edit">
-            <h2>Инструкция (актуальная)</h2>
+            <h2>Инструкция</h2>
             <ol className="muted" style={{ paddingLeft: "1.2rem", lineHeight: 1.55 }}>
               <li>
-                <b>Входящий вебхук</b> в Bitrix с правом <code>task</code> → URL в поле выше.
+                <b>Входящий вебхук</b> в Bitrix с правом <code>task</code> → URL выше.
               </li>
               <li>
-                <b>Ответственный</b> — числовой ID пользователя Bitrix (кому падают задачи).
+                <b>Ответственный</b> — числовой ID пользователя Bitrix.
               </li>
               <li>
-                <b>Публичный URL API</b> — HTTPS, доступный из интернета (прод или ngrok на API
-                порт). Без него задача не создастся: ссылки решения некуда вести.
+                <b>Публичный URL API</b> — HTTPS (прод или туннель). Нужен для ссылок решения.
               </li>
               <li>
-                Включите Bitrix + канал «Bitrix24», сохраните. «Отправить в чат заказчика» создаёт
-                задачу: материалы и решения — кликабельные подписи (BB-code), без длинных URL в тексте.
-              </li>
-              <li>
-                Заказчик жмёт ссылку (например «Встреча»). Для «Подумать» / «Отказ» откроется короткая
-                форма комментария — после отправки статус попадёт в приложение.
+                Каналы: Bitrix + веб-зона. Ссылку зоны выдайте в карточке компании. Telegram для
+                заказчика — только если провайдер доступен (иначе серый в списке).
               </li>
             </ol>
-            <p className="muted hh-micro" style={{ marginTop: "0.75rem" }}>
-              Исходящий webhook и UF-поля больше не обязательны. Override ответственного на вакансии:{" "}
-              <code>vacancy.payload.bitrix_responsible_id</code>.
-            </p>
           </section>
         </>
       )}

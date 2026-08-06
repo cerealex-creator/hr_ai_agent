@@ -8,6 +8,8 @@ export type CompanyDept = {
   chat_mode: string;
   kind: string;
   channel: ChannelBrief | null;
+  client_zone_token?: string | null;
+  has_client_zone?: boolean;
 };
 
 export type CompanyNode = CompanyDept & { departments: CompanyDept[] };

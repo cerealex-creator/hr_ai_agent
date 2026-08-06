@@ -120,11 +120,14 @@ from app.schemas import (
 )
 
 router = APIRouter()
+public_router = APIRouter()
 
-@router.get("/health", response_model=HealthOut)
+
+@public_router.get("/health", response_model=HealthOut)
 def health(db: Session = Depends(get_db)) -> HealthOut:
     db.execute(select(func.now()))
     return HealthOut(status="ok", database="up")
+
 
 @router.get("/meta/hr-stages", response_model=list[StageOptionOut])
 def list_hr_stages() -> list[StageOptionOut]:

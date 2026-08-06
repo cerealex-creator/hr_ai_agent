@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -157,12 +158,14 @@ def funnel_stats(
     db: Session = Depends(get_db),
 ) -> FunnelStatsOut:
     from app.services.stats_service import build_funnel_stats
+    from app.services.tenancy import require_org_id
 
     data = build_funnel_stats(
         db,
         client_id=client_id,
         vacancy_id=vacancy_id,
         active_vacancies_only=active_vacancies_only,
+        organization_id=require_org_id(),
     )
     return FunnelStatsOut(
         vacancies_active=data["vacancies_active"],
@@ -186,6 +189,7 @@ def hh_efficiency_stats(
     db: Session = Depends(get_db),
 ) -> HhEfficiencyStatsOut:
     from app.services.stats_service import build_hh_stats
+    from app.services.tenancy import require_org_id
 
     return HhEfficiencyStatsOut(
         **build_hh_stats(
@@ -193,6 +197,7 @@ def hh_efficiency_stats(
             client_id=client_id,
             vacancy_id=vacancy_id,
             active_vacancies_only=active_vacancies_only,
+            organization_id=require_org_id(),
         )
     )
 
@@ -205,6 +210,7 @@ def activity_stats(
     db: Session = Depends(get_db),
 ) -> ActivityStatsOut:
     from app.services.stats_service import PERIOD_PRESETS, build_activity_stats
+    from app.services.tenancy import require_org_id
 
     if period not in PERIOD_PRESETS:
         raise HTTPException(
@@ -217,6 +223,7 @@ def activity_stats(
         vacancy_id=vacancy_id,
         active_vacancies_only=active_vacancies_only,
         period=period,
+        organization_id=require_org_id(),
     )
     return ActivityStatsOut.model_validate(data)
 
@@ -225,10 +232,24 @@ def list_history(
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[DocumentGenerationOut]:
+    from app.services.tenancy import org_client_ids, org_vacancy_ids, require_org_id
+
+    org_id = require_org_id()
+    vac_ids = org_vacancy_ids(db, org_id)
+    client_ids = org_client_ids(db, org_id)
+    q = select(models.DocumentGeneration)
+    clauses = []
+    if vac_ids:
+        clauses.append(models.DocumentGeneration.vacancy_id.in_(vac_ids))
+    if client_ids:
+        clauses.append(models.DocumentGeneration.client_id.in_(client_ids))
+    if not clauses:
+        return []
+    from sqlalchemy import or_
+
+    q = q.where(or_(*clauses))
     rows = db.scalars(
-        select(models.DocumentGeneration)
-        .order_by(models.DocumentGeneration.created_at_legacy.desc().nulls_last())
-        .limit(limit)
+        q.order_by(models.DocumentGeneration.created_at_legacy.desc().nulls_last()).limit(limit)
     ).all()
     return [
         DocumentGenerationOut(
@@ -246,6 +267,8 @@ def list_history(
 
 @router.get("/history/{generation_id}", response_model=DocumentGenerationDetail)
 def get_history_item(generation_id: str, db: Session = Depends(get_db)) -> DocumentGenerationDetail:
+    from app.services.tenancy import org_client_ids, org_vacancy_ids, require_org_id
+
     try:
         from uuid import UUID
 
@@ -254,6 +277,12 @@ def get_history_item(generation_id: str, db: Session = Depends(get_db)) -> Docum
         raise HTTPException(status_code=400, detail="Invalid history id") from exc
     row = db.get(models.DocumentGeneration, gid)
     if not row:
+        raise HTTPException(status_code=404, detail="History item not found")
+    org_id = require_org_id()
+    vac_ids = org_vacancy_ids(db, org_id)
+    client_ids = org_client_ids(db, org_id)
+    ok = (row.vacancy_id in vac_ids) or (row.client_id in client_ids)
+    if not ok:
         raise HTTPException(status_code=404, detail="History item not found")
     return DocumentGenerationDetail(
         id=row.id,
@@ -288,7 +317,7 @@ def apply_history_to_vacancy(
     vacancy_id = body.vacancy_id if body.vacancy_id is not None else row.vacancy_id
     if vacancy_id is None:
         raise HTTPException(status_code=400, detail="Укажите vacancy_id")
-    vacancy = db.get(models.Vacancy, int(vacancy_id))
+    vacancy = get_vacancy_or_404(db, int(vacancy_id))
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
     keys = body.keys if isinstance(body.keys, list) else None

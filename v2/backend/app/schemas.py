@@ -46,6 +46,8 @@ class ClientTreeNodeOut(BaseModel):
     kind: str
     channel: ClientChannelBrief | None = None
     departments: list[ClientChannelTreeDeptOut] = Field(default_factory=list)
+    client_zone_token: str | None = None
+    has_client_zone: bool = False
 
 
 class ClientCreateIn(BaseModel):
@@ -731,4 +733,22 @@ class TemplateCreateVacancyIn(BaseModel):
     client_id: int | None = None
     chat_id: str | None = None
     is_test: bool = False
+
+
+class AuthLoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class AuthMeOut(BaseModel):
+    id: str
+    email: str
+    full_name: str = ""
+    org_id: str
+    roles: list[str] = Field(default_factory=list)
+    auth_disabled: bool = False
+
+
+class AuthOkOut(BaseModel):
+    ok: bool = True
 

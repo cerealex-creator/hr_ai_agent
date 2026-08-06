@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type SearchPlan = {
   version?: number;
@@ -67,7 +67,7 @@ export function HhSearchPlanBlock({
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), 180_000);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-plan/${path}`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-plan/${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
@@ -81,7 +81,7 @@ export function HhSearchPlanBlock({
     } catch (e) {
       // Server may have finished anyway — pull latest plan.
       try {
-        const sync = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-plan`, {
+        const sync = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-plan`, {
           cache: "no-store",
         });
         if (sync.ok) {

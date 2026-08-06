@@ -70,8 +70,16 @@ def _filter_vacancies(
     client_id: int | None,
     vacancy_id: int | None,
     active_only: bool,
+    organization_id: Any | None = None,
 ) -> list[models.Vacancy]:
     q = select(models.Vacancy)
+    if organization_id is not None:
+        from app.services.tenancy import org_client_ids
+
+        cids = org_client_ids(db, organization_id)
+        if not cids:
+            return []
+        q = q.where(models.Vacancy.client_id.in_(cids))
     if vacancy_id is not None:
         q = q.where(models.Vacancy.id == vacancy_id)
     elif client_id is not None:
@@ -96,9 +104,14 @@ def build_funnel_stats(
     client_id: int | None = None,
     vacancy_id: int | None = None,
     active_vacancies_only: bool = False,
+    organization_id: Any | None = None,
 ) -> dict[str, Any]:
     vacancies = _filter_vacancies(
-        db, client_id=client_id, vacancy_id=vacancy_id, active_only=False
+        db,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
+        active_only=False,
+        organization_id=organization_id,
     )
     active_ids = {v.id for v in vacancies if v.active}
     archive_ids = {v.id for v in vacancies if not v.active}
@@ -191,12 +204,14 @@ def build_hh_stats(
     client_id: int | None = None,
     vacancy_id: int | None = None,
     active_vacancies_only: bool = False,
+    organization_id: Any | None = None,
 ) -> dict[str, Any]:
     vacancies = _filter_vacancies(
         db,
         client_id=client_id,
         vacancy_id=vacancy_id,
         active_only=active_vacancies_only,
+        organization_id=organization_id,
     )
     vac_ids = [v.id for v in vacancies]
     if not vac_ids:
@@ -302,6 +317,7 @@ def build_activity_stats(
     vacancy_id: int | None = None,
     active_vacancies_only: bool = False,
     period: str = "month",
+    organization_id: Any | None = None,
 ) -> dict[str, Any]:
     if period not in PERIOD_PRESETS:
         period = "month"
@@ -313,6 +329,7 @@ def build_activity_stats(
         client_id=client_id,
         vacancy_id=vacancy_id,
         active_only=active_vacancies_only,
+        organization_id=organization_id,
     )
     vac_ids = [v.id for v in vacancies]
     vac_id_set = set(vac_ids)

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 
 type Props = { vacancyId: number };
@@ -22,8 +22,7 @@ export function BulkLinksForm({ vacancyId }: Props) {
     setMsg(null);
     setLog([]);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/candidates/bulk-links`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/candidates/bulk-links`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

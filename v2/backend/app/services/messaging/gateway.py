@@ -160,74 +160,71 @@ def send_candidate_to_client(
     move_to_client_review: bool = True,
 ) -> dict[str, Any]:
     """
-    Dispatch send-to-chat according to client_notify.channels (telegram / bitrix).
+    Dispatch send-to-chat via MessagingProvider registry (bitrix / web / telegram).
     Channels run in parallel (separate DB sessions). Stage move at most once on main row.
     """
+    from app.services.messaging.providers.registry import ACTIVE_CHANNEL_IDS, get_provider
+
     notify = get_client_notify()
-    channels = [c for c in (notify.get("channels") or []) if c in ("telegram", "bitrix")]
+    channels = [
+        c for c in (notify.get("channels") or []) if c in ACTIVE_CHANNEL_IDS and client_notify_has(c)
+    ]
     if not channels:
         raise MessagingError("Не выбран ни один канал уведомления заказчика", 400)
 
-    bitrix_cfg = get_bitrix()
     candidate_id: UUID = candidate.id
     work_channels: list[str] = []
-    for ch in channels:
-        if ch == "telegram" and client_notify_has("telegram"):
-            work_channels.append("telegram")
-        elif ch == "bitrix" and client_notify_has("bitrix") and bitrix_cfg.get("enabled"):
-            work_channels.append("bitrix")
-
     skipped_errors: list[str] = []
-    if "bitrix" in channels and not bitrix_cfg.get("enabled"):
-        skipped_errors.append("Bitrix: отключён в настройках (bitrix.enabled=false)")
+
     for ch in channels:
-        if ch not in ("telegram", "bitrix"):
+        provider = get_provider(ch)
+        if provider is None:
             skipped_errors.append(f"Неизвестный канал: {ch}")
+            continue
+        if ch == "telegram" and not provider.is_available():
+            skipped_errors.append(
+                provider.unavailable_reason() or "Telegram недоступен в этой конфигурации"
+            )
+            continue
+        if ch == "bitrix":
+            bitrix_cfg = get_bitrix()
+            if not bitrix_cfg.get("enabled"):
+                skipped_errors.append("Bitrix: отключён в настройках (bitrix.enabled=false)")
+                continue
+        work_channels.append(ch)
 
     results: list[dict[str, Any]] = []
     errors: list[str] = list(skipped_errors)
 
-    def _run_telegram() -> tuple[str, dict[str, Any] | None, str | None]:
-        from app.db.session import SessionLocal
-
-        session = SessionLocal()
-        try:
-            row = session.get(models.Candidate, candidate_id)
-            if not row:
-                return "telegram", None, "Telegram: кандидат не найден"
-            r = send_candidate_card(session, row, move_to_client_review=False)
-            return "telegram", r, None
-        except MessagingError as exc:
-            session.rollback()
-            return "telegram", None, _short_channel_error("telegram", exc.message)
-        finally:
-            session.close()
-
-    def _run_bitrix() -> tuple[str, dict[str, Any] | None, str | None]:
+    def _run(channel: str) -> tuple[str, dict[str, Any] | None, str | None]:
         from app.db.session import SessionLocal
         from app.services.bitrix.client import BitrixError
-        from app.services.bitrix.outbound import send_candidate_bitrix_task
 
+        provider = get_provider(channel)
+        if provider is None:
+            return channel, None, f"Нет адаптера: {channel}"
         session = SessionLocal()
         try:
             row = session.get(models.Candidate, candidate_id)
             if not row:
-                return "bitrix", None, "Bitrix: кандидат не найден"
-            r = send_candidate_bitrix_task(session, row, move_to_client_review=False)
-            return "bitrix", r, None
+                return channel, None, f"{provider.label}: кандидат не найден"
+            r = provider.send_candidate(session, row, move_to_client_review=False)
+            return channel, r, None
+        except MessagingError as exc:
+            session.rollback()
+            return channel, None, _short_channel_error(channel, exc.message)
         except BitrixError as exc:
             session.rollback()
-            return "bitrix", None, _short_channel_error("bitrix", exc.message)
+            return channel, None, _short_channel_error(channel, exc.message)
+        except Exception as exc:  # noqa: BLE001
+            session.rollback()
+            return channel, None, _short_channel_error(channel, str(exc))
         finally:
             session.close()
 
-    runners = {
-        "telegram": _run_telegram,
-        "bitrix": _run_bitrix,
-    }
     if work_channels:
-        with ThreadPoolExecutor(max_workers=min(2, len(work_channels))) as pool:
-            futures = {pool.submit(runners[ch]): ch for ch in work_channels if ch in runners}
+        with ThreadPoolExecutor(max_workers=min(3, len(work_channels))) as pool:
+            futures = {pool.submit(_run, ch): ch for ch in work_channels}
             for fut in as_completed(futures):
                 _ch, r, err = fut.result()
                 if r:

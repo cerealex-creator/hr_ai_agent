@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getApiBase, type CandidateDetail } from "@/lib/api";
+import { type CandidateDetail, apiFetch } from "@/lib/api";
 import { HR_STAGE_LABELS, clientStatusLabel, clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
 import { StageMarker } from "@/components/StageMarker";
 import { StageProgress } from "@/components/StageProgress";
@@ -173,7 +173,7 @@ export function CandidateEditor({ initial }: Props) {
   const [anketaOpen, setAnketaOpen] = useState(false);
   const [questOpen, setQuestOpen] = useState(false);
   const [clientOpen, setClientOpen] = useState(false);
-  const [notifyChannels, setNotifyChannels] = useState<string[]>(["telegram"]);
+  const [notifyChannels, setNotifyChannels] = useState<string[]>(["bitrix", "web"]);
   const [aiSectionOpen, setAiSectionOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<CandidateDetail | null>(null);
@@ -205,7 +205,7 @@ export function CandidateEditor({ initial }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/settings/app`, { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
         const ch = data?.client_notify?.channels;
@@ -232,8 +232,7 @@ export function CandidateEditor({ initial }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `${getApiBase()}/api/v1/vacancies/${c.vacancy_id}/stage-schema`,
+        const res = await apiFetch(`/api/v1/vacancies/${c.vacancy_id}/stage-schema`,
           { cache: "no-store" },
         );
         if (!res.ok) return;
@@ -331,7 +330,7 @@ export function CandidateEditor({ initial }: Props) {
   candidateIdRef.current = c.id;
 
   const reloadCandidate = async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, { cache: "no-store" });
+    const res = await apiFetch(`/api/v1/candidates/${c.id}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const next: CandidateDetail = await res.json();
     applyCandidate(next);
@@ -344,7 +343,7 @@ export function CandidateEditor({ initial }: Props) {
     const tick = async () => {
       const id = candidateIdRef.current;
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/candidates/${id}`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/candidates/${id}`, { cache: "no-store" });
         if (!res.ok || cancelled) return;
         const next: CandidateDetail = await res.json();
         if (cancelled) return;
@@ -383,7 +382,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("anketa", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -425,7 +424,7 @@ export function CandidateEditor({ initial }: Props) {
     if (!job || (job.status !== "queued" && job.status !== "running")) return;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/jobs/${job.id}`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/jobs/${job.id}`, { cache: "no-store" });
         if (!res.ok) return;
         const next = (await res.json()) as JobStatus;
         setJob(next);
@@ -447,7 +446,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("stage", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/stage`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/stage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -480,7 +479,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("stage", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/apply-client-stage`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/apply-client-stage`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(await res.text());
@@ -499,8 +498,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("client", null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/candidates/${c.id}/remind?kind=${kind}`,
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/remind?kind=${kind}`,
         { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));
@@ -517,8 +515,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("client", null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/candidates/${c.id}/refresh-telegram?notify=true`,
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/refresh-telegram?notify=true`,
         { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));
@@ -535,7 +532,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("client", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/extra-material`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/extra-material`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: materialTitle, url: materialUrl }),
@@ -559,7 +556,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("stage", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/copy`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/copy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_vacancy_id: Number(copyTargetId) }),
@@ -580,7 +577,7 @@ export function CandidateEditor({ initial }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/vacancies?active=true`, {
+        const res = await apiFetch(`/api/v1/vacancies?active=true`, {
           cache: "no-store",
         });
         if (!res.ok) return;
@@ -606,7 +603,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/v1/candidates/${c.id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 204) throw new Error(await res.text());
       router.push(`/vacancies/${c.vacancy_id}?section=candidates`);
       router.refresh();
@@ -620,7 +617,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("client", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/send-to-chat`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/send-to-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ move_to_client_review: moveToClientReview }),
@@ -658,7 +655,7 @@ export function CandidateEditor({ initial }: Props) {
     setBusy(true);
     setFeedback("client", null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/confirm-meeting`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/confirm-meeting`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));
@@ -681,14 +678,14 @@ export function CandidateEditor({ initial }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const saveRes = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+      const saveRes = await apiFetch(`/api/v1/candidates/${c.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ interview_eval_notes: interviewEvalNotes }),
       });
       if (!saveRes.ok) throw new Error(await saveRes.text());
 
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/evaluate-interview`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/evaluate-interview`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));
@@ -714,7 +711,7 @@ export function CandidateEditor({ initial }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const saveRes = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}`, {
+      const saveRes = await apiFetch(`/api/v1/candidates/${c.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -723,7 +720,7 @@ export function CandidateEditor({ initial }: Props) {
         }),
       });
       if (!saveRes.ok) throw new Error(await saveRes.text());
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${c.id}/transcribe-and-evaluate`, {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/transcribe-and-evaluate`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));

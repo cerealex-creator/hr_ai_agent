@@ -1,9 +1,12 @@
-"""Aggregate v1 API routers (audit M6)."""
-from fastapi import APIRouter
+"""Aggregate v1 API routers (audit M6 + D1 Auth)."""
+from fastapi import APIRouter, Depends
 
 from app.api.v1.routes import (
+    auth,
     candidates,
+    client_zone,
     clients,
+    events,
     health_meta,
     hh,
     integrations,
@@ -11,17 +14,29 @@ from app.api.v1.routes import (
     messaging,
     settings,
     stats_history,
-    vacancies
+    vacancies,
 )
+from app.core.auth import require_auth
 
 router = APIRouter()
-router.include_router(candidates.router)
-router.include_router(clients.router)
-router.include_router(health_meta.router)
-router.include_router(hh.router)
-router.include_router(integrations.router)
-router.include_router(jobs.router)
-router.include_router(messaging.router)
-router.include_router(settings.router)
-router.include_router(stats_history.router)
-router.include_router(vacancies.router)
+
+# Public (no auth)
+router.include_router(auth.router)
+router.include_router(health_meta.public_router)
+router.include_router(integrations.public_router)
+router.include_router(client_zone.router)
+
+# Protected
+protected = APIRouter(dependencies=[Depends(require_auth)])
+protected.include_router(candidates.router)
+protected.include_router(clients.router)
+protected.include_router(events.router)
+protected.include_router(health_meta.router)
+protected.include_router(hh.router)
+protected.include_router(integrations.router)
+protected.include_router(jobs.router)
+protected.include_router(messaging.router)
+protected.include_router(settings.router)
+protected.include_router(stats_history.router)
+protected.include_router(vacancies.router)
+router.include_router(protected)

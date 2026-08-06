@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import { Suspense } from "react";
+import { useAuthLogout } from "@/components/AuthGate";
 import { DefaultClientSidebar } from "@/components/DefaultClientSidebar";
+import { JobsLiveBadge } from "@/components/JobsLive";
 import { ProviderResourceLinks } from "@/components/ProviderResourceLinks";
 
 /** Навигация раздела «Поиск сотрудников» — не показывается на главной и в Настройках. */
@@ -11,7 +15,7 @@ const SEARCH_NAV = [
   { href: "/stats", label: "Статистика", ready: true },
   { href: "/jobs", label: "Задачи", ready: true },
   { href: "/history", label: "История", ready: true },
-  { href: "/client-zone", label: "Клиентская зона", ready: false },
+  { href: "/client-zone", label: "Клиентская зона", ready: true },
 ] as const;
 
 export type ShellVariant = "home" | "search" | "settings";
@@ -43,6 +47,7 @@ export function AppShell({
   variant = "search",
   sidebar,
 }: Props) {
+  const logout = useAuthLogout();
   let side: React.ReactNode | null = null;
   if (sidebar === null) {
     side = null;
@@ -79,6 +84,10 @@ export function AppShell({
               ← Вернуться в главное меню
             </Link>
           ) : null}
+          <JobsLiveBadge />
+          <button type="button" className="auth-logout" onClick={() => void logout()}>
+            Выйти
+          </button>
         </div>
         {showSearchNav ? (
           <nav className="nav" aria-label="Раздел поиска сотрудников">

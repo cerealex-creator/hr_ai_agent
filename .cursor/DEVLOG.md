@@ -5,6 +5,185 @@
 
 ---
 
+## 2026-08-06 — v2: demo job stuck (worker + tenancy)
+
+**Тип:** `fix`
+
+**Сделано:**
+- Demo/orphan jobs без vacancy/client при создании получают `client_id` org — иначе пропадали из списка после D2.
+- Причина «сразу прерывается»: ARQ worker не был запущен + job не виден в org filter.
+
+**Файлы:** `api/v1/routes/jobs.py`
+
+**Следующий шаг:**
+- Держать `arq app.workers.settings.WorkerSettings` запущенным; повторить «Запустить демо».
+
+---
+
+## 2026-08-06 — v2: D4 SSE jobs widget
+
+**Тип:** `feature`
+
+**Сделано:**
+- `GET /api/v1/events/stream` (org jobs, poll ~1.5s, heartbeat, X-Accel-Buffering: no).
+- Next rewrite `/api/v1/*` → API; browser API base = same-origin.
+- Topbar badge активных задач + toast complete/fail; pollers не трогали.
+
+**Файлы:** `routes/events.py`, `router.py`, `next.config.js`, `lib/api.ts`, `JobsLive.tsx`, `AppShell.tsx`, `layout.tsx`, `globals.css`, `docker-compose.yml`, `AUDIT.md`
+
+**Данные / конфиг:** `API_REWRITE_URL`, `API_INTERNAL_URL` в `.env.example`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Перелогиниться (cookies теперь на :3000); smoke demo_progress; бриф D5.
+
+**Риски/регрессии:**
+- После перехода на same-origin нужен повторный логин (старые cookies были на :8000).
+
+---
+
+## 2026-08-06 — v2: бриф D4 SSE jobs widget
+
+**Тип:** `docs`
+
+**Сделано:**
+- Бриф D4 в `AUDIT.md`: SSE stream + глобальный виджет/toast; 4 неоднозначности (transport, push source, UX, pollers).
+
+**Файлы:** `v2/AUDIT.md`, `.cursor/DEVLOG.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Одобрение D4 + ответы по неоднозначностям → код.
+
+---
+
+## 2026-08-06 — v2: login error UX + missing user
+
+**Тип:** `fix`
+
+**Сделано:**
+- Login больше не показывает сырой JSON (`Invalid credentials` → «Неверный email или пароль»).
+- Создан локальный user `dialex307@gmail.com` (его не было в БД).
+
+**Файлы:** `frontend/lib/api.ts`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Войти новым аккаунтом; далее бриф D4 или коммит.
+
+---
+
+## 2026-08-06 — v2: D3 Bitrix + provider registry
+
+**Тип:** `feature`
+
+**Сделано:**
+- MessagingProvider registry (bitrix/web/telegram + WhatsApp/Max stubs); UI из каталога.
+- `client_notify` default + one-shot migrate → `["bitrix","web"]`; gateway через адаптеры.
+- HR Telegram notify только при outbound + `TELEGRAM_HR_USER_ID`.
+- `POST /settings/bitrix/test-task` + кнопка в settings.
+- CandidateEditor fallback channels → bitrix+web.
+
+**Файлы:** `messaging/providers/*`, `gateway.py`, `app_settings.py`, `routes/settings.py`, `bitrix/outbound.py`, `frontend/.../bitrix/page.tsx`, `AUDIT.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Бриф D4 (SSE jobs) или коммит D1–D3.
+
+---
+
+## 2026-08-06 — v2: бриф D3 Bitrix + Telegram flag
+
+**Тип:** `decision`
+
+**Сделано:**
+- Бриф D3 в `AUDIT.md`: Bitrix-first client notify; Telegram gated; HR-notify опционально; checklist Bitrix.
+- Код D3 не писали.
+
+**Файлы:** `v2/AUDIT.md`, `.cursor/DEVLOG.md`
+
+**Следующий шаг:**
+- Одобрение брифа D3 (ответы 1–4) → реализация.
+
+---
+
+## 2026-08-06 — v2: D2 Tenancy + Client zone
+
+**Тип:** `feature`
+
+**Сделано:**
+- Org isolation: helpers + 404 IDOR; lists/stats/jobs/history/search scoped by `organization_id`.
+- Client zone: public token URL `/c/{token}`, decide ready/think/reject + meeting; rotate token в карточке компании.
+- Middleware ContextVar для Request → tenancy в sync handlers.
+
+**Файлы:** `services/tenancy.py`, `client_zone.py`, `routes/client_zone.py`, `main.py`, routes/*, frontend `/c/[token]`, `CompanyEditor`, `AUDIT.md`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Бриф D3 (Bitrix + Telegram feature flag).
+
+---
+
+## 2026-08-06 — v2: бриф D2 Tenancy + Client zone
+
+**Тип:** `decision`
+
+**Сделано:**
+- Бриф D2 в `AUDIT.md`: слой A org_id isolation; слой B web client zone; 5 неоднозначностей на одобрение.
+- Код D2 не писали.
+
+**Файлы:** `v2/AUDIT.md`, `.cursor/DEVLOG.md`
+
+**Следующий шаг:**
+- Одобрение брифа D2 (ответы 1–5) → реализация.
+
+---
+
+## 2026-08-06 — v2: D1 Auth (JWT cookies)
+
+**Тип:** `feature`
+
+**Сделано:**
+- Users / org members / refresh_tokens; Alembic `a1b2c3d4e5f6`.
+- Login/refresh/logout/me; httpOnly cookies; protected API (health + webhooks public).
+- `AUTH_DISABLED` (non-production), bootstrap env + `create_user` CLI.
+- Frontend `/login`, AuthGate, `apiFetch` credentials + SSR cookies, logout.
+
+**Файлы:** `v2/backend/app/core/auth.py`, `services/users.py`, `api/v1/routes/auth.py`, `router.py`, `models.py`, migration, `v2/frontend/lib/api.ts`, `AuthGate.tsx`, `login/page.tsx`, `AUDIT.md`
+
+**Данные / конфиг:** `JWT_SECRET`, `AUTH_*`, `APP_ENV` в `v2/.env.example`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Бриф D2 (Tenancy + Client zone) → одобрение → код.
+
+---
+
+## 2026-08-06 — v2: Волна D переплан под пилот + бриф D1
+
+**Тип:** `decision`
+
+**Сделано:**
+- Зафиксирован порядок пилота: D1 Auth → D2 Tenancy+Client zone → D3 Bitrix/Telegram-flag → D4 SSE → D5 Polish.
+- Каналы заказчика: Bitrix + Web Client Zone; Telegram off для клиентов (опц. HR-notify).
+- Формат: Бриф → Одобрение → Код. RLS не в D1.
+- В `AUDIT.md` таблица D1–D5 + полный бриф D1 (код не писали).
+
+**Файлы:** `v2/AUDIT.md`, `.cursor/DEVLOG.md`
+
+**Git:** план незакоммичен; предыдущий коммит Waves A–C: `f284110`
+
+**Следующий шаг:**
+- Одобрение брифа D1 (token storage / refresh / AUTH_DISABLED) → реализация Auth.
+
+---
+
 ## 2026-08-06 — v2: M9 Pydantic + M6 split endpoints
 
 **Тип:** `refactor`

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getApiBase, type VacancyDetail } from "@/lib/api";
+import { apiFetch, type VacancyDetail } from "@/lib/api";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 
 type Props = { vacancy: VacancyDetail };
@@ -19,7 +19,7 @@ export function VacancyLifecycle({ vacancy }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}${path}`, {
+      const res = await apiFetch(path, {
         method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,

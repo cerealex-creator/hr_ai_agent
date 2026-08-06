@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type ProviderLink = {
   id: string;
@@ -48,7 +48,7 @@ export default function AiSettingsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBase()}/api/v1/settings/app`)
+    apiFetch(`/api/v1/settings/app`)
       .then((r) => r.json())
       .then((d: AppSettings) => {
         setData(d);
@@ -65,7 +65,7 @@ export default function AiSettingsPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/settings/app`, {
+      const res = await apiFetch(`/api/v1/settings/app`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

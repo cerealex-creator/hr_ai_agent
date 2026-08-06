@@ -267,9 +267,9 @@ DEFAULT_FUNCTIONS: dict[str, Any] = {
     "hh_search_enabled": True,
 }
 
-# Who gets "new candidate" on send-to-chat: telegram and/or bitrix.
+# Who gets "new candidate" on send-to-chat (pilot: Bitrix + web zone).
 DEFAULT_CLIENT_NOTIFY: dict[str, Any] = {
-    "channels": ["telegram"],  # subset of: telegram, bitrix
+    "channels": ["bitrix", "web"],
 }
 
 DEFAULT_BITRIX: dict[str, Any] = {
@@ -323,15 +323,45 @@ def set_functions(patch: dict[str, Any]) -> dict[str, Any]:
     return cur
 
 
-_ALLOWED_NOTIFY_CHANNELS = frozenset({"telegram", "bitrix"})
+_ALLOWED_NOTIFY_CHANNELS = frozenset({"telegram", "bitrix", "web"})
+_PILOT_CHANNELS = ["bitrix", "web"]
 
 
 def client_notify_has(channel: str) -> bool:
-    """True if channel is enabled for send-to-chat / client-facing Telegram ops."""
+    """True if channel is enabled for send-to-chat / client-facing ops."""
     ch = str(channel or "").strip()
     if ch not in _ALLOWED_NOTIFY_CHANNELS:
         return False
     return ch in (get_client_notify().get("channels") or [])
+
+
+def _normalize_notify_channels(raw_channels: list | None) -> list[str]:
+    cleaned = [
+        str(c).strip()
+        for c in (raw_channels or [])
+        if str(c).strip() in _ALLOWED_NOTIFY_CHANNELS
+    ]
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in cleaned:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def migrate_client_notify_to_pilot(*, force: bool = False) -> dict[str, Any]:
+    """One-shot: set client_notify.channels = [bitrix, web] (pilot standard).
+
+    Subsequent boots respect user changes unless force=True.
+    """
+    data = _load()
+    if not force and data.get("client_notify_pilot_migrated"):
+        return get_client_notify()
+    data["client_notify"] = {"channels": list(_PILOT_CHANNELS)}
+    data["client_notify_pilot_migrated"] = True
+    _save(data)
+    return get_client_notify()
 
 
 def get_client_notify() -> dict[str, Any]:
@@ -339,11 +369,11 @@ def get_client_notify() -> dict[str, Any]:
     base = json.loads(json.dumps(DEFAULT_CLIENT_NOTIFY))
     if not isinstance(raw, dict):
         return base
-    channels = raw.get("channels")
-    if isinstance(channels, list):
-        cleaned = [str(c).strip() for c in channels if str(c).strip() in _ALLOWED_NOTIFY_CHANNELS]
-        if cleaned:
-            base["channels"] = cleaned
+    channels = _normalize_notify_channels(
+        raw.get("channels") if isinstance(raw.get("channels"), list) else None
+    )
+    if channels:
+        base["channels"] = channels
     return base
 
 
@@ -351,18 +381,19 @@ def set_client_notify(patch: dict[str, Any]) -> dict[str, Any]:
     data = _load()
     cur = get_client_notify()
     if isinstance(patch, dict) and "channels" in patch and isinstance(patch.get("channels"), list):
-        cleaned = [
-            str(c).strip()
-            for c in (patch.get("channels") or [])
-            if str(c).strip() in _ALLOWED_NOTIFY_CHANNELS
-        ]
+        cleaned = _normalize_notify_channels(patch.get("channels"))
+        from app.services.messaging.providers.registry import get_provider
+
+        tg = get_provider("telegram")
+        if "telegram" in cleaned and tg is not None and not tg.is_available():
+            cleaned = [c for c in cleaned if c != "telegram"]
         if cleaned:
             cur["channels"] = cleaned
         else:
-            cur["channels"] = list(DEFAULT_CLIENT_NOTIFY["channels"])
+            cur["channels"] = list(_PILOT_CHANNELS)
     data["client_notify"] = cur
     _save(data)
-    return cur
+    return get_client_notify()
 
 
 def get_bitrix() -> dict[str, Any]:
@@ -447,6 +478,7 @@ def resolve_bitrix_responsible_id(vacancy_payload: dict | None = None) -> str:
 
 
 def get_app_settings() -> dict:
+    from app.services.messaging.providers.registry import catalog_for_ui
     from app.services.yandex_disk_oauth import get_disk_paths
 
     disk_paths = get_disk_paths()
@@ -465,6 +497,7 @@ def get_app_settings() -> dict:
         "candidate_comms": get_candidate_comms(),
         "functions": get_functions(),
         "client_notify": get_client_notify(),
+        "messaging_providers": catalog_for_ui(),
         "bitrix": bitrix,
         "yandex_disk_root": disk_paths["root"],
         "yandex_disk_inbox": disk_paths["inbox_name"],

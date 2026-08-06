@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type ProviderLink = {
   id: string;
@@ -30,7 +30,7 @@ export function ProviderResourceLinks({ compact = true }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/settings/app`, { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;

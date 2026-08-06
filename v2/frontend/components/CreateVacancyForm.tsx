@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ChatSelect } from "@/components/ChatSelect";
-import { getApiBase, type ClientItem, type VacancyListItem } from "@/lib/api";
+import { type ClientItem, type VacancyListItem, apiFetch } from "@/lib/api";
 
 type Props = {
   clients: ClientItem[];
@@ -76,7 +76,7 @@ export function CreateVacancyForm({
       if (mode === "from_source" && sourceId) {
         body.source_vacancy_id = Number(sourceId);
       }
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies`, {
+      const res = await apiFetch(`/api/v1/vacancies`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

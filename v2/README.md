@@ -5,8 +5,11 @@
 
 ## План реализации (актуально)
 
-Один оператор + демо; заказчик реагирует в Telegram, не в веб-кабинете.  
-**Auth / роли — не делаем сейчас.** Cutover — **только после полной готовности** и свежего импорта без потери актуальности `data/`.
+Пилот Timeweb (2–3 пользователя): **Bitrix + Web Client Zone** для заказчика; Telegram — optional (flag).  
+Порядок: см. [`AUDIT.md`](./AUDIT.md) Волна D — D1–D4 **done** → **D5** Polish/deploy.
+
+Auth: JWT httpOnly cookies; создать пользователя:
+`cd backend && .venv/bin/python -m app.scripts.create_user --email you@example.com --password '…' --role platform_owner`
 
 1. ~~Каркас, импорт, read UI, jobs~~  
 2. ~~HH cold search (критерии, pre-filter, seen, shortlist)~~ — дожим по необходимости  

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -132,9 +133,7 @@ def vacancy_hh_search_defaults(vacancy_id: int, db: Session = Depends(get_db)) -
     from app.services.hh_search_plan import get_plan_from_vacancy, mark_plan_stale_if_needed
     from sqlalchemy.orm.attributes import flag_modified
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     if mark_plan_stale_if_needed(vacancy):
         db.commit()
         db.refresh(vacancy)
@@ -173,9 +172,7 @@ def get_hh_preset(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     )
     from sqlalchemy.orm.attributes import flag_modified
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
     if not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
         vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
@@ -206,9 +203,7 @@ def upsert_hh_preset(
     )
     from sqlalchemy.orm.attributes import flag_modified
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     preset = ensure_soft_portrait(normalize_preset(body.preset), rebuild=body.rebuild_portrait)
     if body.approve:
         try:
@@ -231,9 +226,7 @@ def upsert_hh_preset(
 def get_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.hh_search_plan import get_plan_from_vacancy, mark_plan_stale_if_needed
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     if mark_plan_stale_if_needed(vacancy):
         db.commit()
         db.refresh(vacancy)
@@ -243,9 +236,7 @@ def get_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
 def generate_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.hh_search_plan import generate_plan
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         plan = generate_plan(db, vacancy, settings=get_settings())
     except (ValueError, RuntimeError) as exc:
@@ -256,9 +247,7 @@ def generate_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> d
 def revise_hh_search_plan(vacancy_id: int, body: HhSearchPlanReviseIn, db: Session = Depends(get_db)) -> dict:
     from app.services.hh_search_plan import revise_plan
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         plan = revise_plan(db, vacancy, str(body.note or ""), settings=get_settings())
     except (ValueError, RuntimeError) as exc:
@@ -269,9 +258,7 @@ def revise_hh_search_plan(vacancy_id: int, body: HhSearchPlanReviseIn, db: Sessi
 def approve_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.hh_search_plan import approve_plan
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         result = approve_plan(db, vacancy)
     except ValueError as exc:
@@ -285,9 +272,7 @@ def approve_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> di
 
 @router.post("/vacancies/{vacancy_id}/hh-search-criteria/prefill")
 def prefill_hh_search_criteria(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         result = prefill_criteria_with_ai(
             vacancy,
@@ -320,9 +305,7 @@ def upsert_hh_search_criteria(
     body: HhSearchCriteriaIn,
     db: Session = Depends(get_db),
 ) -> dict:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     criteria = ensure_portrait(normalize_criteria(body.criteria), rebuild=body.rebuild_portrait)
     vacancy.documents = save_criteria_to_documents(vacancy.documents, criteria)
     from sqlalchemy.orm.attributes import flag_modified
@@ -339,9 +322,7 @@ def upsert_hh_search_criteria(
 
 @router.get("/vacancies/{vacancy_id}/hh-shortlist", response_model=list[HhShortlistItemOut])
 def list_hh_shortlist(vacancy_id: int, db: Session = Depends(get_db)) -> list[HhShortlistItemOut]:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     rows = (
         db.execute(
             select(models.HhShortlistItem)
@@ -363,9 +344,7 @@ def add_hh_shortlist(
     body: HhShortlistCreateIn,
     db: Session = Depends(get_db),
 ) -> HhShortlistItemOut:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     rid = (body.hh_resume_id or "").strip()
     if not rid:
         raise HTTPException(status_code=400, detail="hh_resume_id обязателен")
@@ -424,9 +403,7 @@ def hh_manual_evaluate(vacancy_id: int, body: HhManualEvaluateIn, db: Session = 
     """Evaluate recruiter-provided HH resume URLs/ids; return comparison rows."""
     from app.services.hh_manual_eval import evaluate_manual_hh_resumes
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     text = str(body.text or body.refs or "").strip()
     criteria = body.criteria if isinstance(body.criteria, dict) else None
     try:
@@ -442,9 +419,7 @@ def hh_soften_suggestions(vacancy_id: int, body: HhSoftenSuggestionsIn, db: Sess
     from app.services.hh_manual_eval import suggest_criteria_softening
     from app.services.hh_search_criteria import criteria_from_vacancy_documents, normalize_criteria
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     criteria = body.criteria if isinstance(body.criteria, dict) else None
     if not criteria:
         criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
@@ -472,9 +447,7 @@ def hh_soften_apply(vacancy_id: int, body: HhSoftenApplyIn, db: Session = Depend
         warnings_for,
     )
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     criteria = body.criteria if isinstance(body.criteria, dict) else None
     if not criteria:
         criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
@@ -508,9 +481,7 @@ def hh_shortlist_to_candidate(
     """Create a funnel candidate from a shortlist item (cold HH, no contacts)."""
     from app.services.hh_to_candidate import create_candidate_from_shortlist
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         from uuid import UUID
 
@@ -537,9 +508,7 @@ def hh_shortlist_to_candidate(
 
 @router.get("/vacancies/{vacancy_id}/hh-seen", response_model=list[HhSeenItemOut])
 def list_hh_seen(vacancy_id: int, db: Session = Depends(get_db)) -> list[HhSeenItemOut]:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     rows = (
         db.execute(
             select(models.HhSeenResume)
@@ -563,9 +532,7 @@ def reject_hh_seen(
 ) -> HhSeenItemOut:
     from app.services.hh_seen import REASON_RECRUITER, upsert_seen
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         row = upsert_seen(
             db,
@@ -585,9 +552,7 @@ def reject_hh_seen(
 def unban_hh_seen(vacancy_id: int, hh_resume_id: str, db: Session = Depends(get_db)) -> None:
     from app.services.hh_seen import delete_seen
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     if not delete_seen(db, vacancy_id, hh_resume_id):
         raise HTTPException(status_code=404, detail="Not found")
     return None
@@ -598,9 +563,7 @@ def hh_search_history(
     limit: int = Query(default=20, ge=1, le=50),
     db: Session = Depends(get_db),
 ) -> JobHistoryListOut:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     rows = job_svc.list_jobs(
         db, limit=limit, vacancy_id=vacancy_id, job_type="hh_cold_search"
     )
@@ -611,9 +574,7 @@ def hh_search_history(
 @router.post("/vacancies/{vacancy_id}/hh-search-history/cleanup")
 def cleanup_hh_search_history(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     """Remove failed/cancelled/stuck-queued HH searches from DB."""
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     deleted = job_svc.delete_hh_jobs(db, vacancy_id=vacancy_id, only_problematic=True)
     return {"deleted": deleted}
 

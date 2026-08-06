@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Job = {
   id: string;
@@ -49,26 +49,44 @@ function statusClass(status: string): string {
 }
 
 async function fetchJobs(): Promise<JobsList> {
-  const res = await fetch(`${getApiBase()}/api/v1/jobs?limit=40`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`API ${res.status}`);
+  const res = await apiFetch(`/api/v1/jobs?limit=40`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(formatApiError(res.status, text, "Не удалось загрузить задачи"));
+  }
   return res.json();
 }
 
 async function startJob(job_type: string, payload: Record<string, unknown> = {}): Promise<void> {
-  const res = await fetch(`${getApiBase()}/api/v1/jobs`, {
+  const res = await apiFetch(`/api/v1/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ job_type, payload }),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `API ${res.status}`);
+    throw new Error(formatApiError(res.status, text, "Не удалось запустить задачу"));
   }
 }
 
 async function cancelJob(id: string): Promise<void> {
-  const res = await fetch(`${getApiBase()}/api/v1/jobs/${id}/cancel`, { method: "POST" });
-  if (!res.ok) throw new Error(`API ${res.status}`);
+  const res = await apiFetch(`/api/v1/jobs/${id}/cancel`, { method: "POST" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(formatApiError(res.status, text, "Не удалось отменить задачу"));
+  }
+}
+
+function formatApiError(status: number, body: string, fallback: string): string {
+  try {
+    const data = JSON.parse(body) as { detail?: unknown };
+    if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
+  } catch {
+    /* ignore */
+  }
+  const trimmed = (body || "").trim();
+  if (trimmed && !trimmed.startsWith("<!")) return trimmed.slice(0, 240);
+  return `${fallback} (HTTP ${status})`;
 }
 
 export default function JobsPage() {
@@ -82,9 +100,10 @@ export default function JobsPage() {
     try {
       const next = await fetchJobs();
       setData(next);
-      setError(null);
+      setError((prev) => (prev?.startsWith("Не удалось запустить") ? prev : null));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка API");
+      // Don't clobber an in-flight start error with a transient list poll failure.
+      setError((prev) => prev || (e instanceof Error ? e.message : "Ошибка API"));
     }
   }, []);
 
@@ -96,6 +115,7 @@ export default function JobsPage() {
 
   const onStart = async (job_type: string, payload: Record<string, unknown> = {}) => {
     setBusy(job_type);
+    setError(null);
     try {
       await startJob(job_type, payload);
       await reload();

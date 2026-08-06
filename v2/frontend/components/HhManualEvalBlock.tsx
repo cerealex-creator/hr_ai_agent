@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type SoftenSuggestion = {
   id: string;
@@ -62,8 +62,7 @@ export function HhManualEvalBlock({
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-manual-evaluate`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-manual-evaluate`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -92,8 +91,7 @@ export function HhManualEvalBlock({
       } else {
         body.search_results = searchResults || [];
       }
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-soften-suggestions`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-soften-suggestions`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -128,8 +126,7 @@ export function HhManualEvalBlock({
     setSoftBusy(true);
     setErr(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-soften-apply`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-soften-apply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

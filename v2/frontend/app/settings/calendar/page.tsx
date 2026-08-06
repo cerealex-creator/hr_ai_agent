@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type CalendarStatus = {
   status: string;
@@ -29,7 +29,7 @@ export default function CalendarSettingsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const load = async () => {
-    const cal = await fetch(`${getApiBase()}/api/v1/integrations/google-calendar/status`).then(
+    const cal = await apiFetch(`/api/v1/integrations/google-calendar/status`).then(
       (r) => r.json(),
     );
     setCalendar(cal);
@@ -82,8 +82,7 @@ export default function CalendarSettingsPage() {
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const res = await fetch(
-                  `${getApiBase()}/api/v1/integrations/google-calendar/oauth/start`,
+                const res = await apiFetch(`/api/v1/integrations/google-calendar/oauth/start`,
                   { method: "POST" },
                 );
                 const data = await res.json().catch(() => ({}));
@@ -124,8 +123,7 @@ export default function CalendarSettingsPage() {
             style={{ marginTop: "0.35rem" }}
             onClick={() =>
               run(async () => {
-                const res = await fetch(
-                  `${getApiBase()}/api/v1/integrations/google-calendar/oauth/complete`,
+                const res = await apiFetch(`/api/v1/integrations/google-calendar/oauth/complete`,
                   {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },

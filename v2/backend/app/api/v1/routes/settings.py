@@ -206,3 +206,15 @@ def patch_settings_app(body: AppSettingsPatchIn) -> dict:
         set_bitrix(data.get("bitrix") or {})
     return get_app_settings()
 
+
+@router.post("/settings/bitrix/test-task")
+def bitrix_test_task() -> dict:
+    """Smoke: create a minimal Bitrix task with current settings."""
+    from app.services.bitrix.client import BitrixError
+    from app.services.bitrix.outbound import send_bitrix_smoke_task
+
+    try:
+        return send_bitrix_smoke_task()
+    except BitrixError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import {
   companyModeLabel,
   detailMessage,
@@ -23,9 +23,10 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
   const [deptChatId, setDeptChatId] = useState("");
   const [chatName, setChatName] = useState("");
   const [chatId, setChatId] = useState("");
+  const [zonePath, setZonePath] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/companies/${companyId}`, {
+    const res = await apiFetch(`/api/v1/companies/${companyId}`, {
       cache: "no-store",
     });
     if (!res.ok) throw new Error(res.status === 404 ? "Компания не найдена" : `API ${res.status}`);
@@ -34,6 +35,8 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
     setRename(data.name);
     setChatName(data.channel?.name || data.name);
     setChatId(data.channel?.external_id || "");
+    const token = (data as { client_zone_token?: string | null }).client_zone_token;
+    setZonePath(token ? `/c/${token}` : null);
     onRenamed?.(data.name);
   }, [companyId, onRenamed]);
 
@@ -76,7 +79,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
           disabled={busy || !rename.trim() || rename.trim() === co.name}
           onClick={() =>
             run(async () => {
-              const res = await fetch(`${getApiBase()}/api/v1/clients/${co.id}`, {
+              const res = await apiFetch(`/api/v1/clients/${co.id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: rename.trim() }),
@@ -93,6 +96,45 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
       </section>
 
       <section className="card-edit" style={{ marginBottom: "1rem" }}>
+        <h2>Клиентская зона (веб)</h2>
+        <p className="muted hh-micro">
+          Секретная ссылка для заказчика: без логина, только кандидаты этой компании. Один токен на
+          root-компанию (включая подразделения).
+        </p>
+        {zonePath ? (
+          <p style={{ wordBreak: "break-all" }}>
+            <a href={zonePath} target="_blank" rel="noreferrer">
+              {typeof window !== "undefined" ? `${window.location.origin}${zonePath}` : zonePath}
+            </a>
+          </p>
+        ) : (
+          <p className="muted">Ссылка ещё не создана.</p>
+        )}
+        <div className="chip-row" style={{ marginTop: "0.5rem" }}>
+          <button
+            type="button"
+            className="chip chip-active"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const res = await apiFetch(`/api/v1/companies/${co.id}/client-zone/rotate`, {
+                  method: "POST",
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(detailMessage(data, `HTTP ${res.status}`));
+                const path = typeof data.path === "string" ? data.path : null;
+                setZonePath(path);
+                setMsg(path ? "Ссылка клиентской зоны обновлена" : "Токен сброшен");
+                await load();
+              })
+            }
+          >
+            {zonePath ? "Сбросить и выдать новую ссылку" : "Создать ссылку"}
+          </button>
+        </div>
+      </section>
+
+      <section className="card-edit" style={{ marginBottom: "1rem" }}>
         <h2>Как устроены чаты?</h2>
         <p className="muted hh-micro">Сейчас: {companyModeLabel(co.chat_mode)}.</p>
         <div className="chip-row">
@@ -102,7 +144,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const res = await fetch(`${getApiBase()}/api/v1/clients/${co.id}`, {
+                const res = await apiFetch(`/api/v1/clients/${co.id}`, {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ chat_mode: "company" }),
@@ -122,7 +164,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const res = await fetch(`${getApiBase()}/api/v1/clients/${co.id}`, {
+                const res = await apiFetch(`/api/v1/clients/${co.id}`, {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ chat_mode: "departments" }),
@@ -168,10 +210,10 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
                   chat_id: chatId.trim(),
                   client_id: co.id,
                 };
-                const url = co.channel
-                  ? `${getApiBase()}/api/v1/messaging/channels/${co.channel.id}`
-                  : `${getApiBase()}/api/v1/messaging/channels`;
-                const res = await fetch(url, {
+                const path = co.channel
+                  ? `/api/v1/messaging/channels/${co.channel.id}`
+                  : `/api/v1/messaging/channels`;
+                const res = await apiFetch(path, {
                   method: co.channel ? "PATCH" : "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify(
@@ -232,8 +274,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
                             const nextId = (el?.value || "").trim();
                             if (!nextId) throw new Error("Укажите Chat ID");
                             if (d.channel) {
-                              const res = await fetch(
-                                `${getApiBase()}/api/v1/messaging/channels/${d.channel.id}`,
+                              const res = await apiFetch(`/api/v1/messaging/channels/${d.channel.id}`,
                                 {
                                   method: "PATCH",
                                   headers: { "Content-Type": "application/json" },
@@ -248,8 +289,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
                               if (!res.ok)
                                 throw new Error(detailMessage(data, `HTTP ${res.status}`));
                             } else {
-                              const res = await fetch(
-                                `${getApiBase()}/api/v1/messaging/channels`,
+                              const res = await apiFetch(`/api/v1/messaging/channels`,
                                 {
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },
@@ -311,8 +351,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
             disabled={busy || !deptName.trim()}
             onClick={() =>
               run(async () => {
-                const res = await fetch(
-                  `${getApiBase()}/api/v1/companies/${co.id}/departments`,
+                const res = await apiFetch(`/api/v1/companies/${co.id}/departments`,
                   {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },

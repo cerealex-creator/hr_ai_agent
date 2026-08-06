@@ -12,6 +12,19 @@ class Settings(BaseSettings):
     default_org_name: str = "Default Organization"
     default_org_slug: str = "default"
 
+    # Auth (D1) — JWT in httpOnly cookies; AUTH_DISABLED only outside production
+    app_env: str = "local"  # local | production
+    auth_disabled: bool = False
+    jwt_secret: str = "dev-change-me-hr-v2-jwt-secret-min-32b"
+    jwt_access_ttl_minutes: int = 30
+    jwt_refresh_ttl_days: int = 14
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"  # lax | strict | none
+    auth_cookie_domain: str = ""
+    auth_bootstrap_email: str = ""
+    auth_bootstrap_password: str = ""
+    auth_bootstrap_role: str = "platform_owner"
+
     # Yandex SpeechKit / Object Storage (same keys as Streamlit .env)
     yandex_api_key: str = ""
     yandex_bucket_name: str = ""

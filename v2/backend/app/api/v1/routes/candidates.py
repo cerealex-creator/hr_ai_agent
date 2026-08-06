@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -146,6 +147,8 @@ def list_candidates(
             detail=f"preset: {', '.join(sorted(CANDIDATE_PRESETS))}",
         )
     try:
+        from app.services.tenancy import require_org_id
+
         rows, vacancies, _label = list_candidates_filtered(
             db,
             client_id=client_id,
@@ -154,6 +157,7 @@ def list_candidates(
             hr_stage=hr_stage,
             client_status=client_status,
             preset=preset,
+            organization_id=require_org_id(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -188,8 +192,11 @@ def search_candidates_endpoint(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     from app.services.candidate_search import search_candidates
+    from app.services.tenancy import require_org_id
 
-    return search_candidates(db, q, include_test=include_test, limit=limit)
+    return search_candidates(
+        db, q, include_test=include_test, limit=limit, organization_id=require_org_id()
+    )
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
 def get_candidate(candidate_id: str, db: Session = Depends(get_db)) -> CandidateDetail:
@@ -199,9 +206,7 @@ def get_candidate(candidate_id: str, db: Session = Depends(get_db)) -> Candidate
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     return _candidate_detail(db, candidate)
 
 @router.patch("/candidates/{candidate_id}", response_model=CandidateDetail)
@@ -218,9 +223,7 @@ def patch_candidate_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     data = body.model_dump(exclude_unset=True)
     name = data.pop("name", None)
     from app.services.messaging.ops import refresh_candidate_telegram, snapshot_card_payload
@@ -259,9 +262,7 @@ def set_candidate_stage(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         set_stage(
             db,
@@ -298,9 +299,7 @@ def apply_client_stage_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     suggested = suggested_hr_stage_from_client_status(candidate)
     if not suggested:
         raise HTTPException(status_code=400, detail="Нет расхождения этапа с статусом заказчика")
@@ -329,9 +328,7 @@ def copy_candidate_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     target_id = int(body.target_vacancy_id)
     try:
         copied = copy_candidate_to_vacancy(db, candidate, target_id)
@@ -349,9 +346,7 @@ def delete_candidate_endpoint(candidate_id: str, db: Session = Depends(get_db)) 
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     delete_candidate(db, candidate)
     return None
 
@@ -371,9 +366,7 @@ def evaluate_candidate_resume_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         result = evaluate_candidate_resume(db, candidate, populate_fields=True)
     except CandidateEvalError as exc:
@@ -410,9 +403,7 @@ def evaluate_candidate_interview_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         result = evaluate_candidate_interview(db, candidate)
     except CandidateEvalError as exc:
@@ -445,9 +436,7 @@ def get_candidate_questionnaire_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     items = get_candidate_questionnaire(candidate)
     return QuestionnaireOut(candidate_id=str(candidate.id), items=items, count=len(items))
 
@@ -465,9 +454,7 @@ def put_candidate_questionnaire_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     items = save_candidate_questionnaire(db, candidate, body.items or [])
     return QuestionnaireOut(candidate_id=str(candidate.id), items=items, count=len(items))
 
@@ -490,9 +477,7 @@ def generate_candidate_questionnaire_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         items = generate_candidate_questionnaire(db, candidate)
     except QuestionnaireError as exc:
@@ -523,9 +508,7 @@ def regenerate_candidate_questionnaire_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         items = regenerate_candidate_questionnaire(db, candidate, recruiter_notes=body.notes or "")
     except QuestionnaireError as exc:
@@ -555,9 +538,7 @@ def fill_candidate_questionnaire_from_transcript_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     try:
         items = fill_candidate_questionnaire_from_transcript(db, candidate)
     except QuestionnaireError as exc:
@@ -579,9 +560,7 @@ async def transcribe_candidate_and_evaluate(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     source_url = str((candidate.payload or {}).get("video_link") or "").strip()
     if not source_url:
         raise HTTPException(status_code=400, detail="Добавьте ссылку на запись собеседования")
@@ -639,9 +618,7 @@ def send_candidate_to_chat(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     opts = body or CandidateSendToChatIn()
     try:
         result = send_candidate_to_client(
@@ -681,9 +658,7 @@ def remind_candidate(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     ok, msg = send_manual_reminder(db, candidate, kind=kind if kind in ("evaluate", "decide") else "evaluate")
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
@@ -703,9 +678,7 @@ def send_candidate_extra_material(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     ok, msg = send_extra_material(
         db,
         candidate,
@@ -730,9 +703,7 @@ def refresh_candidate_telegram_endpoint(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     ok, msg = refresh_candidate_telegram(db, candidate, notify=notify)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
@@ -748,9 +719,7 @@ def confirm_candidate_meeting(candidate_id: str, db: Session = Depends(get_db)) 
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    candidate = db.get(models.Candidate, cid)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = get_candidate_or_404(db, cid)
     p = candidate.payload or {}
     if not str(p.get("office_interview_date") or "").strip() or not str(p.get("office_interview_time") or "").strip():
         raise HTTPException(status_code=400, detail="Встреча не назначена")
@@ -782,7 +751,6 @@ def list_candidate_messaging_posts(
         cid = UUID(candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
-    if not db.get(models.Candidate, cid):
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    get_candidate_or_404(db, cid)
     return [MessagingPostOut.model_validate(p) for p in list_candidate_posts(db, cid)]
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type StageItem = {
   id: string;
@@ -27,7 +27,7 @@ export function VacancyStageSchemaPanel({ vacancyId }: Props) {
   const [err, setErr] = useState<string | null>(null);
 
   const load = async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/stage-schema`, {
+    const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/stage-schema`, {
       cache: "no-store",
     });
     const data = await res.json();
@@ -45,7 +45,7 @@ export function VacancyStageSchemaPanel({ vacancyId }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/stage-schema`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/stage-schema`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

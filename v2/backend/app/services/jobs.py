@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import models
@@ -129,8 +129,27 @@ def list_jobs(
     vacancy_id: int | None = None,
     job_type: str | None = None,
     status: str | None = None,
+    organization_id=None,
 ) -> list[models.Job]:
     q = select(models.Job)
+    if organization_id is not None:
+        from app.services.tenancy import org_client_ids, org_vacancy_ids
+
+        vac_ids = org_vacancy_ids(db, organization_id)
+        client_ids = org_client_ids(db, organization_id)
+        if not vac_ids and not client_ids:
+            return []
+        clauses = []
+        if vac_ids:
+            clauses.append(models.Job.vacancy_id.in_(vac_ids))
+        if client_ids:
+            clauses.append(
+                (models.Job.vacancy_id.is_(None)) & (models.Job.client_id.in_(client_ids))
+            )
+        if clauses:
+            q = q.where(or_(*clauses))
+        else:
+            return []
     if vacancy_id is not None:
         q = q.where(models.Job.vacancy_id == int(vacancy_id))
     if job_type:
@@ -194,15 +213,26 @@ def delete_hh_jobs(
     return len(rows)
 
 
-def count_active(db: Session) -> int:
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(models.Job)
-            .where(models.Job.status.in_(("queued", "running")))
-        )
-        or 0
+def count_active(db: Session, organization_id=None) -> int:
+    q = select(func.count()).select_from(models.Job).where(
+        models.Job.status.in_(("queued", "running"))
     )
+    if organization_id is not None:
+        from app.services.tenancy import org_client_ids, org_vacancy_ids
+
+        vac_ids = org_vacancy_ids(db, organization_id)
+        client_ids = org_client_ids(db, organization_id)
+        clauses = []
+        if vac_ids:
+            clauses.append(models.Job.vacancy_id.in_(vac_ids))
+        if client_ids:
+            clauses.append(
+                (models.Job.vacancy_id.is_(None)) & (models.Job.client_id.in_(client_ids))
+            )
+        if not clauses:
+            return 0
+        q = q.where(or_(*clauses))
+    return int(db.scalar(q) or 0)
 
 
 def find_active_job_for_candidate(

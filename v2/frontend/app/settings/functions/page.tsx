@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type FunctionsSettings = {
   hh_search_enabled?: boolean;
@@ -32,7 +32,7 @@ export default function FunctionsSettingsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/settings/app`, { cache: "no-store" });
         const d = (await res.json()) as AppSettings;
         if (cancelled) return;
         setData(d);
@@ -51,7 +51,7 @@ export default function FunctionsSettingsPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/settings/app`, {
+      const res = await apiFetch(`/api/v1/settings/app`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

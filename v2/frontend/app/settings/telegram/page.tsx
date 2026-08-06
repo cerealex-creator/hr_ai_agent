@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
-import { getApiBase, type ClientItem } from "@/lib/api";
+import { type ClientItem, apiFetch } from "@/lib/api";
 
 type MessagingStatus = {
   outbound_enabled: boolean;
@@ -66,9 +66,9 @@ export default function TelegramSettingsPage() {
 
   const load = async () => {
     const [st, ch, cl] = await Promise.all([
-      fetch(`${getApiBase()}/api/v1/messaging/status`).then((r) => r.json()),
-      fetch(`${getApiBase()}/api/v1/messaging/channels`).then((r) => r.json()),
-      fetch(`${getApiBase()}/api/v1/clients`).then((r) => r.json()),
+      apiFetch(`/api/v1/messaging/status`).then((r) => r.json()),
+      apiFetch(`/api/v1/messaging/channels`).then((r) => r.json()),
+      apiFetch(`/api/v1/clients`).then((r) => r.json()),
     ]);
     const list = (Array.isArray(ch) ? ch : []) as Channel[];
     setStatus(st);
@@ -164,7 +164,7 @@ export default function TelegramSettingsPage() {
           style={{ marginTop: "0.35rem" }}
           onClick={() =>
             run(async () => {
-              const res = await fetch(`${getApiBase()}/api/v1/messaging/test-message`, {
+              const res = await apiFetch(`/api/v1/messaging/test-message`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: testChatId.trim() }),
@@ -253,7 +253,7 @@ export default function TelegramSettingsPage() {
                 } else if (newDeptChoice) {
                   payload.client_id = Number(newDeptChoice);
                 }
-                const res = await fetch(`${getApiBase()}/api/v1/messaging/channels`, {
+                const res = await apiFetch(`/api/v1/messaging/channels`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify(payload),
@@ -277,7 +277,7 @@ export default function TelegramSettingsPage() {
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const res = await fetch(`${getApiBase()}/api/v1/messaging/channels/sync`, {
+                const res = await apiFetch(`/api/v1/messaging/channels/sync`, {
                   method: "POST",
                 });
                 const data = await res.json().catch(() => ({}));
@@ -335,8 +335,7 @@ export default function TelegramSettingsPage() {
                       onChange={(e) =>
                         run(async () => {
                           const val = e.target.value;
-                          const res = await fetch(
-                            `${getApiBase()}/api/v1/messaging/channels/${ch.id}`,
+                          const res = await apiFetch(`/api/v1/messaging/channels/${ch.id}`,
                             {
                               method: "PATCH",
                               headers: { "Content-Type": "application/json" },
@@ -376,8 +375,7 @@ export default function TelegramSettingsPage() {
                           disabled={busy || !editName.trim() || !editChatId.trim()}
                           onClick={() =>
                             run(async () => {
-                              const res = await fetch(
-                                `${getApiBase()}/api/v1/messaging/channels/${ch.id}`,
+                              const res = await apiFetch(`/api/v1/messaging/channels/${ch.id}`,
                                 {
                                   method: "PATCH",
                                   headers: { "Content-Type": "application/json" },
@@ -435,8 +433,7 @@ export default function TelegramSettingsPage() {
                               ) {
                                 return;
                               }
-                              const res = await fetch(
-                                `${getApiBase()}/api/v1/messaging/channels/${ch.id}`,
+                              const res = await apiFetch(`/api/v1/messaging/channels/${ch.id}`,
                                 { method: "DELETE" },
                               );
                               const data = await res.json().catch(() => ({}));
@@ -487,7 +484,7 @@ export default function TelegramSettingsPage() {
             style={{ marginTop: "0.35rem" }}
             onClick={() =>
               run(async () => {
-                const res = await fetch(`${getApiBase()}/api/v1/messaging/send-instruction`, {
+                const res = await apiFetch(`/api/v1/messaging/send-instruction`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ chat_id: instructionChatId.trim() }),

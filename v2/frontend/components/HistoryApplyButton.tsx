@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Props = {
   generationId: string;
@@ -26,7 +26,7 @@ export function HistoryApplyButton({ generationId, defaultVacancyId }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/history/${generationId}/apply`, {
+      const res = await apiFetch(`/api/v1/history/${generationId}/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vacancy_id: vid }),

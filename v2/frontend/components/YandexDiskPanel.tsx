@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Config = {
   vacancy_id: number;
@@ -46,8 +46,7 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk/ensure-folders`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/yandex-disk/ensure-folders`,
         { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));
@@ -74,7 +73,7 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/yandex-disk`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -102,7 +101,7 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
     setMsg(null);
     try {
       // persist first
-      const patch = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk`, {
+      const patch = await apiFetch(`/api/v1/vacancies/${vacancyId}/yandex-disk`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ root_url: rootUrl, ingest_new_resumes: ingestNew }),
@@ -111,7 +110,7 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
         const data = await patch.json().catch(() => ({}));
         throw new Error(typeof data?.detail === "string" ? data.detail : "Не удалось сохранить URL");
       }
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk/sync`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/yandex-disk/sync`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));
@@ -136,7 +135,7 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/yandex-disk`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/yandex-disk`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset_seen: true, root_url: rootUrl, ingest_new_resumes: ingestNew }),

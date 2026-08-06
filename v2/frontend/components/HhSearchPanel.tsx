@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { HhManualEvalBlock } from "@/components/HhManualEvalBlock";
 import { HhPresetBlock, type HhPreset } from "@/components/HhPresetBlock";
 import { HhSearchPlanBlock, type SearchPlan } from "@/components/HhSearchPlanBlock";
@@ -306,7 +306,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
   }, []);
 
   const loadShortlist = useCallback(async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-shortlist`, {
+    const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-shortlist`, {
       cache: "no-store",
     });
     if (!res.ok) return;
@@ -316,7 +316,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
   }, [vacancyId]);
 
   const poll = useCallback(async (jobId: string) => {
-    const res = await fetch(`${getApiBase()}/api/v1/jobs/${jobId}`, { cache: "no-store" });
+    const res = await apiFetch(`/api/v1/jobs/${jobId}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`API ${res.status}`);
     const next: Job = await res.json();
     setJob(next);
@@ -324,8 +324,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
   }, []);
 
   const loadHistory = useCallback(async () => {
-    const res = await fetch(
-      `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-history?limit=20`,
+    const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-history?limit=20`,
       { cache: "no-store" },
     );
     if (!res.ok) return [] as HistoryItem[];
@@ -348,8 +347,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
     setPrefilling(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-criteria/prefill`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-criteria/prefill`,
         { method: "POST" },
       );
       if (!res.ok) throw new Error(await res.text());
@@ -378,8 +376,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-defaults`,
+        const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-defaults`,
           { cache: "no-store" },
         );
         if (!res.ok) throw new Error(`API ${res.status}`);
@@ -463,8 +460,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
     setSaveOk(null);
     const toSave = normalizeCriteriaForSave(criteria);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-criteria`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-criteria`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -550,8 +546,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
       if (opts?.fromApprove) {
         // Approve уже сохранил критерии на сервере — не перезаписываем устаревшим state.
         payloadCriteria = normalizeCriteriaForSave(merged);
-        const put = await fetch(
-          `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-criteria`,
+        const put = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-criteria`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -571,7 +566,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
         const saved = await saveCriteria(false);
         payloadCriteria = normalizeCriteriaForSave(saved || merged);
       }
-      const res = await fetch(`${getApiBase()}/api/v1/jobs`, {
+      const res = await apiFetch(`/api/v1/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -593,7 +588,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
 
   const addToShortlist = async (hit: HhHit) => {
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-shortlist`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-shortlist`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -614,7 +609,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
 
   const rejectCandidate = async (hit: HhHit) => {
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-seen/reject`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-seen/reject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -632,7 +627,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
   };
 
   const removeShortlist = async (itemId: string) => {
-    await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-shortlist/${itemId}`, {
+    await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-shortlist/${itemId}`, {
       method: "DELETE",
     });
     await loadShortlist();
@@ -643,8 +638,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
     setError(null);
     setSaveOk(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-shortlist/${item.id}/to-candidate`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-shortlist/${item.id}/to-candidate`,
         { method: "POST" },
       );
       if (!res.ok) throw new Error(await res.text());
@@ -665,7 +659,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
 
   const removeHistoryJob = async (jobId: string) => {
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/jobs/${jobId}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/v1/jobs/${jobId}`, { method: "DELETE" });
       if (!res.ok && res.status !== 204) throw new Error(await res.text());
       if (job?.id === jobId) setJob(null);
       await loadHistory();
@@ -677,8 +671,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
 
   const cleanupBadHistory = async () => {
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-search-history/cleanup`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-search-history/cleanup`,
         { method: "POST" },
       );
       if (!res.ok) throw new Error(await res.text());

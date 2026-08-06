@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type TestChat = {
   client_id: number | null;
@@ -32,7 +32,7 @@ export function TestChatSettings() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/settings/test-chat`, { cache: "no-store" });
+    const res = await apiFetch(`/api/v1/settings/test-chat`, { cache: "no-store" });
     if (!res.ok) throw new Error(`API ${res.status}`);
     const next: TestChat = await res.json();
     setData(next);
@@ -77,7 +77,7 @@ export function TestChatSettings() {
             setErr(null);
             setMsg(null);
             try {
-              const res = await fetch(`${getApiBase()}/api/v1/settings/test-chat`, {
+              const res = await apiFetch(`/api/v1/settings/test-chat`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: name.trim() || "Тестировочный", chat_id: chatId.trim() }),
@@ -104,7 +104,7 @@ export function TestChatSettings() {
             setErr(null);
             setMsg(null);
             try {
-              const res = await fetch(`${getApiBase()}/api/v1/messaging/test-message`, {
+              const res = await apiFetch(`/api/v1/messaging/test-message`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: chatId.trim() }),

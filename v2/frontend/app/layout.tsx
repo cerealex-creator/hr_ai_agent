@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { AuthGate } from "@/components/AuthGate";
+import { JobsLiveProvider } from "@/components/JobsLive";
 import { UI_PREFS_BOOT_SCRIPT, UiPrefsProvider } from "@/components/UiPrefsProvider";
 import "./globals.css";
 
@@ -14,7 +16,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: UI_PREFS_BOOT_SCRIPT }} />
       </head>
       <body>
-        <UiPrefsProvider>{children}</UiPrefsProvider>
+        <UiPrefsProvider>
+          <AuthGate>
+            <JobsLiveProvider>{children}</JobsLiveProvider>
+          </AuthGate>
+        </UiPrefsProvider>
       </body>
     </html>
   );

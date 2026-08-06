@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import {
   companyModeLabel,
   detailMessage,
@@ -21,7 +21,7 @@ export function CompaniesSettings() {
   const [newCompanyMode, setNewCompanyMode] = useState<"company" | "departments">("company");
 
   const load = useCallback(async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/companies`, { cache: "no-store" });
+    const res = await apiFetch(`/api/v1/companies`, { cache: "no-store" });
     if (!res.ok) throw new Error(`API ${res.status}`);
     const data = await res.json();
     setItems(data.items || []);
@@ -71,7 +71,7 @@ export function CompaniesSettings() {
             setErr(null);
             setMsg(null);
             try {
-              const res = await fetch(`${getApiBase()}/api/v1/companies`, {
+              const res = await apiFetch(`/api/v1/companies`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

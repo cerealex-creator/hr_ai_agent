@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Props = {
   vacancyId: number;
@@ -36,7 +36,7 @@ export function DocumentsFromMaterials({ vacancyId, onDone }: Props) {
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/jobs/${job.id}`, { cache: "no-store" });
+        const res = await apiFetch(`/api/v1/jobs/${job.id}`, { cache: "no-store" });
         if (!res.ok) return;
         const next: Job = await res.json();
         if (cancelled) return;
@@ -78,8 +78,7 @@ export function DocumentsFromMaterials({ vacancyId, onDone }: Props) {
       fd.append("gen_questions", "true");
       fd.append("gen_vacancy_text", "true");
       fd.append("gen_keywords", "true");
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancyId}/documents/from-materials`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/documents/from-materials`,
         { method: "POST", body: fd },
       );
       if (!res.ok) {

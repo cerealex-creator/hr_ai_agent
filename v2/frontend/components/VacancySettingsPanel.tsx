@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getApiBase, type VacancyDetail } from "@/lib/api";
+import { type VacancyDetail, apiFetch } from "@/lib/api";
 import { ChatSelect } from "@/components/ChatSelect";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { VacancyStageSchemaPanel } from "@/components/VacancyStageSchemaPanel";
@@ -26,7 +26,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancy.id}/settings`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancy.id}/settings`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -53,7 +53,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancy.id}/digest-to-chat`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancy.id}/digest-to-chat`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));
@@ -71,8 +71,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/vacancies/${vacancy.id}/warranty/create-search`,
+      const res = await apiFetch(`/api/v1/vacancies/${vacancy.id}/warranty/create-search`,
         { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type ChatOption = {
   external_id: string;
@@ -28,7 +28,7 @@ export function ChatSelect({ value, onChange, disabled, id = "chat-select" }: Pr
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/v1/messaging/channels`, {
+        const res = await apiFetch(`/api/v1/messaging/channels`, {
           cache: "no-store",
         });
         if (!res.ok) return;

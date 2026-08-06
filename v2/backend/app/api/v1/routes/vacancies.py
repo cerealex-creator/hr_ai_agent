@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -127,6 +128,10 @@ def list_vacancies(
     client_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[VacancyListItem]:
+    from app.services.tenancy import org_client_ids, require_org_id
+
+    org_id = require_org_id()
+    allowed = org_client_ids(db, org_id)
     cand_count = (
         select(models.Candidate.vacancy_id, func.count().label("cnt"))
         .group_by(models.Candidate.vacancy_id)
@@ -143,11 +148,14 @@ def list_vacancies(
         .outerjoin(models.Client, models.Client.id == models.Vacancy.client_id)
         .outerjoin(cand_count, cand_count.c.vacancy_id == models.Vacancy.id)
         .outerjoin(hire_count, hire_count.c.vacancy_id == models.Vacancy.id)
+        .where(models.Vacancy.client_id.in_(allowed) if allowed else models.Vacancy.id == -1)
         .order_by(models.Vacancy.id)
     )
     if active is not None:
         q = q.where(models.Vacancy.active.is_(active))
     if client_id is not None:
+        if client_id not in allowed:
+            return []
         q = q.where(models.Vacancy.client_id == client_id)
     result: list[VacancyListItem] = []
     for vacancy, client_name, cnt, hire_cnt in db.execute(q).all():
@@ -177,9 +185,7 @@ def list_vacancies(
 
 @router.get("/vacancies/{vacancy_id}", response_model=VacancyDetail)
 def get_vacancy(vacancy_id: int, db: Session = Depends(get_db)) -> VacancyDetail:
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     return _vacancy_detail(db, vacancy)
 
 @router.post("/vacancies", response_model=VacancyDetail, status_code=201)
@@ -210,9 +216,7 @@ def close_vacancy_endpoint(
 ) -> VacancyDetail:
     from app.services.vacancy_write import VacancyWriteError, close_vacancy
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         vac = close_vacancy(db, vacancy, close_reason=body.close_reason)
     except VacancyWriteError as exc:
@@ -226,9 +230,7 @@ def reopen_vacancy_endpoint(
 ) -> VacancyDetail:
     from app.services.vacancy_write import VacancyWriteError, reopen_vacancy
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         vac = reopen_vacancy(db, vacancy)
     except VacancyWriteError as exc:
@@ -239,9 +241,7 @@ def reopen_vacancy_endpoint(
 def delete_vacancy_endpoint(vacancy_id: int, db: Session = Depends(get_db)) -> None:
     from app.services.vacancy_write import delete_vacancy
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     delete_vacancy(db, vacancy)
     return None
 
@@ -253,9 +253,7 @@ def patch_vacancy_settings(
 ) -> VacancyDetail:
     from sqlalchemy.orm.attributes import flag_modified
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     payload = dict(vacancy.payload or {})
     data = body.model_dump(exclude_unset=True)
     if "is_test" in data:
@@ -284,11 +282,9 @@ def warranty_apply(
     from app.services.app_settings import get_default_warranty_months
     from app.services.warranty import apply_warranty_to_vacancy
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     cid = body.candidate_id
-    candidate = db.get(models.Candidate, cid)
+    candidate = get_candidate_or_404(db, cid)
     if not candidate or candidate.vacancy_id != vacancy_id:
         raise HTTPException(status_code=404, detail="Candidate not found on vacancy")
     start = (body.start_date or "").strip()
@@ -316,9 +312,7 @@ def warranty_create_search(vacancy_id: int, db: Session = Depends(get_db)) -> Va
     from app.services.vacancy_write import VacancyWriteError
     from app.services.warranty import create_warranty_search_vacancy
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         new_v = create_warranty_search_vacancy(db, vacancy)
     except VacancyWriteError as exc:
@@ -331,9 +325,7 @@ def warranty_create_search(vacancy_id: int, db: Session = Depends(get_db)) -> Va
 def yandex_disk_ensure_vacancy_folders(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.yandex_disk_oauth import DiskApiError, ensure_vacancy_folders
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     try:
         return ensure_vacancy_folders(db, vacancy, publish=True)
     except DiskApiError as exc:
@@ -343,18 +335,14 @@ def yandex_disk_ensure_vacancy_folders(vacancy_id: int, db: Session = Depends(ge
 def get_stage_schema(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.stage_schema import catalog, get_vacancy_stage_schema
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     return {"schema": get_vacancy_stage_schema(db, vacancy), "catalog": catalog()}
 
 @router.patch("/vacancies/{vacancy_id}/stage-schema")
 def patch_stage_schema(vacancy_id: int, body: StageSchemaPatchIn, db: Session = Depends(get_db)) -> dict:
     from app.services.stage_schema import catalog, set_vacancy_stage_schema
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     schema = set_vacancy_stage_schema(db, vacancy, body.model_dump())
     return {"schema": schema, "catalog": catalog()}
 
@@ -367,9 +355,7 @@ def patch_vacancy_documents(
     """Merge editable document keys; never replaces whole blob (keeps hh_search_criteria)."""
     from app.services.vacancy_documents_write import EDITABLE_DOCUMENT_KEYS, save_documents
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     updates = body.model_dump(exclude_unset=True)
     unknown = set(updates) - set(EDITABLE_DOCUMENT_KEYS)
     if unknown:
@@ -381,9 +367,7 @@ def patch_vacancy_documents(
 def vacancy_documents_editor(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.vacancy_documents_write import EDITABLE_DOCUMENT_KEYS, documents_for_editor
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     return {
         "vacancy_id": vacancy.id,
         "keys": list(EDITABLE_DOCUMENT_KEYS),
@@ -407,9 +391,7 @@ def generate_vacancy_document(
     from app.services.document_generate import GENERATABLE_KEYS, generate_document_section
     from app.services.vacancy_documents_write import save_documents
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     key = (body.key or "").strip()
     if key not in GENERATABLE_KEYS:
         raise HTTPException(
@@ -464,9 +446,7 @@ async def vacancy_documents_from_materials(
     import uuid as uuid_mod
     from pathlib import Path
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
 
     urls = [u.strip() for u in (source_urls or "").replace(";", "\n").splitlines() if u.strip()]
     file_list = list(files or [])
@@ -546,9 +526,7 @@ async def vacancy_documents_from_materials(
 def get_vacancy_yandex_disk(vacancy_id: int, db: Session = Depends(get_db)) -> YandexDiskConfigOut:
     from app.services.yandex_disk_sync import ensure_yandex_config
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     cfg = ensure_yandex_config(vacancy)
     db.commit()
     return YandexDiskConfigOut(
@@ -568,9 +546,7 @@ def patch_vacancy_yandex_disk(
 ) -> YandexDiskConfigOut:
     from app.services.yandex_disk_sync import update_yandex_config
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     cfg = update_yandex_config(
         vacancy,
         root_url=body.root_url,
@@ -596,9 +572,7 @@ def sync_vacancy_yandex_disk_now(
     """Synchronous sync (folder listing). Prefer ARQ job for large folders."""
     from app.services.yandex_disk_sync import sync_vacancy_yandex_disk
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     result = sync_vacancy_yandex_disk(db, vacancy)
     cfg = (vacancy.payload or {}).get("yandex_disk") or {}
     return YandexDiskSyncOut(
@@ -609,8 +583,7 @@ def sync_vacancy_yandex_disk_now(
 
 @router.get("/vacancies/{vacancy_id}/candidates", response_model=list[CandidateListItem])
 def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> list[CandidateListItem]:
-    if not db.get(models.Vacancy, vacancy_id):
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    get_vacancy_or_404(db, vacancy_id)
     # Same order as Streamlit LIST_DISPLAY_STAGE_ORDER (top → bottom)
     stage_order = [
         "resume_screening",
@@ -667,8 +640,7 @@ def create_vacancy_candidate(
 ) -> CandidateDetail:
     from app.services.candidate_write import create_candidate
 
-    if not db.get(models.Vacancy, vacancy_id):
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    get_vacancy_or_404(db, vacancy_id)
     fields = body.model_dump(exclude={"name"}, exclude_none=True)
     cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields)
     return _candidate_detail(db, cand)
@@ -684,9 +656,7 @@ def bulk_candidates_from_links(
 ) -> BulkLinksOut:
     from app.services.candidate_resume_eval import bulk_add_from_resume_links, parse_bulk_link_lines
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     links = list(body.links or [])
     if body.text:
         links.extend(parse_bulk_link_lines(body.text))
@@ -710,9 +680,7 @@ def bulk_candidates_from_links(
 def vacancy_digest_to_chat(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.messaging.ops import send_vacancy_digest
 
-    vacancy = db.get(models.Vacancy, vacancy_id)
-    if not vacancy:
-        raise HTTPException(status_code=404, detail="Vacancy not found")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
     ok, msg = send_vacancy_digest(db, vacancy)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

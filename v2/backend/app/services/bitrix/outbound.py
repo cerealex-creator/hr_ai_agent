@@ -259,3 +259,38 @@ def send_candidate_bitrix_task(
         "hr_stage": candidate.hr_stage,
         "task_id": str(task_id),
     }
+
+
+def send_bitrix_smoke_task() -> dict[str, Any]:
+    """Create a minimal Bitrix task to verify webhook + responsible (settings smoke)."""
+    cfg = get_bitrix()
+    if not cfg.get("enabled"):
+        raise BitrixError("Bitrix выключен в настройках", 400)
+    if not str(cfg.get("incoming_webhook_url") or "").strip():
+        raise BitrixError("Не задан incoming webhook URL", 400)
+    responsible = str(cfg.get("default_responsible_id") or "").strip()
+    if not responsible:
+        raise BitrixError("Не задан default_responsible_id", 400)
+
+    hours = int(cfg.get("task_deadline_hours") or 24)
+    stamp = datetime.now(_tz()).strftime("%d.%m.%Y %H:%M")
+    task_id = create_task(
+        {
+            "TITLE": f"HR AI Agent · тест связи ({stamp})",
+            "DESCRIPTION": (
+                "[b]Тестовая задача[/b] из настроек HR AI Agent.\n"
+                "Если вы видите это в Bitrix — входящий webhook и ответственный настроены верно.\n"
+                "Задачу можно закрыть."
+            ),
+            "DESCRIPTION_IN_BBCODE": "Y",
+            "RESPONSIBLE_ID": int(responsible),
+            "DEADLINE": _deadline_iso(hours),
+            "PRIORITY": "0",
+        }
+    )
+    return {
+        "ok": True,
+        "task_id": str(task_id),
+        "message": f"Тестовая задача создана (#{task_id})",
+        "responsible_id": responsible,
+    }

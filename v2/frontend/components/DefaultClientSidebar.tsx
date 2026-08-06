@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ClientSidebar } from "@/components/ClientSidebar";
-import { getApiBase, type ClientItem, type VacancyListItem } from "@/lib/api";
+import { type ClientItem, type VacancyListItem, apiFetch } from "@/lib/api";
 
 /** Sidebar on every page: loads clients; selection from ?client= when on home. */
 export function DefaultClientSidebar() {
@@ -22,8 +22,8 @@ export function DefaultClientSidebar() {
     (async () => {
       try {
         const [clientsRes, vacRes] = await Promise.all([
-          fetch(`${getApiBase()}/api/v1/clients`, { cache: "no-store" }),
-          fetch(`${getApiBase()}/api/v1/vacancies`, { cache: "no-store" }),
+          apiFetch(`/api/v1/clients`, { cache: "no-store" }),
+          apiFetch(`/api/v1/vacancies`, { cache: "no-store" }),
         ]);
         if (!clientsRes.ok || !vacRes.ok) return;
         const nextClients: ClientItem[] = await clientsRes.json();

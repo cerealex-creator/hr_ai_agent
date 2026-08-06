@@ -124,8 +124,16 @@ router = APIRouter()
 @router.get("/messaging/channels", response_model=list[MessagingChannelOut])
 def messaging_list_channels(db: Session = Depends(get_db)) -> list[MessagingChannelOut]:
     from app.services.messaging.channels import list_channels
+    from app.services.tenancy import org_client_ids, require_org_id
 
-    return [_channel_out(r) for r in list_channels(db)]
+    org_id = require_org_id()
+    allowed = org_client_ids(db, org_id)
+    rows = [
+        r
+        for r in list_channels(db)
+        if r.client_id is None or r.client_id in allowed
+    ]
+    return [_channel_out(r) for r in rows]
 
 @router.post("/messaging/channels", response_model=MessagingChannelOut)
 def messaging_create_channel(

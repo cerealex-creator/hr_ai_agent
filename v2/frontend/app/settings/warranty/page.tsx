@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type AppSettings = {
   default_warranty_months: number;
@@ -25,7 +25,7 @@ export default function WarrantySettingsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBase()}/api/v1/settings/app`)
+    apiFetch(`/api/v1/settings/app`)
       .then((r) => r.json())
       .then(setAppSettings)
       .catch((e) => setErr(e instanceof Error ? e.message : "Ошибка загрузки"));
@@ -53,7 +53,7 @@ export default function WarrantySettingsPage() {
                 setErr(null);
                 setMsg(null);
                 try {
-                  const res = await fetch(`${getApiBase()}/api/v1/settings/app`, {
+                  const res = await apiFetch(`/api/v1/settings/app`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({

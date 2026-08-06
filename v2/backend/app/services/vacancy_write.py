@@ -84,8 +84,13 @@ def create_vacancy(
             "Переместите предыдущую в архив или укажите другое название."
         )
 
-    if client_id is not None and not db.get(models.Client, client_id):
-        raise VacancyWriteError("Клиент не найден", 404)
+    if client_id is not None:
+        from app.services.tenancy import client_in_org, current_user
+
+        client = db.get(models.Client, client_id)
+        user = current_user()
+        if not client or (user is not None and not client_in_org(db, client, user.org_id)):
+            raise VacancyWriteError("Клиент не найден", 404)
 
     documents = empty_vacancy_documents()
     payload: dict[str, Any] = {

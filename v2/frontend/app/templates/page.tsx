@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Tmpl = {
   id: string;
@@ -21,7 +21,7 @@ export default function TemplatesPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBase()}/api/v1/vacancy-templates`, { cache: "no-store" })
+    apiFetch(`/api/v1/vacancy-templates`, { cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -35,7 +35,7 @@ export default function TemplatesPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancy-templates/${id}/create-vacancy`, {
+      const res = await apiFetch(`/api/v1/vacancy-templates/${id}/create-vacancy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),

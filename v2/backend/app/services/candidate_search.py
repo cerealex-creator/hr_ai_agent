@@ -62,15 +62,29 @@ def search_candidates(
     *,
     include_test: bool = False,
     limit: int = 40,
+    organization_id=None,
 ) -> list[dict]:
     query = (query or "").strip()
     if len(query) < 2:
         return []
     query_fold = query.casefold()
     words = [w for w in query_fold.split() if len(w) >= 2]
-    vacancies = {v.id: v for v in db.scalars(select(models.Vacancy)).all()}
+    vq = select(models.Vacancy)
+    if organization_id is not None:
+        from app.services.tenancy import org_client_ids
+
+        cids = org_client_ids(db, organization_id)
+        if not cids:
+            return []
+        vq = vq.where(models.Vacancy.client_id.in_(cids))
+    vacancies = {v.id: v for v in db.scalars(vq).all()}
     hits: list[CandidateSearchHit] = []
-    for cand in db.scalars(select(models.Candidate)).all():
+    cq = select(models.Candidate)
+    if vacancies:
+        cq = cq.where(models.Candidate.vacancy_id.in_(list(vacancies.keys())))
+    else:
+        return []
+    for cand in db.scalars(cq).all():
         vac = vacancies.get(cand.vacancy_id)
         if not vac:
             continue

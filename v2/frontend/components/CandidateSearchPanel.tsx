@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { getApiBase, type CandidateListItem } from "@/lib/api";
+import { type CandidateListItem, apiFetch } from "@/lib/api";
 import { StageMarker } from "@/components/StageMarker";
 import { clientStatusLabel } from "@/lib/labels";
 
@@ -25,7 +25,7 @@ export function CandidateSearchPanel() {
     try {
       const qs = new URLSearchParams({ q: q.trim(), limit: "40" });
       if (includeTest) qs.set("include_test", "true");
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/search?${qs}`, {
+      const res = await apiFetch(`/api/v1/candidates/search?${qs}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

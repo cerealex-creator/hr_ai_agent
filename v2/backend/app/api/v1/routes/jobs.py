@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -129,25 +130,29 @@ def list_jobs(
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> JobsListOut:
+    from app.services.tenancy import require_org_id
+
+    org_id = require_org_id()
+    if vacancy_id is not None:
+        get_vacancy_or_404(db, vacancy_id, org_id)
     rows = job_svc.list_jobs(
-        db, limit=limit, vacancy_id=vacancy_id, job_type=job_type, status=status
+        db,
+        limit=limit,
+        vacancy_id=vacancy_id,
+        job_type=job_type,
+        status=status,
+        organization_id=org_id,
     )
     return JobsListOut(
-        active_count=job_svc.count_active(db),
+        active_count=job_svc.count_active(db, organization_id=org_id),
         items=[JobOut.model_validate(r) for r in rows],
     )
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
-    try:
-        from uuid import UUID
+    from app.services.tenancy import get_job_or_404
 
-        jid = UUID(job_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid job id") from exc
-    job = job_svc.get_job(db, jid)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = get_job_or_404(db, job_id)
     return JobOut.model_validate(job)
 
 @router.post("/jobs", response_model=JobCreateOut, status_code=202)
@@ -190,7 +195,7 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
                 status_code=400,
                 detail="Для hh_cold_search нужен vacancy_id",
             )
-        vacancy = db.get(models.Vacancy, int(vacancy_id))
+        vacancy = get_vacancy_or_404(db, int(vacancy_id))
         if not vacancy:
             raise HTTPException(status_code=404, detail="Vacancy not found")
         preset = normalize_preset(payload.get("preset") or {})
@@ -236,7 +241,7 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
                 status_code=400,
                 detail="Для yandex_disk_sync нужен vacancy_id",
             )
-        vacancy = db.get(models.Vacancy, int(vacancy_id))
+        vacancy = get_vacancy_or_404(db, int(vacancy_id))
         if not vacancy:
             raise HTTPException(status_code=404, detail="Vacancy not found")
         from app.services.yandex_disk_sync import ensure_yandex_config
@@ -250,11 +255,24 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
             )
         payload["vacancy_id"] = int(vacancy_id)
         body = body.model_copy(update={"vacancy_id": int(vacancy_id)})
+
+    # Tenancy: jobs without vacancy/client (e.g. demo) must still be visible in org lists.
+    client_id = body.client_id
+    vacancy_id = body.vacancy_id
+    if vacancy_id is None and client_id is None:
+        from app.services.tenancy import org_client_ids, require_org_id
+
+        org_id = require_org_id()
+        cids = sorted(org_client_ids(db, org_id))
+        if cids:
+            client_id = cids[0]
+            body = body.model_copy(update={"client_id": client_id})
+
     job = job_svc.create_job_row(
         db,
         job_type=body.job_type,
-        client_id=body.client_id,
-        vacancy_id=body.vacancy_id,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
         payload=payload,
     )
     try:

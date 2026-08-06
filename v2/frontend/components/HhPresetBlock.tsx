@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type TextBlock = {
   text: string;
@@ -193,7 +193,7 @@ export function HhPresetBlock({
         ...local,
         api: { ...local.api, professional_role_ids: roles },
       };
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/hh-preset`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/hh-preset`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ preset: bodyPreset, approve, rebuild_portrait: false }),
@@ -219,7 +219,7 @@ export function HhPresetBlock({
     try {
       const saved = await save(true);
       if (!saved) return;
-      const res = await fetch(`${getApiBase()}/api/v1/jobs`, {
+      const res = await apiFetch(`/api/v1/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

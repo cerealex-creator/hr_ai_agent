@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Row = {
   vacancy_id: number;
@@ -23,7 +23,7 @@ export function WarrantyRegistry() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBase()}/api/v1/warranty/registry`)
+    apiFetch(`/api/v1/warranty/registry`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();

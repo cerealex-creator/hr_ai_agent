@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type DiskStatus = {
   connected: boolean;
@@ -42,7 +42,7 @@ export default function YandexDiskSettingsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const loadStatus = async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/status`, {
+    const res = await apiFetch(`/api/v1/integrations/yandex-disk/status`, {
       cache: "no-store",
     });
     const data = await res.json();
@@ -51,7 +51,7 @@ export default function YandexDiskSettingsPage() {
   };
 
   const loadInbox = async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox`, {
+    const res = await apiFetch(`/api/v1/integrations/yandex-disk/inbox`, {
       cache: "no-store",
     });
     const data = await res.json().catch(() => ({}));
@@ -63,14 +63,14 @@ export default function YandexDiskSettingsPage() {
 
   useEffect(() => {
     loadStatus().catch((e) => setErr(e instanceof Error ? e.message : "Ошибка"));
-    fetch(`${getApiBase()}/api/v1/settings/app`)
+    apiFetch(`/api/v1/settings/app`)
       .then((r) => r.json())
       .then((d) => {
         if (d.yandex_disk_root) setRoot(d.yandex_disk_root);
         if (d.yandex_disk_inbox) setInbox(d.yandex_disk_inbox);
       })
       .catch(() => undefined);
-    fetch(`${getApiBase()}/api/v1/vacancies?active=true`)
+    apiFetch(`/api/v1/vacancies?active=true`)
       .then((r) => r.json())
       .then((d) => {
         const items = (Array.isArray(d) ? d : d.items || []) as {
@@ -89,7 +89,7 @@ export default function YandexDiskSettingsPage() {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/token`, {
+      const res = await apiFetch(`/api/v1/integrations/yandex-disk/token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
@@ -110,13 +110,13 @@ export default function YandexDiskSettingsPage() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/settings/app`, {
+      const res = await apiFetch(`/api/v1/settings/app`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ yandex_disk_root: root, yandex_disk_inbox: inbox }),
       });
       if (!res.ok) throw new Error("Не удалось сохранить пути");
-      await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/ensure-root`, { method: "POST" });
+      await apiFetch(`/api/v1/integrations/yandex-disk/ensure-root`, { method: "POST" });
       await loadStatus();
       setMsg("Пути сохранены");
     } catch (e) {
@@ -131,12 +131,12 @@ export default function YandexDiskSettingsPage() {
     setErr(null);
     setMsg(null);
     try {
-      await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/settings`, {
+      await apiFetch(`/api/v1/integrations/yandex-disk/inbox/settings`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confidence: threshold }),
       });
-      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/process`, {
+      const res = await apiFetch(`/api/v1/integrations/yandex-disk/inbox/process`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ limit: 20 }),
@@ -164,7 +164,7 @@ export default function YandexDiskSettingsPage() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/integrations/yandex-disk/inbox/${id}/bind`, {
+      const res = await apiFetch(`/api/v1/integrations/yandex-disk/inbox/${id}/bind`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vacancy_id: vid }),

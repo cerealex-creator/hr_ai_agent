@@ -1,15 +1,172 @@
+/**
+ * Browser: same-origin (Next rewrite → API) so httpOnly cookies + EventSource work.
+ * Server components / SSR: hit backend directly.
+ */
 export function getApiBase(): string {
-  return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+  if (typeof window !== "undefined") {
+    return "";
+  }
+  return (
+    process.env.API_INTERNAL_URL?.replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+    "http://localhost:8000"
+  );
+}
+
+/** Absolute base for EventSource (always same-origin in browser). */
+export function getEventsStreamUrl(): string {
+  return "/api/v1/events/stream";
+}
+
+type ApiFetchOptions = RequestInit & {
+  /** Skip 401 → refresh → redirect (for /auth/login, /auth/me checks). */
+  skipAuthRedirect?: boolean;
+};
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function serverCookieHeader(): Promise<string | undefined> {
+  if (typeof window !== "undefined") return undefined;
+  try {
+    const { cookies } = await import("next/headers");
+    const store = await cookies();
+    const parts: string[] = [];
+    for (const c of store.getAll()) {
+      parts.push(`${c.name}=${c.value}`);
+    }
+    return parts.length ? parts.join("; ") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function tryRefresh(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/v1/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+        return res.ok;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
+function redirectToLoginClient(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
+  const next = `${window.location.pathname}${window.location.search}`;
+  window.location.href = `/login?next=${encodeURIComponent(next)}`;
+}
+
+async function redirectToLoginServer(nextPath?: string): Promise<void> {
+  const { redirect } = await import("next/navigation");
+  const q = nextPath ? `?next=${encodeURIComponent(nextPath)}` : "";
+  redirect(`/login${q}`);
+}
+
+/** API fetch with credentials (httpOnly cookies) and refresh-on-401 (browser). */
+export async function apiFetch(path: string, init: ApiFetchOptions = {}): Promise<Response> {
+  const { skipAuthRedirect, ...rest } = init;
+  const url = path.startsWith("http") ? path : `${getApiBase()}${path}`;
+  const headers = new Headers(rest.headers || undefined);
+  const cookie = await serverCookieHeader();
+  if (cookie && !headers.has("Cookie")) {
+    headers.set("Cookie", cookie);
+  }
+
+  const res = await fetch(url, {
+    ...rest,
+    headers,
+    credentials: typeof window !== "undefined" ? "include" : undefined,
+    cache: rest.cache ?? "no-store",
+  });
+
+  if (res.status !== 401 || skipAuthRedirect) {
+    return res;
+  }
+  if (path.includes("/auth/login") || path.includes("/auth/refresh") || path.includes("/auth/me")) {
+    return res;
+  }
+
+  if (typeof window === "undefined") {
+    await redirectToLoginServer();
+  }
+
+  const ok = await tryRefresh();
+  if (!ok) {
+    redirectToLoginClient();
+    return res;
+  }
+  return fetch(url, {
+    ...rest,
+    credentials: "include",
+    cache: rest.cache ?? "no-store",
+  });
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${getApiBase()}${path}`, {
-    cache: "no-store",
-  });
+  const res = await apiFetch(path, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`API ${path}: ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+export type AuthMe = {
+  id: string;
+  email: string;
+  full_name: string;
+  org_id: string;
+  roles: string[];
+  auth_disabled?: boolean;
+};
+
+export async function authMe(): Promise<AuthMe | null> {
+  const res = await apiFetch("/api/v1/auth/me", { cache: "no-store", skipAuthRedirect: true });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`API /auth/me: ${res.status}`);
+  return res.json() as Promise<AuthMe>;
+}
+
+function loginErrorMessage(status: number, body: string): string {
+  try {
+    const data = JSON.parse(body) as { detail?: unknown };
+    const detail = data?.detail;
+    if (detail === "Invalid credentials") return "Неверный email или пароль";
+    if (detail === "No organization membership") return "У пользователя нет организации";
+    if (typeof detail === "string" && detail.trim()) return detail;
+  } catch {
+    /* ignore */
+  }
+  if (status === 401) return "Неверный email или пароль";
+  return `Не удалось войти (${status})`;
+}
+
+export async function authLogin(email: string, password: string): Promise<AuthMe> {
+  const res = await apiFetch("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    skipAuthRedirect: true,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(loginErrorMessage(res.status, text));
+  }
+  return res.json() as Promise<AuthMe>;
+}
+
+export async function authLogout(): Promise<void> {
+  await apiFetch("/api/v1/auth/logout", { method: "POST", skipAuthRedirect: true });
 }
 
 export type VacancyOutcome = "success" | "client_cancelled" | "no_result" | null;
@@ -111,7 +268,6 @@ export type FunnelStats = {
   vacancy_id?: number | null;
   vacancy_title?: string | null;
 };
-
 
 export type HistoryItem = {
   id: string;

@@ -120,6 +120,8 @@ from app.schemas import (
 )
 
 router = APIRouter()
+public_router = APIRouter()
+
 
 @router.get("/integrations/yandex-disk/status")
 def yandex_disk_oauth_status() -> dict:
@@ -246,7 +248,7 @@ def google_calendar_oauth_complete(body: GoogleOAuthCompleteIn) -> dict:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg}
 
-@router.post("/integrations/{provider}/webhook", response_model=WebhookAckOut)
+@public_router.post("/integrations/{provider}/webhook", response_model=WebhookAckOut)
 async def integrations_webhook(
     provider: str,
     request: Request,

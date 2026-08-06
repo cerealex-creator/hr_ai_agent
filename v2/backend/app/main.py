@@ -57,6 +57,24 @@ async def lifespan(_app: FastAPI):
         print(f"clients migrate skipped: {exc}")
     finally:
         db.close()
+
+    db = SessionLocal()
+    try:
+        from app.services.users import ensure_bootstrap_user
+
+        ensure_bootstrap_user(db)
+    except Exception as exc:  # noqa: BLE001
+        print(f"auth bootstrap skipped: {exc}")
+    finally:
+        db.close()
+
+    try:
+        from app.services.app_settings import migrate_client_notify_to_pilot
+
+        migrate_client_notify_to_pilot()
+    except Exception as exc:  # noqa: BLE001
+        print(f"client_notify migrate skipped: {exc}")
+
     tick_thread = threading.Thread(target=_bitrix_tick_loop, daemon=True, name="bitrix-tick")
     tick_thread.start()
     yield
@@ -78,6 +96,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def tenancy_request_context(request: Request, call_next):
+    """Expose Request to sync handlers via ContextVar (copied into threadpool)."""
+    from app.services.tenancy import bind_request, reset_request
+
+    token = bind_request(request)
+    try:
+        return await call_next(request)
+    finally:
+        reset_request(token)
+
 
 app.include_router(v1_router, prefix="/api/v1")
 
@@ -217,6 +248,7 @@ def root() -> dict:
         "docs": "/docs",
         "health": "/api/v1/health",
         "jobs": "/api/v1/jobs",
+        "events": "/api/v1/events/stream",
         "messaging": "/api/v1/messaging/status",
         "webhook_stub": "/integrations/telegram/webhook",
         "bitrix_webhook": "/integrations/bitrix/webhook",

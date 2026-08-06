@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getApiBase, type CandidateDetail } from "@/lib/api";
+import { type CandidateDetail, apiFetch } from "@/lib/api";
 
 export type QItem = {
   вопрос: string;
@@ -99,7 +99,7 @@ export function QuestionnairePanel({
   };
 
   const refreshCandidate = async () => {
-    const candRes = await fetch(`${getApiBase()}/api/v1/candidates/${candidate.id}`, {
+    const candRes = await apiFetch(`/api/v1/candidates/${candidate.id}`, {
       cache: "no-store",
     });
     if (candRes.ok) onCandidateChange((await candRes.json()) as CandidateDetail);
@@ -110,7 +110,7 @@ export function QuestionnairePanel({
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${candidate.id}/questionnaire`, {
+      const res = await apiFetch(`/api/v1/candidates/${candidate.id}/questionnaire`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items }),
@@ -134,7 +134,7 @@ export function QuestionnairePanel({
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/candidates/${candidate.id}/evaluate-resume`, {
+      const res = await apiFetch(`/api/v1/candidates/${candidate.id}/evaluate-resume`, {
         method: "POST",
       });
       const data = await res.json().catch(() => ({}));
@@ -169,8 +169,7 @@ export function QuestionnairePanel({
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/candidates/${candidate.id}/questionnaire/regenerate`,
+      const res = await apiFetch(`/api/v1/candidates/${candidate.id}/questionnaire/regenerate`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -197,8 +196,7 @@ export function QuestionnairePanel({
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(
-        `${getApiBase()}/api/v1/candidates/${candidate.id}/questionnaire/fill-from-transcript`,
+      const res = await apiFetch(`/api/v1/candidates/${candidate.id}/questionnaire/fill-from-transcript`,
         { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));

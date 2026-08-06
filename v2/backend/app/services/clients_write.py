@@ -214,11 +214,17 @@ def create_client(
     title = (name or "").strip()
     if not title:
         raise ClientError("Нужно название")
-    org = ensure_default_organization(db)
+    from app.services.tenancy import current_user
+
+    user = current_user()
+    if user is not None:
+        org_id = user.org_id
+    else:
+        org_id = ensure_default_organization(db).id
     parent = None
     if parent_id is not None:
         parent = db.get(models.Client, int(parent_id))
-        if not parent:
+        if not parent or parent.organization_id != org_id:
             raise ClientError("Компания не найдена", 404)
         if parent.kind != KIND_COMPANY:
             raise ClientError("Подразделение можно создать только внутри компании")
@@ -231,7 +237,7 @@ def create_client(
 
     existing = db.scalar(
         select(models.Client).where(
-            models.Client.organization_id == org.id,
+            models.Client.organization_id == org_id,
             models.Client.name == title,
             models.Client.parent_id == (int(parent_id) if parent_id is not None else None),
         )
@@ -241,7 +247,7 @@ def create_client(
 
     row = models.Client(
         id=_next_client_id(db),
-        organization_id=org.id,
+        organization_id=org_id,
         name=title,
         slug=_unique_slug(db, title),
         payload={},
@@ -305,14 +311,13 @@ def delete_client(db: Session, client: models.Client) -> None:
     db.commit()
 
 
-def list_companies(db: Session) -> list[models.Client]:
-    return list(
-        db.scalars(
-            select(models.Client)
-            .where(models.Client.kind == KIND_COMPANY, models.Client.parent_id.is_(None))
-            .order_by(models.Client.name)
-        ).all()
+def list_companies(db: Session, organization_id=None) -> list[models.Client]:
+    q = select(models.Client).where(
+        models.Client.kind == KIND_COMPANY, models.Client.parent_id.is_(None)
     )
+    if organization_id is not None:
+        q = q.where(models.Client.organization_id == organization_id)
+    return list(db.scalars(q.order_by(models.Client.name)).all())
 
 
 def list_departments(db: Session, company_id: int) -> list[models.Client]:
@@ -384,9 +389,12 @@ def clear_test_chat(db: Session) -> None:
     db.commit()
 
 
-def selectable_clients_for_vacancies(db: Session) -> list[models.Client]:
+def selectable_clients_for_vacancies(db: Session, organization_id=None) -> list[models.Client]:
     """Leaves shown in vacancy forms / sidebar (exclude pure company shells in dept mode, exclude test)."""
-    rows = list(db.scalars(select(models.Client).order_by(models.Client.name)).all())
+    q = select(models.Client).order_by(models.Client.name)
+    if organization_id is not None:
+        q = q.where(models.Client.organization_id == organization_id)
+    rows = list(db.scalars(q).all())
     out: list[models.Client] = []
     for c in rows:
         if c.kind == KIND_TEST:
@@ -400,7 +408,7 @@ def selectable_clients_for_vacancies(db: Session) -> list[models.Client]:
 
 def client_to_dict(db: Session, c: models.Client, *, with_channel: bool = True) -> dict:
     ch = channel_for_client(db, c.id) if with_channel else None
-    return {
+    d = {
         "id": c.id,
         "name": c.name,
         "slug": c.slug,
@@ -417,10 +425,14 @@ def client_to_dict(db: Session, c: models.Client, *, with_channel: bool = True) 
             else None
         ),
     }
+    if c.parent_id is None:
+        d["client_zone_token"] = c.client_zone_token
+        d["has_client_zone"] = bool(c.client_zone_token)
+    return d
 
 
-def company_tree(db: Session) -> list[dict]:
-    companies = list_companies(db)
+def company_tree(db: Session, organization_id=None) -> list[dict]:
+    companies = list_companies(db, organization_id=organization_id)
     result = []
     for co in companies:
         node = client_to_dict(db, co)

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DocumentBlock } from "@/components/DocumentBlock";
 import { DocumentsFromMaterials } from "@/components/DocumentsFromMaterials";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { fieldLabel } from "@/lib/labels";
 
 const EDIT_KEYS = ["profile", "vacancy_text", "questions", "keywords", "notes"] as const;
@@ -52,7 +52,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
   const [meetingTranscript, setMeetingTranscript] = useState("");
 
   const reloadEditor = useCallback(async () => {
-    const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/documents/editor`, {
+    const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/documents/editor`, {
       cache: "no-store",
     });
     if (!res.ok) return;
@@ -78,7 +78,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
     setErr(null);
     setMsg(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/documents`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/documents`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -112,7 +112,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
       if (filled && !corr) {
         // allow regenerate without corrections (same as Streamlit)
       }
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/documents/generate`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/documents/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

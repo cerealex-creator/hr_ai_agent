@@ -63,6 +63,7 @@ def list_candidates_filtered(
     hr_stage: str | None = None,
     client_status: str | None = None,
     preset: str | None = None,
+    organization_id=None,
 ) -> tuple[list[models.Candidate], list[models.Vacancy], str]:
     """
     Returns (candidates, scope_vacancies, label_hint).
@@ -73,6 +74,7 @@ def list_candidates_filtered(
         client_id=client_id,
         vacancy_id=vacancy_id,
         active_only=active_vacancies_only,
+        organization_id=organization_id,
     )
     vac_ids = [v.id for v in vacancies]
     candidates = _candidates_for_vacancies(db, vac_ids)

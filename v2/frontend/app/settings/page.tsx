@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { companyModeLabel, type CompanyNode } from "@/lib/companies";
 import { useUiPrefs } from "@/components/UiPrefsProvider";
 
@@ -27,17 +27,17 @@ export default function SettingsHubPage() {
     (async () => {
       try {
         const [companies, status, calendar, testChat, app] = await Promise.all([
-          fetch(`${getApiBase()}/api/v1/companies`, { cache: "no-store" }).then((r) => r.json()),
-          fetch(`${getApiBase()}/api/v1/messaging/status`, { cache: "no-store" }).then((r) =>
+          apiFetch(`/api/v1/companies`, { cache: "no-store" }).then((r) => r.json()),
+          apiFetch(`/api/v1/messaging/status`, { cache: "no-store" }).then((r) =>
             r.json(),
           ),
-          fetch(`${getApiBase()}/api/v1/integrations/google-calendar/status`, {
+          apiFetch(`/api/v1/integrations/google-calendar/status`, {
             cache: "no-store",
           }).then((r) => r.json()),
-          fetch(`${getApiBase()}/api/v1/settings/test-chat`, { cache: "no-store" }).then((r) =>
+          apiFetch(`/api/v1/settings/test-chat`, { cache: "no-store" }).then((r) =>
             r.json(),
           ),
-          fetch(`${getApiBase()}/api/v1/settings/app`, { cache: "no-store" }).then((r) => r.json()),
+          apiFetch(`/api/v1/settings/app`, { cache: "no-store" }).then((r) => r.json()),
         ]);
         if (cancelled) return;
         const items = (companies.items || []) as CompanyNode[];

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { getApiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Props = { vacancyId: number };
 
@@ -19,7 +19,7 @@ export function AddCandidateForm({ vacancyId }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/vacancies/${vacancyId}/candidates`, {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/candidates`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

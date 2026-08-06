@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.services.tenancy import get_candidate_or_404, get_client_or_404, get_vacancy_or_404
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -129,12 +130,20 @@ def list_clients(
 ) -> list[ClientOut]:
     """Flat list. for_vacancies=true → selectable leaves (no company shells, no test)."""
     from app.services import clients_write as cw
+    from app.services.tenancy import require_org_id
 
+    org_id = require_org_id()
     cw.ensure_client_schema(db)
     if for_vacancies:
-        rows = cw.selectable_clients_for_vacancies(db)
+        rows = cw.selectable_clients_for_vacancies(db, organization_id=org_id)
     else:
-        rows = list(db.scalars(select(models.Client).order_by(models.Client.id)).all())
+        rows = list(
+            db.scalars(
+                select(models.Client)
+                .where(models.Client.organization_id == org_id)
+                .order_by(models.Client.id)
+            ).all()
+        )
         if not include_test:
             rows = [r for r in rows if r.kind != cw.KIND_TEST]
     return [ClientOut.model_validate(r) for r in rows]
@@ -145,20 +154,22 @@ def list_companies_tree(
     db: Session = Depends(get_db),
 ) -> CompaniesTreeOut:
     from app.services import clients_write as cw
+    from app.services.tenancy import require_org_id
 
+    org_id = require_org_id()
     migration: dict = {}
     if migrate:
         migration = cw.migrate_legacy_clients(db)
     else:
         cw.ensure_client_schema(db)
-    return CompaniesTreeOut(items=cw.company_tree(db), migration=migration)
+    return CompaniesTreeOut(items=cw.company_tree(db, organization_id=org_id), migration=migration)
 
 @router.get("/companies/{company_id}", response_model=ClientTreeNodeOut)
 def get_company(company_id: int, db: Session = Depends(get_db)) -> ClientTreeNodeOut:
     from app.services import clients_write as cw
 
     cw.ensure_client_schema(db)
-    company = db.get(models.Client, company_id)
+    company = get_client_or_404(db, company_id)
     if not company or company.kind != cw.KIND_COMPANY:
         raise HTTPException(status_code=404, detail="Компания не найдена")
     node = cw.client_to_dict(db, company)
@@ -200,9 +211,7 @@ def patch_client_endpoint(
 ) -> ClientOut:
     from app.services import clients_write as cw
 
-    client = db.get(models.Client, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+    client = get_client_or_404(db, client_id)
     try:
         row = cw.patch_client(db, client, name=body.name, chat_mode=body.chat_mode)
     except cw.ClientError as exc:
@@ -213,9 +222,7 @@ def patch_client_endpoint(
 def delete_client_endpoint(client_id: int, db: Session = Depends(get_db)) -> None:
     from app.services import clients_write as cw
 
-    client = db.get(models.Client, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+    client = get_client_or_404(db, client_id)
     try:
         cw.delete_client(db, client)
     except cw.ClientError as exc:
@@ -228,7 +235,7 @@ def create_department_endpoint(
     from app.services import clients_write as cw
     from app.services.messaging.channels import ChannelError, create_channel
 
-    company = db.get(models.Client, company_id)
+    company = get_client_or_404(db, company_id)
     if not company or company.kind != cw.KIND_COMPANY:
         raise HTTPException(status_code=404, detail="Компания не найдена")
     try:
@@ -250,4 +257,34 @@ def create_department_endpoint(
         msg = getattr(exc, "message", str(exc))
         raise HTTPException(status_code=code, detail=msg) from exc
     return ClientOut.model_validate(row)
+
+
+@router.get("/companies/{company_id}/client-zone")
+def get_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.tenancy import ensure_root_for_zone
+
+    company = get_client_or_404(db, company_id)
+    root = ensure_root_for_zone(db, company)
+    token = root.client_zone_token or ""
+    return {
+        "company_id": root.id,
+        "company_name": root.name,
+        "token": token or None,
+        "path": f"/c/{token}" if token else None,
+    }
+
+
+@router.post("/companies/{company_id}/client-zone/rotate")
+def rotate_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.tenancy import ensure_root_for_zone, rotate_client_zone_token
+
+    company = get_client_or_404(db, company_id)
+    root = ensure_root_for_zone(db, company)
+    token = rotate_client_zone_token(db, root)
+    return {
+        "company_id": root.id,
+        "company_name": root.name,
+        "token": token,
+        "path": f"/c/{token}",
+    }
 
