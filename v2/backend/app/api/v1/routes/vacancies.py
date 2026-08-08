@@ -16,6 +16,7 @@ from app.api.v1.common import (
     _channel_out,
     _nest_form_key,
     _parse_webhook_payload,
+    require_intake_channel,
 )
 from app.core.config import get_settings
 from app.services import jobs as job_svc
@@ -92,6 +93,7 @@ from app.schemas import (
     VacancyDetail,
     VacancyCreateIn,
     VacancyCloseIn,
+    VacancyPatchIn,
     VacancyDocumentGenerateIn,
     VacancyDocumentGenerateOut,
     VacancyDocumentsPatchIn,
@@ -244,6 +246,24 @@ def delete_vacancy_endpoint(vacancy_id: int, db: Session = Depends(get_db)) -> N
     vacancy = get_vacancy_or_404(db, vacancy_id)
     delete_vacancy(db, vacancy)
     return None
+
+@router.patch("/vacancies/{vacancy_id}", response_model=VacancyDetail)
+def patch_vacancy(
+    vacancy_id: int,
+    body: VacancyPatchIn,
+    db: Session = Depends(get_db),
+) -> VacancyDetail:
+    from app.services.vacancy_write import VacancyWriteError, rename_vacancy
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    data = body.model_dump(exclude_unset=True)
+    if "title" in data:
+        try:
+            vacancy = rename_vacancy(db, vacancy, str(data.get("title") or ""))
+        except VacancyWriteError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _vacancy_detail(db, vacancy)
+
 
 @router.patch("/vacancies/{vacancy_id}/settings", response_model=VacancyDetail)
 def patch_vacancy_settings(
@@ -572,6 +592,7 @@ def sync_vacancy_yandex_disk_now(
     """Synchronous sync (folder listing). Prefer ARQ job for large folders."""
     from app.services.yandex_disk_sync import sync_vacancy_yandex_disk
 
+    require_intake_channel("disk_public_sync")
     vacancy = get_vacancy_or_404(db, vacancy_id)
     result = sync_vacancy_yandex_disk(db, vacancy)
     cfg = (vacancy.payload or {}).get("yandex_disk") or {}
@@ -640,6 +661,7 @@ def create_vacancy_candidate(
 ) -> CandidateDetail:
     from app.services.candidate_write import create_candidate
 
+    require_intake_channel("manual")
     get_vacancy_or_404(db, vacancy_id)
     fields = body.model_dump(exclude={"name"}, exclude_none=True)
     cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields)
@@ -656,6 +678,7 @@ def bulk_candidates_from_links(
 ) -> BulkLinksOut:
     from app.services.candidate_resume_eval import bulk_add_from_resume_links, parse_bulk_link_lines
 
+    require_intake_channel("file_link")
     vacancy = get_vacancy_or_404(db, vacancy_id)
     links = list(body.links or [])
     if body.text:
@@ -675,6 +698,37 @@ def bulk_candidates_from_links(
         db, vacancy, uniq, evaluate=bool(body.evaluate)
     )
     return BulkLinksOut(**result)
+
+
+@router.post(
+    "/vacancies/{vacancy_id}/candidates/from-file",
+    response_model=BulkLinksOut,
+)
+async def candidate_from_resume_file(
+    vacancy_id: int,
+    file: UploadFile = File(...),
+    evaluate: str = Form(default="false"),
+    db: Session = Depends(get_db),
+) -> BulkLinksOut:
+    from app.services.candidate_resume_eval import add_candidate_from_resume_file
+
+    require_intake_channel("file_upload")
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    raw = await file.read()
+    filename = (file.filename or "resume.pdf").strip() or "resume.pdf"
+    do_eval = str(evaluate).strip().lower() in ("1", "true", "yes", "on")
+    try:
+        result = add_candidate_from_resume_file(
+            db,
+            vacancy,
+            filename=filename,
+            content=raw,
+            evaluate=do_eval,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return BulkLinksOut(**result)
+
 
 @router.post("/vacancies/{vacancy_id}/digest-to-chat")
 def vacancy_digest_to_chat(vacancy_id: int, db: Session = Depends(get_db)) -> dict:

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { OwnerOnly } from "@/components/AuthGate";
 import { apiFetch } from "@/lib/api";
 
 type FunctionsSettings = {
@@ -73,6 +74,7 @@ export default function FunctionsSettingsPage() {
   }
 
   return (
+    <OwnerOnly>
     <AppShell variant="settings" activePath="/settings">
       <Link className="back" href="/settings">
         ← К настройкам
@@ -104,6 +106,7 @@ export default function FunctionsSettingsPage() {
         </section>
       )}
     </AppShell>
+    </OwnerOnly>
   );
 }
 

@@ -169,6 +169,39 @@ export async function authLogout(): Promise<void> {
   await apiFetch("/api/v1/auth/logout", { method: "POST", skipAuthRedirect: true });
 }
 
+export type UsefulLink = {
+  id: string;
+  label: string;
+  url: string;
+};
+
+export async function fetchUsefulLinks(): Promise<{ items: UsefulLink[]; auth_disabled: boolean }> {
+  const res = await apiFetch("/api/v1/auth/useful-links", { cache: "no-store" });
+  if (!res.ok) throw new Error(`API /auth/useful-links: ${res.status}`);
+  return res.json();
+}
+
+export async function saveUsefulLinks(items: UsefulLink[]): Promise<UsefulLink[]> {
+  const res = await apiFetch("/api/v1/auth/useful-links", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text;
+    try {
+      const data = JSON.parse(text) as { detail?: unknown };
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `API PUT /auth/useful-links: ${res.status}`);
+  }
+  const data = (await res.json()) as { items: UsefulLink[] };
+  return data.items || [];
+}
+
 export type VacancyOutcome = "success" | "client_cancelled" | "no_result" | null;
 
 export type ClientItem = {
@@ -222,6 +255,7 @@ export type CandidateDetail = CandidateListItem & {
   client_id: number | null;
   client_name: string | null;
   status_updated_at: string | null;
+  email: string | null;
   metro: string | null;
   age: string | null;
   salary_expected: string | null;

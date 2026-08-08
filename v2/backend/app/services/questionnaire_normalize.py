@@ -212,6 +212,7 @@ def normalize_questionnaire_list(items: Any) -> list[dict[str, Any]]:
                 "оценка_hr": rating,
                 "оценка": rating,
                 "_qid": q.get("_qid", ""),
+                "is_manual": bool(q.get("is_manual")),
             }
         else:
             continue
@@ -230,6 +231,8 @@ def ensure_question_ids(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rating = normalize_hr_rating(item.get("оценка_hr", item.get("оценка", "")))
         item["оценка_hr"] = rating
         item["оценка"] = rating
+        if "is_manual" in item:
+            item["is_manual"] = bool(item.get("is_manual"))
         out.append(item)
     return out
 

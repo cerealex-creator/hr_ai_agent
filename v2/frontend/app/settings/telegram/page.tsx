@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { OwnerOnly } from "@/components/AuthGate";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { type ClientItem, apiFetch } from "@/lib/api";
 
@@ -100,14 +101,15 @@ export default function TelegramSettingsPage() {
   };
 
   return (
+    <OwnerOnly>
     <AppShell variant="settings" activePath="/settings">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
       <h1 className="page-title">Telegram</h1>
       <p className="muted">
-        Статус бота и каналы. Компании удобнее настраивать в{" "}
-        <Link href="/settings/companies">Клиентах и компаниях</Link>.
+        Статус бота и каналы.         Компании удобнее настраивать в{" "}
+        <Link href="/settings/companies">Настройке взаимодействия</Link>.
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
@@ -500,5 +502,6 @@ export default function TelegramSettingsPage() {
         </div>
       </CollapsibleCard>
     </AppShell>
+    </OwnerOnly>
   );
 }

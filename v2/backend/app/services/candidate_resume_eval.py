@@ -19,6 +19,7 @@ RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из �
 {
   "full_name": "ФИО",
   "phone": "телефон или пусто",
+  "email": "email или пусто",
   "age": "возраст числом или пусто",
   "city": "город или пусто",
   "metro": "метро или пусто",
@@ -122,9 +123,12 @@ def extract_fields_from_resume(resume_text: str, settings: Settings) -> dict[str
     )
     if not isinstance(data, dict):
         data = {}
+    email_raw = str(data.get("email") or "").strip()
+    email = email_raw if "@" in email_raw else ""
     return {
         "name": (data.get("full_name") or "Нет информации").strip() or "Нет информации",
         "phone": _format_phone(data.get("phone")),
+        "email": email,
         "age": str(data.get("age") or "").strip(),
         "city": str(data.get("city") or "").strip(),
         "metro": str(data.get("metro") or "").strip(),
@@ -191,12 +195,15 @@ def apply_extract_to_candidate(candidate: models.Candidate, fields: dict[str, An
     elif not (candidate.name or "").strip() or candidate.name.startswith("HH ·"):
         if name:
             candidate.name = name
-    for key in ("phone", "age", "city", "metro", "salary_expected"):
+    for key in ("phone", "email", "age", "city", "metro", "salary_expected"):
         val = fields.get(key)
         if val is None:
             continue
         text = str(val).strip()
         if text:
+            # Don't overwrite an existing email with empty; only fill if present
+            if key == "email" and payload.get("email") and not text:
+                continue
             payload[key] = text
     candidate.payload = payload
     flag_modified(candidate, "payload")
@@ -270,7 +277,9 @@ def evaluate_candidate_resume(
     questionnaire_generated = False
     questionnaire_count = 0
     if not get_candidate_questionnaire(candidate):
-        items = generate_candidate_questionnaire(db, candidate, settings=settings)
+        items = generate_candidate_questionnaire(
+            db, candidate, keep_manual=True, settings=settings
+        )
         questionnaire_generated = True
         questionnaire_count = len(items)
     else:
@@ -362,4 +371,87 @@ def bulk_add_from_resume_links(
         "candidate_ids": created_ids,
         "messages": messages[:40],
         "errors": errors[:20],
+    }
+
+
+def add_candidate_from_resume_file(
+    db: Session,
+    vacancy: models.Vacancy,
+    *,
+    filename: str,
+    content: bytes,
+    evaluate: bool = False,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Create one candidate from an uploaded resume file (pdf/docx/txt/…)."""
+    from app.services.candidate_write import create_candidate
+    from app.services.source_extract import DOC_EXT, extract_text_from_bytes
+
+    settings = settings or get_settings()
+    name_hint = (filename or "resume").strip() or "resume"
+    ext = ("." + name_hint.rsplit(".", 1)[-1].lower()) if "." in name_hint else ""
+    if ext and ext not in DOC_EXT:
+        raise ValueError(f"Формат не поддерживается ({ext}). Используйте PDF, Word, TXT, Excel.")
+    if not content:
+        raise ValueError("Пустой файл")
+    if len(content) > 15 * 1024 * 1024:
+        raise ValueError("Файл больше 15 МБ")
+
+    text = extract_text_from_bytes(name_hint, content)
+    cand_name = "Новый кандидат"
+    fields: dict[str, Any] = {
+        "cold_screening": True,
+        "resume_filename": name_hint,
+    }
+    errors: list[str] = []
+    if text.strip():
+        try:
+            extracted = extract_fields_from_resume(text, settings)
+            cand_name = extracted.get("name") or cand_name
+            for k in ("phone", "age", "city", "metro", "salary_expected"):
+                if extracted.get(k):
+                    fields[k] = extracted[k]
+            fields["resume_text"] = text
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"extract: {exc}")
+            fields["resume_text"] = text
+    else:
+        errors.append("Не удалось извлечь текст из файла")
+
+    cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields)
+    payload = dict(cand.payload or {})
+    payload["source"] = "resume_upload"
+    payload["cold_screening"] = True
+    payload["resume_filename"] = name_hint
+    if fields.get("resume_text"):
+        payload["resume_text"] = fields["resume_text"]
+    cand.payload = payload
+    flag_modified(cand, "payload")
+    db.commit()
+    db.refresh(cand)
+
+    messages: list[str] = []
+    if evaluate and text.strip():
+        try:
+            profile = extract_profile_text(vacancy.documents)
+            ev = evaluate_resume_for_funnel(
+                text,
+                profile_text=profile,
+                job_title=vacancy.title,
+                settings=settings,
+            )
+            apply_eval_to_candidate(cand, ev, resume_text=text)
+            db.commit()
+            messages.append(f"{cand.name}: оценка {ev.get('ai_score')}/4")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"evaluate: {exc}")
+    else:
+        messages.append(f"Добавлен: {cand.name}")
+
+    return {
+        "created": 1,
+        "candidate_ids": [str(cand.id)],
+        "candidate_id": str(cand.id),
+        "messages": messages,
+        "errors": errors[:10],
     }

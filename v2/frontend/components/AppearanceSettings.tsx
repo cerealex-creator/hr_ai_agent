@@ -6,6 +6,9 @@ const THEMES: { id: ThemeId; label: string; hint: string }[] = [
   { id: "light", label: "Светлая", hint: "тёплый фон, синий акцент" },
   { id: "dark", label: "Тёмная", hint: "для работы вечером" },
   { id: "contrast", label: "Контраст", hint: "крупнее контраст текста" },
+  { id: "earth", label: "Коричнево-зелёная", hint: "земляные тона и зелёный акцент" },
+  { id: "citrus", label: "Оранжево-белая", hint: "белый фон, оранжевый акцент" },
+  { id: "sky", label: "Бело-синяя", hint: "белый фон, синий акцент" },
 ];
 
 export function AppearanceSettings() {

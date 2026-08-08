@@ -114,10 +114,14 @@ def _merge_keep_manual(
     old_items: list[dict[str, Any]],
     new_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Preserve answers on matching questions; append is_manual items at the end."""
     old_map = {
-        str(item.get("вопрос") or "").strip().lower(): item for item in old_items if str(item.get("вопрос") or "").strip()
+        str(item.get("вопрос") or "").strip().lower(): item
+        for item in old_items
+        if str(item.get("вопрос") or "").strip()
     }
     merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for item in new_items:
         key = str(item.get("вопрос") or "").strip().lower()
         prev = old_map.get(key)
@@ -129,10 +133,25 @@ def _merge_keep_manual(
                 "ответ_кандидата",
                 "оценка_ии",
                 "пояснение_ии",
+                "пример_ответа",
             ):
                 if str(prev.get(field) or "").strip():
                     item[field] = prev.get(field)
+        if key:
+            seen.add(key)
         merged.append(item)
+
+    for prev in old_items:
+        if not prev.get("is_manual"):
+            continue
+        key = str(prev.get("вопрос") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        manual = dict(prev)
+        manual["is_manual"] = True
+        merged.append(manual)
+        seen.add(key)
+
     return ensure_question_ids(merged)
 
 

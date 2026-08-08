@@ -1,0 +1,117 @@
+# Sidecar deploy next to LexForge (same VPS, no domain yet).
+# Does NOT bind :80/:443/:3000/:8000/:5432/:6379 on the host.
+#
+# Usage on server:
+#   cd /opt/hr_ai_agent/v2
+#   cp .env.sidecar.example .env.sidecar   # fill once
+#   docker compose -f docker-compose.sidecar.yml --env-file .env.sidecar up -d --build
+#
+# UI: http://SERVER_IP:8080
+# When you have a domain + TLS → switch to docker-compose.prod.yml (see DEPLOY.md).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hr-v2-side-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hr_v2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hr_v2}
+    volumes:
+      - hr_v2_side_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hr_v2} -d ${POSTGRES_DB:-hr_v2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - hr_v2_side
+
+  redis:
+    image: redis:7-alpine
+    container_name: hr-v2-side-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - hr_v2_side
+
+  api:
+    build:
+      context: ./backend
+    container_name: hr-v2-side-api
+    env_file:
+      - ${ENV_FILE:-.env.sidecar}
+    environment:
+      # Not "production": allows AUTH_COOKIE_SECURE=false for HTTP-by-IP smoke test.
+      APP_ENV: ${APP_ENV:-pilot}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
+      MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
+      MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
+      MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - hr_v2_side
+
+  worker:
+    build:
+      context: ./backend
+    container_name: hr-v2-side-worker
+    command: ["arq", "app.workers.settings.WorkerSettings"]
+    env_file:
+      - ${ENV_FILE:-.env.sidecar}
+    environment:
+      APP_ENV: ${APP_ENV:-pilot}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
+      REDIS_URL: redis://redis:6379/0
+      MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
+      MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
+      MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - hr_v2_side
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ""
+        API_REWRITE_URL: http://api:8000
+    container_name: hr-v2-side-web
+    environment:
+      API_REWRITE_URL: http://api:8000
+      API_INTERNAL_URL: http://api:8000
+    ports:
+      - "${HTTP_PORT:-8080}:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - hr_v2_side
+
+volumes:
+  hr_v2_side_pgdata:
+
+networks:
+  hr_v2_side:
+    name: hr_v2_side

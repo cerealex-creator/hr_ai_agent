@@ -19,6 +19,7 @@ export type QItem = {
   оценка_hr?: string;
   оценка?: string;
   _qid?: string;
+  is_manual?: boolean;
 };
 
 const RATINGS: { id: string; label: string }[] = [
@@ -84,6 +85,9 @@ export function QuestionnairePanel({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [notes, setNotes] = useState(candidate.questionnaire_recruiter_notes || "");
+  const [addOpen, setAddOpen] = useState(false);
+  const [newQuestion, setNewQuestion] = useState("");
+  const [newExample, setNewExample] = useState("");
 
   useEffect(() => {
     setItems(initialItems || []);
@@ -96,6 +100,30 @@ export function QuestionnairePanel({
 
   const patchItem = (index: number, patch: Partial<QItem>) => {
     setItems((prev) => prev.map((q, i) => (i === index ? { ...q, ...patch } : q)));
+  };
+
+  const addManualQuestion = () => {
+    const q = newQuestion.trim();
+    if (!q) {
+      setErr("Введите текст вопроса");
+      return;
+    }
+    setItems((prev) => [
+      ...prev,
+      {
+        вопрос: q,
+        пример_ответа: newExample.trim(),
+        is_manual: true,
+        уточняющие_вопросы: [],
+        уточнения_по_резюме: [],
+      },
+    ]);
+    setNewQuestion("");
+    setNewExample("");
+    setAddOpen(false);
+    setOpen(true);
+    setMsg("Вопрос добавлен — нажмите «Сохранить опросник»");
+    setErr(null);
   };
 
   const refreshCandidate = async () => {
@@ -302,6 +330,14 @@ export function QuestionnairePanel({
             Сохранить опросник
           </button>
         ) : null}
+        <button
+          type="button"
+          className="chip"
+          disabled={locked}
+          onClick={() => setAddOpen((v) => !v)}
+        >
+          {addOpen ? "Скрыть форму" : "➕ Добавить вопрос"}
+        </button>
         {hasTranscriptText ? (
           <button type="button" className="chip" onClick={() => setTranscriptOpen((v) => !v)}>
             {transcriptOpen ? "Скрыть расшифровку" : "Расшифровка"}
@@ -322,6 +358,43 @@ export function QuestionnairePanel({
             .filter(Boolean)
             .join(" · ")}
         </p>
+      ) : null}
+
+      {addOpen ? (
+        <div className="q-settings" style={{ marginBottom: "0.85rem" }}>
+          <h3 className="hh-subhead">Новый вопрос (вручную)</h3>
+          <p className="muted hh-micro">
+            Ручные вопросы сохраняются при перегенерации опросника (флаг is_manual).
+          </p>
+          <div className="hh-field">
+            <label className="hh-label">Текст вопроса</label>
+            <textarea
+              rows={2}
+              value={newQuestion}
+              disabled={locked}
+              onChange={(e) => setNewQuestion(e.target.value)}
+              placeholder="Что спросить у кандидата"
+            />
+          </div>
+          <div className="hh-field">
+            <label className="hh-label">Пример ответа</label>
+            <textarea
+              rows={2}
+              value={newExample}
+              disabled={locked}
+              onChange={(e) => setNewExample(e.target.value)}
+              placeholder="Желательный результат / эталон"
+            />
+          </div>
+          <button
+            type="button"
+            className="chip chip-active"
+            disabled={locked}
+            onClick={addManualQuestion}
+          >
+            Добавить в список
+          </button>
+        </div>
       ) : null}
 
       {settingsOpen ? (
@@ -416,6 +489,9 @@ export function QuestionnairePanel({
                   </div>
                   <strong>
                     {index + 1}. {q.вопрос}
+                    {q.is_manual ? (
+                      <span className="muted hh-micro"> · вручную</span>
+                    ) : null}
                   </strong>
                 </div>
                 {(q.проверяет_требование || q.категория) && (

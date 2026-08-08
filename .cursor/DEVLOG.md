@@ -5,6 +5,658 @@
 
 ---
 
+## 2026-08-08 — v2: sidecar-деплой рядом с LexForge (Timeweb)
+
+**Тип:** `deploy`
+
+**Сделано:**
+- На `201.34.137.208` поднят HR v2 sidecar: UI `http://IP:8080`, свои db/redis/api/worker/web.
+- LexForge не трогали (nginx/systemd/docker lexforge живы).
+- Compose: `docker-compose.sidecar.yml`, `APP_ENV=pilot`, cookies без Secure (до домена/TLS).
+- Smoke: UI 200, `/api/v1/health` ok; available RAM ~2.5 Gi.
+
+**Файлы:** `v2/docker-compose.sidecar.yml`, `v2/.env.sidecar.example`, `v2/DEPLOY.md` (+ фикс alembic zoom path на сервере)
+
+**Данные / конфиг:** `/opt/hr_ai_agent/v2/.env.sidecar` на сервере (не в git)
+
+**Git:** локально незакоммиченные compose/docs; сервер `/opt/hr_ai_agent/v2`
+
+**Следующий шаг:**
+- Проверить логин owner; после покупки домена — TLS + `docker-compose.prod.yml`.
+
+---
+
+**Тип:** `ux`
+
+**Сделано:**
+- Zoom у пользователя без длинного описания; календарь — opt-in + пошаговая инструкция, без путей к файлам.
+- Чекбоксы уведомлений ×3, зелёная подсветка блока при включении; default `google_calendar_enabled=false`.
+- Хаб: статусы «взаимодействие» и «уведомления» как у intake; обновлено «Описание функционала».
+
+**Файлы:** `calendar/page.tsx`, `notify_prefs.py`, `routes/auth.py`, `settings/page.tsx`, `about/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Проверить хаб и страницу уведомлений под обычным пользователем.
+
+---
+
+**Тип:** `ux`
+
+**Сделано:**
+- В «Внешний вид» три темы: коричнево-зелёная (`earth`), оранжево-белая (`citrus`), бело-синяя (`sky`).
+- В сайдбаре кнопка полезных ссылок: «Добавить сервис» вместо «+ Своя».
+
+**Файлы:** `UiPrefsProvider.tsx`, `AppearanceSettings.tsx`, `globals.css`, `settings/page.tsx`, `UsefulLinksBar.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Выбрать новую тему в настройках и проверить сайдбар.
+
+---
+
+## 2026-08-08 — v2: предупреждение «настройте Диск ниже»
+
+**Тип:** `ux`
+
+**Сделано:**
+- На блоках sync/inbox при включении без OAuth Диска — предупреждение про настройку подключения ниже.
+- Статус `connected` обновляется после сохранения/отвязки токена.
+
+**Файлы:** `candidate-intake/page.tsx`, `YandexDiskConnectPanel.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Включить sync без токена и проверить исчезновение warn после «Сохранить токен».
+
+---
+
+**Тип:** `ux`
+
+**Сделано:**
+- Чекбоксы заменены на кликабельные блоки: зелёный «Подключено» / светло-красный «Отключено», подсказки «Нажмите для…».
+- «Основные» — всегда зелёные, «Подключено по умолчанию».
+- В хабе настроек карточка intake: столбик статусов (Вручную / По ссылке / Через Яндекс Диск + sync/роутинг).
+
+**Файлы:** `candidate-intake/page.tsx`, `settings/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Проверить клики на intake и обновление статусов в хабе после возврата.
+
+---
+
+## 2026-08-08 — v2: inbox-роутинг заполняет анкету (город/email/возраст)
+
+**Тип:** `fix`
+
+**Сделано:**
+- Роутер inbox извлекает email, age, city, metro, salary и пишет их в кандидата (раньше только phone).
+- То же при ручной привязке из unsorted.
+
+**Файлы:** `disk_inbox_router.py`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Уже созданных Манаенкову/Васильеву — «Оценить по резюме» или заполнить вручную; новые из inbox получат поля сразу.
+
+---
+
+## 2026-08-08 — v2: кнопка Inbox в верхней навигации
+
+**Тип:** `feature`
+
+**Сделано:**
+- В панели поиска (рядом с Вакансии/Кандидаты…) кнопка «Inbox» — ручной роутинг `_inbox` → вакансии.
+- Автомониторинг пока не делали (по решению).
+
+**Файлы:** `InboxRouteNavButton.tsx`, `AppShell.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- При необходимости — автомониторинг с тоглом в настройках Диска.
+
+---
+
+## 2026-08-08 — v2: Я.Диск — фикс «Получить ключ» (popup)
+
+**Тип:** `fix`
+
+**Сделано:**
+- `window.open` сразу по клику (до await) — иначе браузер блокирует окно.
+- Запасная кнопка/ссылка «Открыть вручную» + полный URL под кнопкой.
+
+**Файлы:** `yandex-disk/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: Я.Диск — инструкция шаг 3 (доп. доступы)
+
+**Тип:** `ux`
+
+**Сделано:**
+- Шаг 2: убрано «нажать +»; шаг 3: не трогать «Основные», Диск — через «Дополнительные» / название доступа.
+
+**Файлы:** `yandex-disk/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: Я.Диск — инструкция шаг 2 (Redirect URI)
+
+**Тип:** `ux`
+
+**Сделано:**
+- В инструкции расписаны все 4 шага; на шаге 2 — Redirect URI `https://oauth.yandex.ru/verification_code` и Hostname.
+- В ссылку «Получить ключ» добавлен тот же `redirect_uri`.
+
+**Файлы:** `yandex-disk/page.tsx`, `yandex_disk_oauth.py`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: Я.Диск — инструкция про 4 шага создания приложения
+
+**Тип:** `ux`
+
+**Сделано:**
+- В инструкции: шаг 1 — только название/почта; доступы Диска — на следующих шагах мастера.
+
+**Файлы:** `yandex-disk/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: Я.Диск — отвязка + инструкция по своим папкам
+
+**Тип:** `feature` / `ux`
+
+**Сделано:**
+- `POST /integrations/yandex-disk/disconnect` — локальный сброс токена, Client ID, путей (дефолты); Диск не чистит.
+- UI: «Отвязать Диск» + подтверждение; блок «Папки на Диске» с правилами кастомных путей и валидацией.
+
+**Файлы:** `yandex_disk_oauth.py`, `integrations.py`, `yandex-disk/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Проверить отвязку и смену корня/inbox на стенде.
+
+---
+
+## 2026-08-08 — v2: Я.Диск — уточнение инструкции OAuth
+
+**Тип:** `ux`
+
+**Сделано:**
+- В инструкции: тип «Для авторизации пользователей»; доступы disk.app_folder / disk.read / disk.write.
+
+**Файлы:** `yandex-disk/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: Я.Диск — Client ID + пошаговая OAuth-инструкция
+
+**Тип:** `ux` / `feature`
+
+**Сделано:**
+- Поле Client ID, кнопка «Создать приложение на Яндексе», «Получить ключ» только при заполненном ID.
+- Client ID в `app_settings.json` через PATCH `/settings/app` (`yandex_disk_client_id`).
+- Пошаговая инструкция на русском в блоке «Подключение».
+
+**Файлы:** `yandex-disk/page.tsx`, `yandex_disk_oauth.py`, `app_settings.py`, `schemas.py`, `settings.py`, `globals.css`
+
+**Данные / конфиг:** ключ `yandex_disk_client_id` в app_settings
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Пройти OAuth по новой инструкции на стенде.
+
+---
+
+## 2026-08-08 — v2: Zoom Concierge — токены per-org в БД
+
+**Тип:** `feature`
+
+**Сделано:**
+- `organizations.integrations` JSONB; Alembic `e5f6a7b8c9d0` (+ перенос legacy `zoom_oauth_token.json` в default org, если был).
+- `zoom_oauth`: `get/save_zoom_token(org_id)`; Client ID/Secret по-прежнему из `.env`.
+- OAuth status/start/complete — только `platform_owner`, токен пишется в org текущего админа.
+- Создание встречи берёт Zoom-токен org кандидата.
+- UI: «подключено для компании»; non-owner видит locked-текст.
+
+**Файлы:** `models.py`, `e5f6a7b8c9d0_*.py`, `zoom_oauth.py`, `zoom_meetings.py`, `integrations.py`, `calendar/page.tsx`, `.env.example`
+
+**Данные / конфиг:** колонка `organizations.integrations`; `ZOOM_CLIENT_*` без изменений
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Подключить Zoom под platform_owner и проверить встречу у recruiter той же org.
+
+---
+
+## 2026-08-08 — v2: кто вошёл — рядом с «Выйти»
+
+**Тип:** `ux`
+
+**Сделано:**
+- Справа от «Выйти» показывается имя пользователя (или email), tooltip — email если имя другое.
+
+**Файлы:** `AppShell.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-08 — v2: логотип рядом с названием ×2
+
+**Тип:** `ux`
+
+**Сделано:**
+- Логотип у «HR-помогатор» увеличен в 2 раза: topbar 32→64 / home 40→80; герой главной 48→96; логин 36→72.
+
+**Файлы:** `AppShell.tsx`, `page.tsx`, `login/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Визуально проверить topbar на узком экране.
+
+---
+
+## 2026-08-08 — v2: Zoom User OAuth + назначение встречи
+
+**Тип:** `feature`
+
+**Сделано:**
+- Zoom User OAuth: status / start / complete API; токен в `LEGACY_DATA_DIR/zoom_oauth_token.json`.
+- `POST /candidates/{id}/zoom-meeting` — создание встречи, сохранение `join_url` в payload.
+- Карточка кандидата: «Назначить встречу» → модалка → Zoom; «Скопировать приглашение» + `mailto` (без SMTP).
+- Опциональный `email` в анкете; автозаполнение из парсера резюме; кнопка Email неактивна без адреса.
+- Настройки уведомлений: блок Zoom OAuth (как Google Calendar).
+
+**Файлы:** `zoom_oauth.py`, `zoom_meetings.py`, `integrations.py`, `candidates.py`, `schemas.py`, `config.py`, `candidate_fields.py`, `candidate_write.py`, `candidate_resume_eval.py`, `CandidateEditor.tsx`, `settings/calendar/page.tsx`, `.env.example`
+
+**Данные / конфиг:** `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_REDIRECT_URI` (default `http://localhost:8765/`)
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Заполнить Zoom credentials в `.env`, пройти OAuth, проверить создание встречи на карточке.
+
+---
+
+## 2026-08-08 — v2: зависла генерация документов (вакансия 15)
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Причина: job `vacancy_docs_from_materials` висел в `queued` — не был запущен `arq` worker.
+- Запущен arq; задача `e06d7af5-…` для вакансии 15 («Менеджер по маркетплейсам») завершилась `completed`, документы записаны (profile/questions/vacancy_text/keywords).
+
+**Данные / конфиг:** Redis queue + PG job; Excel в `data/tmp/vacancy_docs/…` на месте
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Держать `arq` запущенным вместе с API при локальной работе.
+
+**Тип:** `fix` / `ux`
+
+**Сделано:**
+- InfoTip больше не режется `overflow` у CollapsibleCard.
+- Bitrix в каналах связи для non-owner: только текст «В данной версии настройки не редактируются».
+- Убрано слово «Заглушка» у WhatsApp/Max.
+- `LockedTextField` + locked Chat ID по умолчанию; TG/тест-чат без префилла; название-пример «Тестовый».
+
+**Файлы:** `globals.css`, `LockedTextField.tsx`, `CommunicationChannelsPanel.tsx`, `TestChatSettings.tsx`, `ChatIdField.tsx`, `CompanyEditor.tsx`, `calendar/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Zoom «Назначить встречу» — после уточнений; инструкция смены бота — в ответе пользователю.
+
+**Тип:** `feature`
+
+**Сделано:**
+- Хаб: переименованы карточки (Я.Диск, внешний вид, взаимодействие, уведомления); about и тест-чат убраны из хаба.
+- Левая панель: отдельно «Основные настройки» и «Описание функционала».
+- «Настройка взаимодействия»: flow компания→подразделения, нейтральные плейсхолдеры, каналы Bitrix/Telegram + stubs WA/Max, тестовый чат внутри.
+- Chat ID: закрыты по умолчанию, правка через «Изменить» → «Ок».
+- «Настройка уведомлений»: GC по умолчанию вкл.; Telegram личный — opt-in + prefs API; stubs WA/Max.
+- InfoTip по ключевым полям; `users.notify_prefs` + migration/ensure.
+
+**Файлы:** `settings/page.tsx`, `SettingsRail.tsx`, `CompaniesSettings.tsx`, `CompanyEditor.tsx`, `ChatIdField.tsx`, `CommunicationChannelsPanel.tsx`, `calendar/page.tsx`, `auth.py`, `notify_prefs.py`, `models.py`, alembic `c4d5e6f7a8b9_*`
+
+**Данные / конфиг:** колонка `users.notify_prefs` (JSONB)
+
+**Git:** незакоммичено на `feature/v2`
+
+**Риски/регрессии:**
+- Если API/Postgres держат lock — перезапустить uvicorn, чтобы `ensure_notify_prefs_column` применился.
+- Отправка личных TG-дайджестов по prefs пока сохраняется в UI/API; wiring в tick — следующий шаг при необходимости.
+
+**Следующий шаг:**
+- Перезапустить API при необходимости и пройти сценарий рекрутером: `/settings` → взаимодействие → уведомления.
+
+---
+
+## 2026-08-07 — v2: демо-пространство обычного рекрутера
+
+**Тип:** `chore` (+ `fix` tenancy)
+
+**Сделано:**
+- Создана пустая org `demo-recruiter-empty` и пользователь `recruiter@local.test` / `recruiter1` (`hr_recruiter`).
+- Вход проверен: 0 клиентов/вакансий/кандидатов; без пунктов «Задачи»/«История».
+- Исправлен leak: `GET /stats/import` считает counts по org, а не глобально.
+
+**Файлы:** `stats_history.py` (counts по tenancy); данные в PG (org + user)
+
+**Данные / конфиг:** org slug `demo-recruiter-empty`; email `recruiter@local.test`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Ознакомиться в UI: http://localhost:3000/login
+
+---
+
+## 2026-08-07 — v2: опечатка в бренде на главной
+
+**Тип:** `fix`
+
+**Сделано:**
+- В home-варианте `AppShell`: «HR-памагатор» → «HR-помогатор».
+
+**Файлы:** `AppShell.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-07 — v2: синий лого + в шапке рядом с названием
+
+**Тип:** `chore`
+
+**Сделано:**
+- Лого перерисовано: яркий синий фон, белые ладони + 3 силуэта.
+- Favicon укрупнён: master `app/icon.png` 1024px, добавлен `favicon-48.png`, 512/180/32/16.
+- `BrandLogo` рядом с «HR-помогатор» в topbar (`AppShell`), на главной и на логине.
+
+**Файлы:** `BrandLogo.tsx`, `AppShell.tsx`, `page.tsx`, `login/page.tsx`, `layout.tsx`, `globals.css`, `public/logo.png`, `public/favicon-*.png`, `app/icon.png`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Hard-refresh (Cmd+Shift+R), если вкладка показывает старый favicon.
+
+---
+
+## 2026-08-07 — v2: вернуть бренд HR-помогатор
+
+**Тип:** `fix`
+
+**Сделано:**
+- Восстановлено «HR-помагатор» в UI (ошибочно убрали префикс HR).
+
+**Файлы:** `layout.tsx`, `AppShell.tsx`, `page.tsx`, `login/page.tsx`, `about/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Favicon — после отдельного одобрения прототипа.
+
+---
+
+## 2026-08-07 — v2: бренд «помогатор» (+ favicon prototype)
+
+**Тип:** `chore`
+
+**Сделано:**
+- UI-бренд переименован: «HR-помогатор» → «помогатор» (title, shell, login, about, home).
+- Показан прототип favicon (ещё не установлен в `public/`).
+
+**Файлы:** `layout.tsx`, `AppShell.tsx`, `page.tsx`, `login/page.tsx`, `about/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Одобрить favicon и положить в `frontend/public/`.
+
+---
+
+## 2026-08-07 — v2: текст карточки «Поиск сотрудников»
+
+**Тип:** `chore`
+
+**Сделано:**
+- Обновлено описание блока «Поиск сотрудников» на главной.
+
+**Файлы:** `app/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- —
+
+---
+
+## 2026-08-07 — v2: settings rail + тексты модулей
+
+**Тип:** `feature`
+
+**Сделано:**
+- «Основные настройки» → компактный sticky SettingsRail слева на всех страницах; подпись «Внешний вид и инструменты».
+- Главная: обновлены названия/описания модулей; убран HR-брендинг и карточка настроек с контента.
+
+**Файлы:** `SettingsRail.tsx`, `AppShell.tsx`, `page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Smoke главной и `/vacancies` — rail сверху сайдбара.
+
+---
+
+## 2026-08-07 — v2: главная — карта модулей портала
+
+**Тип:** `feature`
+
+**Сделано:**
+- Главная: крупный «Поиск сотрудников»; 5 модулей «скоро» по схеме портала; компактная «Основные настройки».
+- Убрана заглушка «Разработка документов»; ИПР расшифрован в тексте.
+
+**Файлы:** `app/page.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Смоук главной на `/`.
+
+---
+
+## 2026-08-07 — v2: Задачи/История только owner
+
+**Тип:** `chore`
+
+**Сделано:**
+- Вкладки «Задачи» и «История» в topbar только для `platform_owner`.
+
+**Файлы:** `AppShell.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- При желании — OwnerOnly на самих `/jobs` и `/history`.
+
+---
+
+## 2026-08-07 — v2: add candidate tabs + provider links + InfoTip
+
+**Тип:** `feature`
+
+**Сделано:**
+- Owner-only ссылки RouterAI/Я.Облако в сайдбаре и на `/settings/ai`.
+- «Добавить кандидата»: вкладки Вручную / По ссылкам / Из файла; отдельный BulkLinks убран.
+- `POST /vacancies/{id}/candidates/from-file` (pdf/docx/txt…) → extract → карточка.
+- `InfoTip` (кружок i); убраны тех. пояснения (Smart-inbox, ключи этапов и т.п.) в затронутых местах.
+
+**Файлы:** `AddCandidateForm.tsx`, `ClientSidebar.tsx`, `settings/ai`, `stats/page`, `VacancyStageSchemaPanel`, `InfoTip.tsx`, `candidate_resume_eval.py`, `vacancies.py` routes; удалён `BulkLinksForm.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Smoke: owner видит провайдеров; upload PDF на вакансии; InfoTip на «Требуют внимания».
+
+---
+
+## 2026-08-07 — v2: stats периоды + hide meeting link
+
+**Тип:** `feature`
+
+**Сделано:**
+- Период на обоих табах: chips + select 1/2/3/6/12 мес.; operational default `week` (пн→сейчас), ещё mtd/ytd; executive — week/month/all + months.
+- Default scope = «Только в работе» (`scope` отсутствует или не `all`).
+- UI ссылки Zoom/Телемост и чекбокса в карточке кандидата скрыт (`{false && …}`), state/save сохранены.
+
+**Файлы:** `stats_service.py`, `routes/stats_history.py`, `stats/page.tsx`, `StatsPeriodControls.tsx`, `CandidateEditor.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Smoke `/stats` смена периода и default «в работе».
+
+---
+
+## 2026-08-07 — v2: stats dashboard (2 режима + гарантия)
+
+**Тип:** `feature`
+
+**Сделано:**
+- `GET /api/v1/stats/dashboard?mode=operational|executive&period=week|month|all` (+ client/vacancy/scope).
+- Tab «Моя эффективность»: KPI сейчас, активность 14д, smart attention, HH accordion.
+- Tab «Отчет руководителю»: KPI закрытий/найма/срока/конверсии, flow-воронка, таблица вакансий.
+- Блок «Риски и гарантия»: возвраты (hire→reject в срок warranty.months), гарантийные поиски + multi-hire; реестр гарантий внизу Tab 2.
+
+**Файлы:** `stats_service.py`, `schemas.py`, `routes/stats_history.py`, `stats/page.tsx`, `CollapsibleHhBlock.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Smoke `/stats` оба таба; проверить возвраты на данных с историей этапов.
+
+---
+
+## 2026-08-07 — v2: сервисы в сайдбар + свернуть Клиент
+
+**Тип:** `feature`
+
+**Сделано:**
+- Кнопки сервисов перенесены из topbar в левый сайдбар под блок «Клиент» (заголовок «Сервисы»).
+- Блок «Клиент» сворачивается (▾/▸), состояние в localStorage; в свёрнутом виде виден текущий фильтр.
+- На страницах без клиентского сайдбара (главная, настройки) лаунчер не показывается.
+
+**Файлы:** `ClientSidebar.tsx`, `UsefulLinksBar.tsx`, `AppShell.tsx`, `globals.css`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Smoke: свернуть/развернуть Клиент; клик по сервисам на `/vacancies`.
+
+---
+
+## 2026-08-07 — v2: скрыть «Общение с кандидатом»
+
+**Тип:** `chore`
+
+**Сделано:**
+- Убрана карточка «Общение с кандидатом» из хаба `/settings` (раздел сырой; страница `/settings/candidate-comms` не удалена).
+
+**Файлы:** `frontend/app/settings/page.tsx`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Доработать candidate-comms и вернуть в хаб.
+
+---
+
+## 2026-08-07 — v2: полезные ссылки (лаунчер)
+
+**Тип:** `feature`
+
+**Сделано:**
+- Заменён «Быстрый доступ» (🔒 → настройки) на блок «Полезные ссылки» в topbar на всех страницах.
+- Предустановки: Телемост, Zoom (`app.zoom.us`), Google Диск, Яндекс Диск — всегда открывают ресурс в новой вкладке.
+- Свои кнопки per-user (`users.useful_links` JSONB + `GET/PUT /auth/useful-links`); при AUTH_DISABLED — localStorage.
+- Settings sidebar без quick-access (шире контент настроек).
+
+**Файлы:** `UsefulLinksBar.tsx`, `AppShell.tsx`, `globals.css`, `lib/api.ts`, `models.py`, `useful_links.py`, `routes/auth.py`, `schemas.py`, alembic `b3c4d5e6f7a8_*`; удалён `QuickAccessLinks.tsx`
+
+**Данные / конфиг:** миграция `users.useful_links`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Прогнать alembic upgrade; smoke: добавить/удалить свою кнопку под реальным логином.
+
+---
+
+## 2026-08-06 — v2: Wave E UI polish
+
+**Тип:** `feature`
+
+**Сделано:**
+- Ребрендинг UI → «HR-помогатор».
+- Быстрый доступ Zoom/Телемост/Диск в settings sidebar (🔒 → настройки).
+- RBAC: owner-only AI/Bitrix/Telegram/Гарантия/Функции + PATCH guards.
+- Inline rename вакансии; ручные вопросы опросника + merge `is_manual` при regenerate.
+
+**Файлы:** `AuthGate.tsx`, `QuickAccessLinks.tsx`, `VacancyTitleEditor.tsx`, `AppShell`, settings/*, `QuestionnairePanel`, `candidate_questionnaire.py`, `auth.py`, `routes/settings.py`, `vacancies`
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Коммит Wave E; smoke RBAC + опросник merge.
+
+---
+
 ## 2026-08-06 — v2: D5 Polish / deploy
 
 **Тип:** `feature`

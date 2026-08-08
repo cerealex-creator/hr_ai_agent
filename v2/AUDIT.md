@@ -109,6 +109,9 @@ M6 split endpoints + M9 Pydantic — **done**.
 | **D4** | SSE jobs widget | **done** | Same-origin rewrite; SSE poll DB; topbar badge + toast. |
 | **D5** | Polish / deploy | **done** | Fail-fast prod; compose.prod + nginx; DEPLOY.md; empty DB + bootstrap. |
 
+### Волна E — UI polish перед пилотом | **done**
+Ребрендинг HR-помогатор; быстрый доступ Zoom/Телемост/Диск; RBAC settings; editable title; manual questionnaire + merge.
+
 См. детальный бриф текущего этапа в конце файла / в чате.
 
 ---

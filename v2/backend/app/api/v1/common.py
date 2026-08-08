@@ -267,3 +267,36 @@ async def _parse_webhook_payload(request: Request) -> dict:
         return {}
 
 
+def require_intake_channel(channel: str) -> None:
+    """HTTP 403 if candidate intake channel is off for the current user."""
+    from app.core.auth import user_is_platform_owner
+    from app.db.session import SessionLocal
+    from app.services.candidate_intake import (
+        get_user_candidate_intake,
+        normalize_candidate_intake,
+        require_candidate_intake_channel,
+    )
+    from app.services.tenancy import require_current_user
+
+    user = require_current_user()
+    stored = None
+    if not user.auth_disabled:
+        db = SessionLocal()
+        try:
+            stored = get_user_candidate_intake(db, user.id)
+        except LookupError:
+            stored = normalize_candidate_intake(None)
+        finally:
+            db.close()
+    else:
+        stored = normalize_candidate_intake(None)
+    try:
+        require_candidate_intake_channel(
+            channel,
+            is_owner=user_is_platform_owner(user),
+            stored=stored,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+

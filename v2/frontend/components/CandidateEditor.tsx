@@ -54,6 +54,35 @@ function formatMeetingDateRu(value: string | null | undefined): string {
   });
 }
 
+function buildMeetingInviteText(opts: {
+  name: string;
+  date: string;
+  time: string;
+  link: string;
+}): string {
+  const who = (opts.name || "").trim() || "кандидат";
+  const dateLabel = formatMeetingDateRu(opts.date);
+  const timeLabel = (opts.time || "").trim() || "—";
+  const link = (opts.link || "").trim();
+  return [
+    `Здравствуйте, ${who}!`,
+    "",
+    "Приглашаю вас на встречу.",
+    `Дата: ${dateLabel}`,
+    `Время: ${timeLabel}`,
+    `Ссылка: ${link}`,
+    "",
+    "Буду рад(а) видеть вас.",
+  ].join("\n");
+}
+
+function buildMailtoHref(email: string, subject: string, body: string): string {
+  const params = new URLSearchParams();
+  params.set("subject", subject);
+  params.set("body", body);
+  return `mailto:${email.trim()}?${params.toString()}`;
+}
+
 /** Fields that change from Telegram / client zone. */
 function chatFingerprint(c: CandidateDetail): string {
   const p = c.payload || {};
@@ -130,6 +159,7 @@ export function CandidateEditor({ initial }: Props) {
   const [c, setC] = useState(initial);
   const [name, setName] = useState(initial.name || "");
   const [phone, setPhone] = useState(field(initial.phone));
+  const [email, setEmail] = useState(field(initial.email));
   const [age, setAge] = useState(field(initial.age));
   const [city, setCity] = useState(field(initial.city));
   const [metro, setMetro] = useState(field(initial.metro));
@@ -149,6 +179,9 @@ export function CandidateEditor({ initial }: Props) {
   const [meetingLink, setMeetingLink] = useState(
     field((initial.payload as { meeting_link?: string } | undefined)?.meeting_link),
   );
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [copyInviteDone, setCopyInviteDone] = useState(false);
   const [stage, setStage] = useState(initial.hr_stage);
   const [stageOptions, setStageOptions] = useState<{ id: string; label: string }[]>(
     STAGE_ORDER.map((id) => ({ id, label: HR_STAGE_LABELS[id] || id })),
@@ -284,6 +317,7 @@ export function CandidateEditor({ initial }: Props) {
     setC(next);
     setName(next.name || "");
     setPhone(field(next.phone));
+    setEmail(field(next.email));
     setAge(field(next.age));
     setCity(field(next.city));
     setMetro(field(next.metro));
@@ -306,6 +340,7 @@ export function CandidateEditor({ initial }: Props) {
   const isFormDirty = () =>
     name !== (c.name || "") ||
     phone !== field(c.phone) ||
+    email !== field(c.email) ||
     age !== field(c.age) ||
     city !== field(c.city) ||
     metro !== field(c.metro) ||
@@ -388,6 +423,7 @@ export function CandidateEditor({ initial }: Props) {
         body: JSON.stringify({
           name,
           phone,
+          email,
           age,
           city,
           metro,
@@ -989,7 +1025,7 @@ export function CandidateEditor({ initial }: Props) {
       <CollapsibleCard
         id="cand-anketa"
         title="Анкета"
-        hint={[phone, city].filter(Boolean).join(" · ") || undefined}
+        hint={[phone, email, city].filter(Boolean).join(" · ") || undefined}
         open={anketaOpen}
         onOpenChange={setAnketaOpen}
       >
@@ -1007,25 +1043,38 @@ export function CandidateEditor({ initial }: Props) {
             <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
           </div>
           <div className="hh-field">
+            <label className="hh-label" htmlFor="cand-email">
+              Email
+            </label>
+            <input
+              id="cand-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy}
+              placeholder="опционально"
+            />
+          </div>
+        </div>
+        <div className="hh-inline-pair">
+          <div className="hh-field">
             <label className="hh-label" htmlFor="cand-age">
               Возраст
             </label>
             <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
           </div>
-        </div>
-        <div className="hh-inline-pair">
           <div className="hh-field">
             <label className="hh-label" htmlFor="cand-city">
               Город
             </label>
             <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} />
           </div>
-          <div className="hh-field">
-            <label className="hh-label" htmlFor="cand-metro">
-              Метро
-            </label>
-            <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
-          </div>
+        </div>
+        <div className="hh-field">
+          <label className="hh-label" htmlFor="cand-metro">
+            Метро
+          </label>
+          <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
         </div>
         <div className="hh-field">
           <label className="hh-label" htmlFor="cand-salary">
@@ -1160,26 +1209,75 @@ export function CandidateEditor({ initial }: Props) {
                 />
               </div>
             </div>
-            <label className="hh-check">
-              <input
-                type="checkbox"
-                checked={remoteInterview}
-                disabled={busy}
-                onChange={(e) => setRemoteInterview(e.target.checked)}
-              />
-              Удалённое собеседование (подставить ссылку Zoom/Телемост из настроек)
-            </label>
-            <div className="hh-field">
-              <label className="hh-label" htmlFor="meet-link">
-                Ссылка на встречу
-              </label>
-              <input
-                id="meet-link"
-                value={meetingLink}
-                onChange={(e) => setMeetingLink(e.target.value)}
-                disabled={busy}
-                placeholder="заполнится из настроек при сохранении, если пусто"
-              />
+            {/* Zoom meeting: schedule → join_url → copy invite / mailto */}
+            <div className="hh-meeting-block">
+              <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.35rem" }}>
+                <button
+                  type="button"
+                  className="chip chip-active"
+                  disabled={busy || scheduleBusy}
+                  onClick={() => setScheduleModalOpen(true)}
+                >
+                  Назначить встречу
+                </button>
+              </div>
+              {meetingLink ? (
+                <div className="hh-field" style={{ marginTop: "0.55rem" }}>
+                  <label className="hh-label" htmlFor="meet-link">
+                    Ссылка на встречу (Zoom)
+                  </label>
+                  <input id="meet-link" value={meetingLink} readOnly disabled={busy} />
+                  <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.45rem" }}>
+                    <button
+                      type="button"
+                      className="chip chip-active"
+                      disabled={busy}
+                      onClick={async () => {
+                        const text = buildMeetingInviteText({
+                          name,
+                          date: interviewDate,
+                          time: interviewTime,
+                          link: meetingLink,
+                        });
+                        try {
+                          await navigator.clipboard.writeText(text);
+                          setCopyInviteDone(true);
+                          setTimeout(() => setCopyInviteDone(false), 2000);
+                        } catch {
+                          setFeedback("stage", null, "Не удалось скопировать — скопируйте ссылку вручную");
+                        }
+                      }}
+                    >
+                      {copyInviteDone ? "Скопировано" : "📋 Скопировать приглашение"}
+                    </button>
+                    {email.trim() ? (
+                      <a
+                        className="chip"
+                        href={buildMailtoHref(
+                          email.trim(),
+                          `Встреча — ${(name || "").trim() || "кандидат"}`,
+                          buildMeetingInviteText({
+                            name,
+                            date: interviewDate,
+                            time: interviewTime,
+                            link: meetingLink,
+                          }),
+                        )}
+                      >
+                        📧 Отправить Email
+                      </a>
+                    ) : (
+                      <button type="button" className="chip" disabled title="Укажите email в анкете">
+                        📧 Отправить Email
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="muted hh-micro" style={{ marginTop: "0.35rem" }}>
+                  Ссылка появится после назначения через Zoom.
+                </p>
+              )}
             </div>
           </>
         ) : null}
@@ -1483,6 +1581,83 @@ export function CandidateEditor({ initial }: Props) {
           />
         </CollapsibleCard>
       )}
+
+      {scheduleModalOpen ? (
+        <div
+          className="cz-modal-backdrop"
+          role="presentation"
+          onClick={() => !scheduleBusy && setScheduleModalOpen(false)}
+        >
+          <div
+            className="cz-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="schedule-meeting-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="schedule-meeting-title">Назначить встречу</h2>
+            <p className="muted hh-micro" style={{ margin: 0 }}>
+              Дата и время берутся из полей выше. Zoom создаст встречу и сохранит ссылку.
+            </p>
+            <p className="muted hh-micro" style={{ margin: 0 }}>
+              {interviewDate && interviewTime
+                ? `${formatMeetingDateRu(interviewDate)} · ${interviewTime}`
+                : "Сначала укажите дату и время собеседования."}
+            </p>
+            <button
+              type="button"
+              className="chip chip-active"
+              disabled={scheduleBusy || !interviewDate || !interviewTime}
+              onClick={async () => {
+                setScheduleBusy(true);
+                setFeedback("stage", null);
+                try {
+                  const res = await apiFetch(`/api/v1/candidates/${c.id}/zoom-meeting`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      start_date: interviewDate,
+                      start_time: interviewTime,
+                      duration_minutes: 60,
+                    }),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    const detail =
+                      data && typeof data === "object" && "detail" in data
+                        ? String((data as { detail?: unknown }).detail || "")
+                        : "";
+                    throw new Error(detail || `HTTP ${res.status}`);
+                  }
+                  applyCandidate(data as CandidateDetail);
+                  setRemoteInterview(true);
+                  setScheduleModalOpen(false);
+                  setFeedback("stage", "Zoom-встреча создана, ссылка сохранена");
+                  router.refresh();
+                } catch (e) {
+                  setFeedback(
+                    "stage",
+                    null,
+                    e instanceof Error ? e.message : "Не удалось создать Zoom-встречу",
+                  );
+                } finally {
+                  setScheduleBusy(false);
+                }
+              }}
+            >
+              {scheduleBusy ? "Создаём…" : "Zoom (авто-генерация)"}
+            </button>
+            <button
+              type="button"
+              className="chip"
+              disabled={scheduleBusy}
+              onClick={() => setScheduleModalOpen(false)}
+            >
+              Отмена
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

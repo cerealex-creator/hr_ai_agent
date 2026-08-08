@@ -16,6 +16,7 @@ from app.api.v1.common import (
     _channel_out,
     _nest_form_key,
     _parse_webhook_payload,
+    require_intake_channel,
 )
 from app.core.config import get_settings
 from app.services import jobs as job_svc
@@ -172,6 +173,10 @@ async def create_job(body: JobCreateIn, db: Session = Depends(get_db)) -> JobCre
                 status_code=403,
                 detail="Поиск резюме HH отключен в настройках (hh_search_enabled=false).",
             )
+    if body.job_type == "yandex_disk_sync":
+        require_intake_channel("disk_public_sync")
+    if body.job_type == "disk_inbox_router":
+        require_intake_channel("disk_inbox")
     if body.job_type == "transcribe_media":
         source_url = str(payload.get("source_url") or "").strip()
         if not source_url:

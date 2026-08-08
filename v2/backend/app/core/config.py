@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     telegram_reminder_tz: str = "Europe/Moscow"
     messaging_reminder_interval_sec: int = 60
 
+    # Zoom User OAuth (Marketplace app) — create meetings for connected user
+    zoom_client_id: str = ""
+    zoom_client_secret: str = ""
+    zoom_redirect_uri: str = "http://localhost:8765/"
+    zoom_token_path: str = ""
+    zoom_oauth_scopes: str = "meeting:write user:read offline_access"
+
     model_config = SettingsConfigDict(
         env_file=("../../.env", "../.env", ".env"),
         env_file_encoding="utf-8",

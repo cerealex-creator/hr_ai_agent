@@ -12,7 +12,21 @@
 3. TLS-сертификат: Let's Encrypt или сертификат из панели Timeweb.
 4. Секреты: пароль Postgres, `JWT_SECRET` (≥32 символов), пароль owner.
 
-## Быстрый старт
+## Sidecar (рядом с LexForge, пока нет домена)
+
+Если на том же VPS уже крутится другой продукт (например LexForge на `:80`/`:3000`/`:8000`):
+
+```bash
+cd /opt/hr_ai_agent/v2
+cp .env.sidecar.example .env.sidecar   # пароли + JWT
+docker compose -f docker-compose.sidecar.yml --env-file .env.sidecar up -d --build
+```
+
+- UI: `http://SERVER_IP:8080` (порт задаётся `HTTP_PORT`)
+- Postgres/Redis/API **не** публикуются на хост — конфликта с LexForge нет
+- `APP_ENV=pilot` + `AUTH_COOKIE_SECURE=false` — только для HTTP-smoke до появления HTTPS
+- Когда будет домен и TLS → `docker-compose.prod.yml` + `DEPLOY.md` (и выключить sidecar)
+
 
 ```bash
 cd v2

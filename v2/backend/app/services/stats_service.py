@@ -388,3 +388,492 @@ def build_activity_stats(
         "jobs": jobs_count,
         "series": series,
     }
+
+
+DASHBOARD_MODES = frozenset({"operational", "executive"})
+# week=текущая календарная неделя (пн→сейчас); month=скользящие 30д;
+# mtd/ytd=с начала месяца/года; m1..m12=N календарных месяцев назад; all=всё время
+DASHBOARD_PERIODS = frozenset(
+    {"week", "month", "all", "mtd", "ytd", "m1", "m2", "m3", "m6", "m12"}
+)
+EXECUTIVE_PERIODS = DASHBOARD_PERIODS  # alias for route validation
+OPERATIONAL_PERIODS = DASHBOARD_PERIODS
+MONTHS_BACK_PERIODS = frozenset({"m1", "m2", "m3", "m6", "m12"})
+REJECT_STAGES = frozenset(
+    {"rejected_hr", "rejected_client", "rejected_candidate", "rejected", "archived"}
+)
+
+
+def _start_of_day(dt: datetime) -> datetime:
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _add_calendar_months(dt: datetime, months: int) -> datetime:
+    """Shift by calendar months (negative = back). Clamps day to month length."""
+    import calendar
+
+    m0 = dt.month - 1 + months
+    y = dt.year + m0 // 12
+    m = m0 % 12 + 1
+    d = min(dt.day, calendar.monthrange(y, m)[1])
+    return dt.replace(year=y, month=m, day=d)
+
+
+def _period_window(period: str) -> tuple[datetime | None, datetime]:
+    """Return (start, end). start=None means all time."""
+    now = datetime.now(timezone.utc)
+    if period == "all":
+        return None, now
+    if period == "week":
+        # Monday 00:00 UTC of current week → now
+        start = _start_of_day(now - timedelta(days=now.weekday()))
+        return start, now
+    if period == "mtd":
+        return _start_of_day(now.replace(day=1)), now
+    if period == "ytd":
+        return _start_of_day(now.replace(month=1, day=1)), now
+    if period in MONTHS_BACK_PERIODS:
+        n = int(period[1:])
+        return _add_calendar_months(now, -n), now
+    # month / day / quarter… rolling presets
+    delta = PERIOD_PRESETS.get(period) or PERIOD_PRESETS["month"]
+    return now - delta, now
+
+
+def _chart_grain(period: str) -> str:
+    """Bucket grain for activity charts."""
+    if period in ("week", "mtd", "month", "m1", "m2", "m3"):
+        return "week"  # daily labels
+    return "half_year"  # monthly labels
+
+
+def _in_window(dt: datetime | None, start: datetime | None, end: datetime) -> bool:
+    if dt is None:
+        return False
+    if start is not None and dt < start:
+        return False
+    return dt <= end
+
+
+def _history_entries(candidate: models.Candidate) -> list[dict[str, Any]]:
+    raw = (candidate.payload or {}).get("hr_stage_history") or []
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict)]
+
+
+def _first_hire_at(candidate: models.Candidate) -> datetime | None:
+    for entry in _history_entries(candidate):
+        if entry.get("stage") in HIRE_STAGES:
+            at = _parse_dt(entry.get("at"))
+            if at:
+                return at
+    if candidate.hr_stage in HIRE_STAGES:
+        return _parse_dt(candidate.status_updated_at) or _parse_dt(candidate.created_at)
+    return None
+
+
+def _reject_events_after_hire(
+    candidate: models.Candidate, hire_at: datetime
+) -> list[tuple[datetime, str, str]]:
+    """(at, stage, note) for reject transitions after hire."""
+    out: list[tuple[datetime, str, str]] = []
+    for entry in _history_entries(candidate):
+        stage = str(entry.get("stage") or "")
+        if stage not in REJECT_STAGES:
+            continue
+        at = _parse_dt(entry.get("at"))
+        if not at or at < hire_at:
+            continue
+        note = str(entry.get("note") or "").strip()
+        out.append((at, stage, note))
+    if candidate.hr_stage in REJECT_STAGES:
+        at = _parse_dt(candidate.status_updated_at)
+        if at and at >= hire_at and not any(x[0] == at for x in out):
+            out.append((at, candidate.hr_stage, ""))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _vacancy_warranty_months(vacancy: models.Vacancy) -> int:
+    payload = vacancy.payload or {}
+    w = payload.get("warranty")
+    if isinstance(w, dict) and w.get("months") is not None:
+        try:
+            return max(1, int(w["months"]))
+        except (TypeError, ValueError):
+            pass
+    raw = payload.get("warranty_months")
+    if raw is not None:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+    from app.services.app_settings import get_default_warranty_months
+
+    return get_default_warranty_months()
+
+
+def _days_between(a: datetime, b: datetime) -> int:
+    return max(0, int((b - a).total_seconds() // 86400))
+
+
+def _vacancy_days_open(vacancy: models.Vacancy, *, now: datetime) -> int | None:
+    created = _parse_dt(vacancy.created_at)
+    if not created:
+        return None
+    end = _parse_dt(vacancy.closed_at) if not vacancy.active else now
+    if not end:
+        end = now
+    return _days_between(created, end)
+
+
+def build_dashboard_stats(
+    db: Session,
+    *,
+    mode: str,
+    period: str = "week",
+    client_id: int | None = None,
+    vacancy_id: int | None = None,
+    active_vacancies_only: bool = False,
+    organization_id: Any | None = None,
+) -> dict[str, Any]:
+    if mode not in DASHBOARD_MODES:
+        raise ValueError(f"mode: {', '.join(sorted(DASHBOARD_MODES))}")
+
+    allowed = OPERATIONAL_PERIODS if mode == "operational" else EXECUTIVE_PERIODS
+    if period not in allowed:
+        period = "week" if mode == "operational" else "month"
+
+    now = datetime.now(timezone.utc)
+    start, end = _period_window(period)
+    activity_start = start if start is not None else (now - PERIOD_PRESETS["year"])
+
+    vacancies = _filter_vacancies(
+        db,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
+        active_only=False,
+        organization_id=organization_id,
+    )
+    scope = [v for v in vacancies if (v.active if active_vacancies_only else True)]
+    if vacancy_id is not None:
+        scope = [v for v in vacancies if v.id == vacancy_id]
+        if active_vacancies_only:
+            scope = [v for v in scope if v.active]
+    vac_by_id = {v.id: v for v in scope}
+    vac_ids = list(vac_by_id.keys())
+    candidates = _candidates_for_vacancies(db, vac_ids)
+
+    period_from = start.isoformat() if start else None
+    period_to = end.isoformat()
+
+    if mode == "operational":
+        return _build_operational(
+            db,
+            vacancies=scope,
+            candidates=candidates,
+            vac_by_id=vac_by_id,
+            client_id=client_id,
+            vacancy_id=vacancy_id,
+            active_vacancies_only=active_vacancies_only,
+            organization_id=organization_id,
+            now=now,
+            period=period,
+            activity_start=activity_start,
+            period_from=period_from,
+            period_to=period_to,
+        )
+
+    return _build_executive(
+        db,
+        vacancies=scope,
+        candidates=candidates,
+        vac_by_id=vac_by_id,
+        period=period,
+        start=start,
+        end=end,
+        now=now,
+        period_from=period_from,
+        period_to=period_to,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
+        active_vacancies_only=active_vacancies_only,
+        organization_id=organization_id,
+    )
+
+
+def _build_operational(
+    db: Session,
+    *,
+    vacancies: list[models.Vacancy],
+    candidates: list[models.Candidate],
+    vac_by_id: dict[int, models.Vacancy],
+    client_id: int | None,
+    vacancy_id: int | None,
+    active_vacancies_only: bool,
+    organization_id: Any | None,
+    now: datetime,
+    period: str,
+    activity_start: datetime,
+    period_from: str | None,
+    period_to: str,
+) -> dict[str, Any]:
+    active_vacs = sum(1 for v in vacancies if v.active)
+    in_work = sum(
+        1
+        for c in candidates
+        if c.hr_stage not in REJECT_STAGES and c.hr_stage not in HIRE_STAGES
+    )
+    new_in_period = sum(
+        1
+        for c in candidates
+        if (created := _parse_dt(c.created_at)) and created >= activity_start
+    )
+
+    grain = _chart_grain(period)
+    buckets: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"candidates": 0, "stage_changes": 0, "jobs": 0}
+    )
+    vac_id_set = set(vac_by_id)
+    for c in candidates:
+        created = _parse_dt(c.created_at)
+        if created and created >= activity_start:
+            buckets[_bucket_key(created, grain)]["candidates"] += 1
+        for entry in _history_entries(c):
+            at = _parse_dt(entry.get("at"))
+            if at and at >= activity_start:
+                buckets[_bucket_key(at, grain)]["stage_changes"] += 1
+
+    jobs = list(db.scalars(select(models.Job).where(models.Job.created_at >= activity_start)).all())
+    for j in jobs:
+        if vac_id_set and j.vacancy_id not in vac_id_set and j.vacancy_id is not None:
+            continue
+        if vacancy_id is not None and j.vacancy_id != vacancy_id:
+            continue
+        created = j.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        buckets[_bucket_key(created, grain)]["jobs"] += 1
+
+    series = [
+        {
+            "bucket": key,
+            "candidates_added": vals["candidates"],
+            "stage_changes": vals["stage_changes"],
+            "jobs": vals["jobs"],
+        }
+        for key, vals in sorted(buckets.items())
+    ]
+
+    from app.services.candidate_query import list_candidates_filtered, vacancy_meta_maps
+
+    attention_cands, att_vacs, _ = list_candidates_filtered(
+        db,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
+        active_vacancies_only=active_vacancies_only,
+        preset="attention",
+        organization_id=organization_id,
+    )
+    titles, _client_names = vacancy_meta_maps(db, att_vacs)
+    attention = [
+        {
+            "id": str(c.id),
+            "name": c.name or "Без имени",
+            "vacancy_id": c.vacancy_id,
+            "vacancy_title": titles.get(c.vacancy_id),
+            "reason": getattr(c, "_attention_reason", None),
+        }
+        for c in attention_cands[:30]
+    ]
+
+    hh = build_hh_stats(
+        db,
+        client_id=client_id,
+        vacancy_id=vacancy_id,
+        active_vacancies_only=active_vacancies_only,
+        organization_id=organization_id,
+    )
+
+    return {
+        "mode": "operational",
+        "period": period,
+        "period_from": period_from,
+        "period_to": period_to,
+        "kpis": [
+            {"key": "vacancies_active", "label": "Активные вакансии", "value": active_vacs},
+            {"key": "candidates_in_work", "label": "Кандидаты в работе", "value": in_work},
+            {"key": "new_period", "label": "Новые за период", "value": new_in_period},
+            {"key": "attention", "label": "Требуют внимания", "value": len(attention_cands)},
+        ],
+        "activity_series": series,
+        "funnel_flow": [],
+        "attention": attention,
+        "vacancies_table": [],
+        "hh": hh,
+        "warranty_risks": None,
+    }
+
+
+def _build_executive(
+    db: Session,
+    *,
+    vacancies: list[models.Vacancy],
+    candidates: list[models.Candidate],
+    vac_by_id: dict[int, models.Vacancy],
+    period: str,
+    start: datetime | None,
+    end: datetime,
+    now: datetime,
+    period_from: str | None,
+    period_to: str,
+    client_id: int | None,
+    vacancy_id: int | None,
+    active_vacancies_only: bool,
+    organization_id: Any | None,
+) -> dict[str, Any]:
+    closed_in_period = [
+        v
+        for v in vacancies
+        if not v.active and _in_window(_parse_dt(v.closed_at), start, end)
+    ]
+    closed_count = len(closed_in_period)
+
+    hire_durations: list[int] = []
+    for v in closed_in_period:
+        created = _parse_dt(v.created_at)
+        closed = _parse_dt(v.closed_at)
+        if created and closed and closed >= created:
+            hire_durations.append(_days_between(created, closed))
+    avg_days = round(sum(hire_durations) / len(hire_durations), 1) if hire_durations else 0
+
+    hires_in_period = 0
+    for c in candidates:
+        hire_at = _first_hire_at(c)
+        if hire_at and _in_window(hire_at, start, end):
+            hires_in_period += 1
+
+    total_cands = len(candidates)
+    conversion = round((hires_in_period / total_cands) * 100, 1) if total_cands else 0.0
+
+    flow_counts: dict[str, int] = defaultdict(int)
+    for c in candidates:
+        for entry in _history_entries(c):
+            at = _parse_dt(entry.get("at"))
+            stage = str(entry.get("stage") or "")
+            if stage and _in_window(at, start, end):
+                flow_counts[stage] += 1
+    funnel_flow = [
+        {"stage": k, "count": v} for k, v in sorted(flow_counts.items(), key=lambda x: -x[1])
+    ]
+
+    vac_cand_counts: dict[int, int] = defaultdict(int)
+    vac_hire_counts: dict[int, int] = defaultdict(int)
+    for c in candidates:
+        vac_cand_counts[c.vacancy_id] += 1
+        if _first_hire_at(c):
+            vac_hire_counts[c.vacancy_id] += 1
+
+    vacancies_table = [
+        {
+            "vacancy_id": v.id,
+            "title": v.title,
+            "active": v.active,
+            "days_open": _vacancy_days_open(v, now=now),
+            "candidates": vac_cand_counts.get(v.id, 0),
+            "hires": vac_hire_counts.get(v.id, 0),
+        }
+        for v in sorted(vacancies, key=lambda x: (not x.active, x.title.lower()))
+    ]
+
+    # Warranty claims: hire → reject within warranty months; filter by leave date in period
+    claims: list[dict[str, Any]] = []
+    for c in candidates:
+        hire_at = _first_hire_at(c)
+        if not hire_at:
+            continue
+        vac = vac_by_id.get(c.vacancy_id)
+        if not vac:
+            continue
+        months = _vacancy_warranty_months(vac)
+        warranty_end = hire_at + timedelta(days=months * 30)
+        rejects = _reject_events_after_hire(c, hire_at)
+        if not rejects:
+            continue
+        left_at, stage, note = rejects[0]
+        if left_at > warranty_end:
+            continue
+        if not _in_window(left_at, start, end):
+            continue
+        claims.append(
+            {
+                "candidate_id": str(c.id),
+                "candidate_name": c.name or "Без имени",
+                "vacancy_id": vac.id,
+                "vacancy_title": vac.title,
+                "days_worked": _days_between(hire_at, left_at),
+                "reason": note or stage,
+                "hire_at": hire_at.isoformat(),
+                "left_at": left_at.isoformat(),
+            }
+        )
+    claims.sort(key=lambda r: r.get("left_at") or "", reverse=True)
+
+    # Replacements: warranty searches created in period + vacancies with 2+ hires ever
+    warranty_searches = 0
+    for v in vacancies:
+        payload = v.payload or {}
+        if payload.get("search_mode") != "warranty":
+            continue
+        created = _parse_dt(v.created_at)
+        if _in_window(created, start, end):
+            warranty_searches += 1
+
+    multi_hire = sum(1 for vid, n in vac_hire_counts.items() if n >= 2)
+    replacements_total = warranty_searches + multi_hire
+
+    return {
+        "mode": "executive",
+        "period": period,
+        "period_from": period_from,
+        "period_to": period_to,
+        "kpis": [
+            {"key": "vacancies_closed", "label": "Закрыто вакансий", "value": closed_count},
+            {"key": "hired", "label": "Нанято", "value": hires_in_period},
+            {
+                "key": "avg_hire_days",
+                "label": "Ср. срок закрытия вакансии",
+                "value": avg_days,
+                "unit": "дн.",
+            },
+            {
+                "key": "conversion",
+                "label": "Конверсия в найм",
+                "value": conversion,
+                "unit": "%",
+            },
+            {
+                "key": "warranty_claims",
+                "label": "Возвраты по гарантии",
+                "value": len(claims),
+            },
+            {
+                "key": "replacements",
+                "label": "Повторные / гарантийные поиски",
+                "value": replacements_total,
+            },
+        ],
+        "activity_series": [],
+        "funnel_flow": funnel_flow,
+        "attention": [],
+        "vacancies_table": vacancies_table,
+        "hh": None,
+        "warranty_risks": {
+            "claims_count": len(claims),
+            "claims": claims[:50],
+            "warranty_searches": warranty_searches,
+            "multi_hire_vacancies": multi_hire,
+            "replacements_total": replacements_total,
+        },
+    }

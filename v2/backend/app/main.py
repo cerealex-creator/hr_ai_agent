@@ -64,7 +64,11 @@ async def lifespan(_app: FastAPI):
     db = SessionLocal()
     try:
         from app.services.users import ensure_bootstrap_user
+        from app.services.notify_prefs import ensure_notify_prefs_column
+        from app.services.candidate_intake import ensure_candidate_intake_column
 
+        ensure_notify_prefs_column(db)
+        ensure_candidate_intake_column(db)
         ensure_bootstrap_user(db)
     except Exception as exc:  # noqa: BLE001
         print(f"auth bootstrap skipped: {exc}")

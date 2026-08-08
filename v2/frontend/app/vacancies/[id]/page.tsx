@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { AddCandidateForm } from "@/components/AddCandidateForm";
-import { BulkLinksForm } from "@/components/BulkLinksForm";
 import { DocumentsEditor } from "@/components/DocumentsEditor";
 import { HhSearchPanel } from "@/components/HhSearchPanel";
 import { YandexDiskPanel } from "@/components/YandexDiskPanel";
+import { VacancyTitleEditor } from "@/components/VacancyTitleEditor";
 import { VacancyDigestButton } from "@/components/VacancyDigestButton";
 import { VacancyLifecycle } from "@/components/VacancyLifecycle";
 import { VacancySettingsPanel } from "@/components/VacancySettingsPanel";
@@ -38,12 +38,38 @@ export default async function VacancyPage({ params, searchParams }: Props) {
   const { section, candidate } = await searchParams;
 
   let hhSearchEnabled = true;
+  let intake = {
+    manual: true,
+    file_upload: true,
+    file_link: false,
+    disk_public_sync: false,
+    disk_inbox: false,
+  };
   try {
-    const app = await apiGet<{ functions?: { hh_search_enabled?: boolean } }>(`/api/v1/settings/app`);
+    const app = await apiGet<{
+      functions?: { hh_search_enabled?: boolean };
+      candidate_intake_effective?: Partial<typeof intake>;
+    }>(`/api/v1/settings/app`);
     hhSearchEnabled = app.functions?.hh_search_enabled !== false;
+    if (app.candidate_intake_effective) {
+      intake = {
+        manual: app.candidate_intake_effective.manual !== false,
+        file_upload: app.candidate_intake_effective.file_upload !== false,
+        file_link: Boolean(app.candidate_intake_effective.file_link),
+        disk_public_sync: Boolean(app.candidate_intake_effective.disk_public_sync),
+        disk_inbox: Boolean(app.candidate_intake_effective.disk_inbox),
+      };
+    }
   } catch {
     // If settings unavailable — keep legacy behaviour (HH search stays visible).
     hhSearchEnabled = true;
+    intake = {
+      manual: true,
+      file_upload: true,
+      file_link: true,
+      disk_public_sync: true,
+      disk_inbox: true,
+    };
   }
 
   const viewFromSection =
@@ -54,7 +80,10 @@ export default async function VacancyPage({ params, searchParams }: Props) {
         : section === "disk"
           ? "disk"
           : "candidates";
-  const view = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
+  let view = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
+  if (view === "disk" && !intake.disk_public_sync) {
+    view = "candidates";
+  }
 
   let vacancy: VacancyDetail | null = null;
   let candidates: CandidateListItem[] = [];
@@ -98,15 +127,12 @@ export default async function VacancyPage({ params, searchParams }: Props) {
       {error ? <p className="warn">{error}</p> : null}
       {vacancy ? (
         <>
-          <h1 className="page-title">
-            {vacancy.title}
-            {(vacancy.payload || {}).search_mode === "warranty" ? (
-              <span className="muted"> · гарантийный поиск</span>
-            ) : null}
-            {(vacancy.payload || {}).is_test ? (
-              <span className="muted"> · тест</span>
-            ) : null}
-          </h1>
+          <VacancyTitleEditor
+            vacancyId={vacancy.id}
+            title={vacancy.title}
+            searchModeWarranty={(vacancy.payload || {}).search_mode === "warranty"}
+            isTest={Boolean((vacancy.payload || {}).is_test)}
+          />
           <p className="muted">
             {vacancy.client_name || "без клиента"} · #{vacancy.id}
           </p>
@@ -171,18 +197,19 @@ export default async function VacancyPage({ params, searchParams }: Props) {
                 Поиск HH
               </Link>
             ) : null}
-            <Link
-              href={`/vacancies/${id}?section=disk`}
-              className={view === "disk" ? "tab tab-active" : "tab"}
-            >
-              Я.Диск
-            </Link>
+            {intake.disk_public_sync ? (
+              <Link
+                href={`/vacancies/${id}?section=disk`}
+                className={view === "disk" ? "tab tab-active" : "tab"}
+              >
+                Я.Диск
+              </Link>
+            ) : null}
           </div>
 
           {view === "candidates" ? (
             <>
-              <BulkLinksForm vacancyId={vacancy.id} />
-              <AddCandidateForm vacancyId={vacancy.id} />
+              <AddCandidateForm vacancyId={vacancy.id} intake={intake} />
               <table>
                 <thead>
                   <tr>

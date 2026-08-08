@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -24,6 +25,8 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Per-org integrations (e.g. zoom OAuth tokens). Shared app Client ID/Secret stay in .env.
+    integrations: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
     clients: Mapped[list["Client"]] = relationship(back_populates="organization")
 
@@ -306,6 +309,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Per-user launcher buttons: [{id, label, url}, ...] — presets live in the UI only.
+    useful_links: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Personal notify: google_calendar_enabled, telegram_enabled/chat_id/period/text
+    notify_prefs: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Personal candidate intake channels (optional ones off by default)
+    candidate_intake: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     memberships: Mapped[list["OrganizationMember"]] = relationship(back_populates="user")

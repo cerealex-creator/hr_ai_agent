@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { InfoTip } from "@/components/InfoTip";
 import { apiFetch } from "@/lib/api";
 
 type StageItem = {
@@ -86,9 +87,9 @@ export function VacancyStageSchemaPanel({ vacancyId }: Props) {
 
   return (
     <div className="stage-schema-panel">
-      <p className="muted hh-micro">
-        Ключи в базе не меняются — только подписи и видимость в списках/карточках. Клиентские кнопки
-        Telegram остаются на системных статусах.
+      <p className="muted">
+        Настройте названия этапов и что показывать в списках
+        <InfoTip text="Системные коды этапов не меняются. Кнопки заказчика в Telegram опираются на стандартные статусы — их лучше не отключать." />
       </p>
       {locked ? (
         <p className="warn">
@@ -112,7 +113,10 @@ export function VacancyStageSchemaPanel({ vacancyId }: Props) {
                 disabled={busy || locked || s.protected}
                 onChange={(e) => patchHr(s.id, { enabled: e.target.checked })}
               />
-              <span className="muted hh-micro">{s.id}</span>
+              <span>{s.label || "Этап"}</span>
+              {s.protected ? (
+                <InfoTip text="Этот этап нужен системе — его нельзя отключить." />
+              ) : null}
             </label>
             <input
               value={s.label}

@@ -194,6 +194,34 @@ def close_vacancy(
     return vacancy
 
 
+def rename_vacancy(db: Session, vacancy: models.Vacancy, title: str) -> models.Vacancy:
+    title = (title or "").strip()
+    if not title:
+        raise VacancyWriteError("Название не может быть пустым", 400)
+    if len(title) > 512:
+        raise VacancyWriteError("Название слишком длинное", 400)
+    if title == vacancy.title:
+        return vacancy
+    if vacancy.active:
+        dup = db.scalar(
+            select(models.Vacancy).where(
+                models.Vacancy.title == title,
+                models.Vacancy.active.is_(True),
+                models.Vacancy.id != vacancy.id,
+            )
+        )
+        if dup:
+            raise VacancyWriteError(
+                "Уже есть активная вакансия с таким названием",
+                400,
+            )
+    vacancy.title = title
+    db.add(vacancy)
+    db.commit()
+    db.refresh(vacancy)
+    return vacancy
+
+
 def reopen_vacancy(db: Session, vacancy: models.Vacancy) -> models.Vacancy:
     if vacancy.active:
         raise VacancyWriteError("Вакансия уже в работе")

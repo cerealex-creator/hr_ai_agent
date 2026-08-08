@@ -282,3 +282,18 @@ def require_auth(
     user = auth_user_from_membership(user_row, member)
     set_auth_user(user)
     return user
+
+
+def user_is_platform_owner(user: AuthUser) -> bool:
+    if user.auth_disabled:
+        return True
+    return ROLE_PLATFORM_OWNER in (user.roles or ())
+
+
+def require_platform_owner(user: AuthUser = Depends(require_auth)) -> AuthUser:
+    if not user_is_platform_owner(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Требуется роль platform_owner",
+        )
+    return user

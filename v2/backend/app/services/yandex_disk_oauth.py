@@ -26,6 +26,8 @@ from app.services.yandex_disk_sync import DEFAULT_SUBFOLDERS, ensure_yandex_conf
 
 DISK_API = "https://cloud-api.yandex.net/v1/disk"
 OAUTH_AUTHORIZE = "https://oauth.yandex.ru/authorize"
+# Implicit-flow landing page — must match Redirect URI in the Yandex OAuth app.
+OAUTH_REDIRECT_URI = "https://oauth.yandex.ru/verification_code"
 DEFAULT_ROOT = "/HR_AI_Agent"
 DEFAULT_INBOX = "_inbox"
 TOKEN_FILENAME = "yandex_disk_oauth.json"
@@ -78,6 +80,35 @@ def clear_disk_token() -> None:
         path.unlink()
 
 
+def reset_disk_connection() -> dict[str, Any]:
+    """
+    Full local disconnect: remove OAuth token file, clear Client ID in app_settings,
+    reset folder paths to defaults. Does NOT delete folders/files on Yandex Disk.
+    """
+    clear_disk_token()
+    set_disk_client_id("")
+    paths = set_disk_paths(root=DEFAULT_ROOT, inbox_name=DEFAULT_INBOX)
+    status = disk_status()
+    env_token = bool((get_settings().yandex_disk_oauth_token or "").strip())
+    env_client = bool((get_settings().yandex_disk_client_id or "").strip())
+    note = (
+        "Локальные настройки Диска сброшены (токен, Client ID, пути). "
+        "Папки на Яндекс Диске не удалялись."
+    )
+    if env_token or env_client:
+        note += (
+            " Внимание: в .env всё ещё заданы YANDEX_DISK_OAUTH_TOKEN и/или "
+            "YANDEX_DISK_CLIENT_ID — уберите их, если нужна полная отвязка."
+        )
+    return {
+        **status,
+        "reset": True,
+        "message": note,
+        "root": paths["root"],
+        "inbox_path": paths["inbox_path"],
+    }
+
+
 def get_disk_paths() -> dict[str, str]:
     data = load_app_settings()
     root = str(data.get("yandex_disk_root") or DEFAULT_ROOT).strip() or DEFAULT_ROOT
@@ -105,12 +136,29 @@ def set_disk_paths(*, root: str | None = None, inbox_name: str | None = None) ->
     return get_disk_paths()
 
 
-def oauth_authorize_url() -> str | None:
-    client_id = (get_settings().yandex_disk_client_id or "").strip()
-    if not client_id:
+def get_disk_client_id() -> str:
+    data = load_app_settings()
+    from_settings = str(data.get("yandex_disk_client_id") or "").strip()
+    if from_settings:
+        return from_settings
+    return (get_settings().yandex_disk_client_id or "").strip()
+
+
+def set_disk_client_id(client_id: str | None) -> str:
+    data = load_app_settings()
+    value = (client_id or "").strip()
+    data["yandex_disk_client_id"] = value
+    save_app_settings(data)
+    return value
+
+
+def oauth_authorize_url(client_id: str | None = None) -> str | None:
+    cid = (client_id or "").strip() or get_disk_client_id()
+    if not cid:
         return None
     return (
-        f"{OAUTH_AUTHORIZE}?response_type=token&client_id={quote(client_id)}"
+        f"{OAUTH_AUTHORIZE}?response_type=token&client_id={quote(cid)}"
+        f"&redirect_uri={quote(OAUTH_REDIRECT_URI)}"
         f"&scope={quote('cloud_api:disk.app_folder cloud_api:disk.read cloud_api:disk.write')}"
     )
 
@@ -118,12 +166,15 @@ def oauth_authorize_url() -> str | None:
 def disk_status() -> dict[str, Any]:
     token = get_disk_token()
     paths = get_disk_paths()
+    client_id = get_disk_client_id()
     out: dict[str, Any] = {
         "connected": bool(token),
         "token_path": str(_token_path()),
         "token_from_env": bool((get_settings().yandex_disk_oauth_token or "").strip()),
-        "client_id_configured": bool((get_settings().yandex_disk_client_id or "").strip()),
-        "authorize_url": oauth_authorize_url(),
+        "client_id": client_id,
+        "client_id_configured": bool(client_id),
+        "authorize_url": oauth_authorize_url(client_id),
+        "create_app_url": "https://oauth.yandex.ru/client/new",
         "root": paths["root"],
         "inbox_path": paths["inbox_path"],
         "login": None,

@@ -31,17 +31,23 @@ from app.services.yandex_disk_oauth import (
 )
 from app.services.yandex_disk_sync import ensure_yandex_config
 
-ROUTER_SYSTEM = """Ты маршрутизатор резюме. По тексту резюме выбери наиболее подходящую активную вакансию.
+ROUTER_SYSTEM = """Ты маршрутизатор резюме. По тексту резюме выбери наиболее подходящую активную вакансию
+и извлеки поля анкеты кандидата.
 Верни JSON:
 {
   "vacancy_id": число или null,
   "confidence": 0.0-1.0,
   "full_name": "ФИО или пусто",
   "phone": "телефон или пусто",
+  "email": "email или пусто",
+  "age": "возраст числом или пусто",
+  "city": "город или пусто",
+  "metro": "метро или пусто",
+  "salary": "ожидания по ЗП текстом или пусто",
   "position": "желаемая должность из резюме или пусто",
   "reason": "кратко почему эта вакансия"
 }
-Если ни одна не подходит уверенно — vacancy_id=null, confidence низкий.
+Не выдумывай данные, которых нет в резюме. Если ни одна вакансия не подходит уверенно — vacancy_id=null, confidence низкий.
 """
 
 
@@ -134,10 +140,21 @@ def _route_text(text: str, vacancies: list[dict[str, Any]]) -> dict[str, Any]:
         system=ROUTER_SYSTEM,
         user=f"ВАКАНСИИ:\n{vacancies}\n\nРЕЗЮМЕ:\n{text[:6000]}",
         temperature=0.1,
-        max_tokens=800,
+        max_tokens=1200,
     )
     if not isinstance(data, dict):
-        return {"vacancy_id": None, "confidence": 0, "full_name": "", "phone": "", "position": ""}
+        return {
+            "vacancy_id": None,
+            "confidence": 0,
+            "full_name": "",
+            "phone": "",
+            "email": "",
+            "age": "",
+            "city": "",
+            "metro": "",
+            "salary_expected": "",
+            "position": "",
+        }
     try:
         conf = float(data.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -147,14 +164,34 @@ def _route_text(text: str, vacancies: list[dict[str, Any]]) -> dict[str, Any]:
         vid_i = int(vid) if vid not in (None, "") else None
     except (TypeError, ValueError):
         vid_i = None
+    from app.services.candidate_resume_eval import _format_phone
+
+    email_raw = str(data.get("email") or "").strip()
+    email = email_raw if "@" in email_raw else ""
     return {
         "vacancy_id": vid_i,
         "confidence": conf,
         "full_name": str(data.get("full_name") or "").strip(),
-        "phone": str(data.get("phone") or "").strip(),
+        "phone": _format_phone(data.get("phone")),
+        "email": email,
+        "age": str(data.get("age") or "").strip(),
+        "city": str(data.get("city") or "").strip(),
+        "metro": str(data.get("metro") or "").strip(),
+        "salary_expected": str(data.get("salary") or data.get("salary_expected") or "").strip(),
         "position": str(data.get("position") or "").strip(),
         "reason": str(data.get("reason") or "").strip(),
     }
+
+
+def _anketa_fields_from_route(routed: dict[str, Any], *, resume_link: str = "") -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key in ("phone", "email", "age", "city", "metro", "salary_expected"):
+        val = str(routed.get(key) or "").strip()
+        if val:
+            fields[key] = val
+    if resume_link:
+        fields["resume_link"] = resume_link
+    return fields
 
 
 def _find_duplicate(db: Session, vacancy_id: int, name: str, phone: str) -> models.Candidate | None:
@@ -239,6 +276,11 @@ def process_inbox(db: Session, *, limit: int = 20) -> dict[str, Any]:
                 row.extracted = {
                     "full_name": routed.get("full_name") or "",
                     "phone": routed.get("phone") or "",
+                    "email": routed.get("email") or "",
+                    "age": routed.get("age") or "",
+                    "city": routed.get("city") or "",
+                    "metro": routed.get("metro") or "",
+                    "salary_expected": routed.get("salary_expected") or "",
                     "position": routed.get("position") or "",
                     "reason": routed.get("reason") or "",
                 }
@@ -264,10 +306,10 @@ def process_inbox(db: Session, *, limit: int = 20) -> dict[str, Any]:
                             db,
                             vacancy_id=vac.id,
                             name=str(row.extracted.get("full_name") or name),
-                            fields={
-                                "phone": str(row.extracted.get("phone") or ""),
-                                "resume_link": f"yadisk-app:{dest}",
-                            },
+                            fields=_anketa_fields_from_route(
+                                routed,
+                                resume_link=f"yadisk-app:{dest}",
+                            ),
                         )
                         payload = dict(cand.payload or {})
                         payload["source"] = "yandex_inbox"
@@ -360,10 +402,10 @@ def bind_unsorted(
             db,
             vacancy_id=vac.id,
             name=str(extracted.get("full_name") or name),
-            fields={
-                "phone": str(extracted.get("phone") or ""),
-                "resume_link": f"yadisk-app:{dest}",
-            },
+            fields=_anketa_fields_from_route(
+                extracted if isinstance(extracted, dict) else {},
+                resume_link=f"yadisk-app:{dest}",
+            ),
         )
         cand_id = str(c.id)
     db.commit()

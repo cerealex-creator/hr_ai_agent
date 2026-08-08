@@ -42,6 +42,7 @@ def deep_fill_missing(target: Any, defaults: Any) -> tuple[Any, bool]:
 def default_candidate_payload() -> dict[str, Any]:
     return {
         "phone": "",
+        "email": "",
         "age": "",
         "age_location": "",
         "city": "",

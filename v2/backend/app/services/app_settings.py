@@ -51,6 +51,7 @@ DEFAULT_CANDIDATE_COMMS = {
     ],
 }
 
+# How recruiters add candidates: see app.services.candidate_intake (per-user).
 
 def _settings_path() -> Path:
     return get_settings().resolved_legacy_data_dir() / "app_settings.json"
@@ -479,7 +480,7 @@ def resolve_bitrix_responsible_id(vacancy_payload: dict | None = None) -> str:
 
 def get_app_settings() -> dict:
     from app.services.messaging.providers.registry import catalog_for_ui
-    from app.services.yandex_disk_oauth import get_disk_paths
+    from app.services.yandex_disk_oauth import get_disk_paths, get_disk_client_id
 
     disk_paths = get_disk_paths()
     bitrix = dict(get_bitrix())
@@ -501,5 +502,6 @@ def get_app_settings() -> dict:
         "bitrix": bitrix,
         "yandex_disk_root": disk_paths["root"],
         "yandex_disk_inbox": disk_paths["inbox_name"],
+        "yandex_disk_client_id": get_disk_client_id(),
         "path": str(_settings_path()),
     }

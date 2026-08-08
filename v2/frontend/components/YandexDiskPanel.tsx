@@ -156,7 +156,10 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
       <p className="muted hh-micro">
         Публичная папка вакансии → привязка PDF/видео/заданий к кандидатам по ФИО в имени файла.
         Либо подключите OAuth в{" "}
-        <a href="/settings/yandex-disk">Настройки → Яндекс.Диск</a> и создайте папки автоматически.
+        <a href="/settings/candidate-intake#yandex-disk-connect">
+          Настройки → Способы добавления кандидатов
+        </a>{" "}
+        и создайте папки автоматически.
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}

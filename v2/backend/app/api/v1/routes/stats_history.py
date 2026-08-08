@@ -69,6 +69,7 @@ from app.schemas import (
     FunnelStatsOut,
     HhEfficiencyStatsOut,
     ActivityStatsOut,
+    DashboardStatsOut,
     HealthOut,
     HhSearchCriteriaIn,
     HhPresetIn,
@@ -124,16 +125,93 @@ router = APIRouter()
 
 @router.get("/stats/import", response_model=ImportStatsOut)
 def import_stats(db: Session = Depends(get_db)) -> ImportStatsOut:
+    from app.services.tenancy import org_client_ids, org_vacancy_ids, require_org_id
+
+    org_id = require_org_id()
+    client_ids = org_client_ids(db, org_id)
+    vac_ids = org_vacancy_ids(db, org_id)
+
+    def _count_clients() -> int:
+        return len(client_ids)
+
+    def _count_vacancies() -> int:
+        return len(vac_ids)
+
+    def _count_candidates() -> int:
+        if not vac_ids:
+            return 0
+        return int(
+            db.scalar(
+                select(func.count())
+                .select_from(models.Candidate)
+                .where(models.Candidate.vacancy_id.in_(vac_ids))
+            )
+            or 0
+        )
+
+    def _count_docs() -> int:
+        if not vac_ids and not client_ids:
+            return 0
+        q = select(func.count()).select_from(models.DocumentGeneration)
+        if vac_ids and client_ids:
+            q = q.where(
+                (models.DocumentGeneration.vacancy_id.in_(vac_ids))
+                | (models.DocumentGeneration.client_id.in_(client_ids))
+            )
+        elif vac_ids:
+            q = q.where(models.DocumentGeneration.vacancy_id.in_(vac_ids))
+        else:
+            q = q.where(models.DocumentGeneration.client_id.in_(client_ids))
+        return int(db.scalar(q) or 0)
+
+    def _count_channels() -> int:
+        if not client_ids:
+            return 0
+        return int(
+            db.scalar(
+                select(func.count())
+                .select_from(models.MessagingChannel)
+                .where(models.MessagingChannel.client_id.in_(client_ids))
+            )
+            or 0
+        )
+
+    def _count_templates() -> int:
+        if not client_ids:
+            # templates without client are global legacy — hide for empty org
+            return 0
+        return int(
+            db.scalar(
+                select(func.count())
+                .select_from(models.VacancyTemplate)
+                .where(models.VacancyTemplate.client_id.in_(client_ids))
+            )
+            or 0
+        )
+
+    def _count_jobs() -> int:
+        if not vac_ids and not client_ids:
+            return 0
+        q = select(func.count()).select_from(models.Job)
+        if vac_ids and client_ids:
+            q = q.where(
+                (models.Job.vacancy_id.in_(vac_ids)) | (models.Job.client_id.in_(client_ids))
+            )
+        elif vac_ids:
+            q = q.where(models.Job.vacancy_id.in_(vac_ids))
+        else:
+            q = q.where(models.Job.client_id.in_(client_ids))
+        return int(db.scalar(q) or 0)
+
     last = db.scalar(select(models.ImportRun).order_by(models.ImportRun.created_at.desc()).limit(1))
     counts = {
-        "clients": db.scalar(select(func.count()).select_from(models.Client)) or 0,
-        "vacancies": db.scalar(select(func.count()).select_from(models.Vacancy)) or 0,
-        "candidates": db.scalar(select(func.count()).select_from(models.Candidate)) or 0,
-        "document_generations": db.scalar(select(func.count()).select_from(models.DocumentGeneration))
-        or 0,
-        "messaging_channels": db.scalar(select(func.count()).select_from(models.MessagingChannel)) or 0,
-        "vacancy_templates": db.scalar(select(func.count()).select_from(models.VacancyTemplate)) or 0,
-        "jobs": db.scalar(select(func.count()).select_from(models.Job)) or 0,
+        "clients": _count_clients(),
+        "vacancies": _count_vacancies(),
+        "candidates": _count_candidates(),
+        "document_generations": _count_docs(),
+        "messaging_channels": _count_channels(),
+        "vacancy_templates": _count_templates(),
+        "jobs": _count_jobs(),
     }
     if not last:
         return ImportStatsOut(counts=counts)
@@ -226,6 +304,48 @@ def activity_stats(
         organization_id=require_org_id(),
     )
     return ActivityStatsOut.model_validate(data)
+
+
+@router.get("/stats/dashboard", response_model=DashboardStatsOut)
+def dashboard_stats(
+    mode: str = Query(default="operational"),
+    period: str = Query(default="week"),
+    client_id: int | None = Query(default=None),
+    vacancy_id: int | None = Query(default=None),
+    active_vacancies_only: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> DashboardStatsOut:
+    from app.services.stats_service import (
+        DASHBOARD_MODES,
+        DASHBOARD_PERIODS,
+        build_dashboard_stats,
+    )
+    from app.services.tenancy import require_org_id
+
+    if mode not in DASHBOARD_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode: {', '.join(sorted(DASHBOARD_MODES))}",
+        )
+    if period not in DASHBOARD_PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"period: {', '.join(sorted(DASHBOARD_PERIODS))}",
+        )
+    try:
+        data = build_dashboard_stats(
+            db,
+            mode=mode,
+            period=period,
+            client_id=client_id,
+            vacancy_id=vacancy_id,
+            active_vacancies_only=active_vacancies_only,
+            organization_id=require_org_id(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DashboardStatsOut.model_validate(data)
+
 
 @router.get("/history", response_model=list[DocumentGenerationOut])
 def list_history(

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { apiFetch } from "@/lib/api";
 
@@ -22,6 +23,18 @@ function detailMessage(data: unknown, fallback: string): string {
 }
 
 export default function CandidateCommsSettingsPage() {
+  return (
+    <AppShell variant="settings" activePath="/settings">
+      <Suspense fallback={<p className="muted">Загрузка…</p>}>
+        <CandidateCommsInner />
+      </Suspense>
+    </AppShell>
+  );
+}
+
+function CandidateCommsInner() {
+  const params = useSearchParams();
+  const focus = params.get("focus") || "";
   const [comms, setComms] = useState<Comms | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -33,6 +46,14 @@ export default function CandidateCommsSettingsPage() {
       .then((d) => setComms(d.candidate_comms))
       .catch((e) => setErr(e instanceof Error ? e.message : "Ошибка загрузки"));
   }, []);
+
+  useEffect(() => {
+    if (!comms || (focus !== "zoom" && focus !== "telemost")) return;
+    document.getElementById(`comms-${focus}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [comms, focus]);
 
   async function save() {
     if (!comms) return;
@@ -57,7 +78,7 @@ export default function CandidateCommsSettingsPage() {
   }
 
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <>
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -75,7 +96,10 @@ export default function CandidateCommsSettingsPage() {
         <>
           <section className="card-edit">
             <h2>Видеосвязь</h2>
-            <label className="hh-field">
+            <label
+              id="comms-zoom"
+              className={`hh-field${focus === "zoom" ? " field-focus" : ""}`}
+            >
               <span className="hh-label">
                 <input
                   type="checkbox"
@@ -108,7 +132,10 @@ export default function CandidateCommsSettingsPage() {
                 style={{ marginTop: 6 }}
               />
             </label>
-            <label className="hh-field">
+            <label
+              id="comms-telemost"
+              className={`hh-field${focus === "telemost" ? " field-focus" : ""}`}
+            >
               <span className="hh-label">
                 <input
                   type="checkbox"
@@ -256,6 +283,6 @@ export default function CandidateCommsSettingsPage() {
           </div>
         </>
       )}
-    </AppShell>
+    </>
   );
 }

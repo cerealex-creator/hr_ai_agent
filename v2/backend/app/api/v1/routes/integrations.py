@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import AuthUser, require_platform_owner
 from app.db import models
 from app.db.session import get_db
 from app.api.v1.common import (
@@ -15,6 +16,7 @@ from app.api.v1.common import (
     _channel_out,
     _nest_form_key,
     _parse_webhook_payload,
+    require_intake_channel,
 )
 from app.core.config import get_settings
 from app.services import jobs as job_svc
@@ -108,6 +110,7 @@ from app.schemas import (
     InboxSettingsPatchIn,
     StageSchemaPatchIn,
     GoogleOAuthCompleteIn,
+    ZoomOAuthCompleteIn,
     HhSearchPlanReviseIn,
     HhManualEvaluateIn,
     HhSoftenSuggestionsIn,
@@ -150,6 +153,15 @@ def yandex_disk_clear_token() -> dict:
     clear_disk_token()
     return disk_status()
 
+
+@router.post("/integrations/yandex-disk/disconnect")
+def yandex_disk_disconnect() -> dict:
+    """Clear local Disk settings (token, client id, paths). Does not delete remote folders."""
+    from app.services.yandex_disk_oauth import reset_disk_connection
+
+    return reset_disk_connection()
+
+
 @router.post("/integrations/yandex-disk/ensure-root")
 def yandex_disk_ensure_root() -> dict:
     from app.services.yandex_disk_oauth import DiskApiError, ensure_app_root
@@ -180,6 +192,7 @@ def yandex_disk_inbox_process(body: InboxProcessIn | None = None, db: Session = 
     from app.services.disk_inbox_router import process_inbox
     from app.services.yandex_disk_oauth import DiskApiError
 
+    require_intake_channel("disk_inbox")
     body = body or InboxProcessIn()
     try:
         return process_inbox(db, limit=int(body.limit or 20))
@@ -193,6 +206,7 @@ def yandex_disk_inbox_bind(item_id: str, body: InboxBindIn, db: Session = Depend
     from app.services.disk_inbox_router import bind_unsorted
     from app.services.yandex_disk_oauth import DiskApiError
 
+    require_intake_channel("disk_inbox")
     try:
         iid = UUID(item_id)
     except ValueError as exc:
@@ -247,6 +261,50 @@ def google_calendar_oauth_complete(body: GoogleOAuthCompleteIn) -> dict:
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg}
+
+
+@router.get("/integrations/zoom/status")
+def zoom_status(
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.zoom_oauth import get_redirect_uri, get_zoom_status, legacy_token_path
+
+    status, message = get_zoom_status(db, user.org_id)
+    return {
+        "status": status,
+        "message": message,
+        "redirect_uri": get_redirect_uri(),
+        "scope": "organization",
+        "org_id": str(user.org_id),
+        # diagnostics only — tokens live in organizations.integrations
+        "legacy_token_path": legacy_token_path(),
+    }
+
+
+@router.post("/integrations/zoom/oauth/start")
+def zoom_oauth_start(_user: AuthUser = Depends(require_platform_owner)) -> dict:
+    from app.services.zoom_oauth import oauth_auth_url
+
+    ok, msg, url = oauth_auth_url()
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "message": msg, "auth_url": url}
+
+
+@router.post("/integrations/zoom/oauth/complete")
+def zoom_oauth_complete(
+    body: ZoomOAuthCompleteIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.zoom_oauth import oauth_complete_with_code
+
+    ok, msg = oauth_complete_with_code(db, user.org_id, str(body.code or ""))
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "message": msg}
+
 
 @public_router.post("/integrations/{provider}/webhook", response_model=WebhookAckOut)
 async def integrations_webhook(

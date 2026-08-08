@@ -28,6 +28,7 @@ def candidate_public_fields(payload: dict | None) -> dict[str, Any]:
             pass
     return {
         "phone": payload_get(p, "phone"),
+        "email": payload_get(p, "email"),
         "city": payload_get(p, "city"),
         "metro": payload_get(p, "metro"),
         "age": payload_get(p, "age", "age_location"),

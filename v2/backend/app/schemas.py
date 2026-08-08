@@ -152,6 +152,10 @@ class VacancyCloseIn(BaseModel):
     close_reason: str  # success | client_cancelled
 
 
+class VacancyPatchIn(BaseModel):
+    title: str | None = None
+
+
 class VacancyDocumentsPatchIn(BaseModel):
     """Partial update of editable vacancy document keys (merge, not replace)."""
 
@@ -208,6 +212,7 @@ class CandidateDetail(BaseModel):
     created_at: str | None
     status_updated_at: str | None
     phone: str | None = None
+    email: str | None = None
     city: str | None = None
     metro: str | None = None
     age: str | None = None
@@ -239,6 +244,7 @@ class CandidateDetail(BaseModel):
 class CandidatePatchIn(BaseModel):
     name: str | None = None
     phone: str | None = None
+    email: str | None = None
     age: str | None = None
     city: str | None = None
     metro: str | None = None
@@ -334,6 +340,63 @@ class ActivityStatsOut(BaseModel):
     stage_changes: int = 0
     jobs: int = 0
     series: list[ActivityBucket] = Field(default_factory=list)
+
+
+class DashboardKpi(BaseModel):
+    key: str
+    label: str
+    value: float | int
+    unit: str | None = None
+
+
+class DashboardAttentionItem(BaseModel):
+    id: str
+    name: str
+    vacancy_id: int
+    vacancy_title: str | None = None
+    reason: str | None = None
+
+
+class DashboardVacancyRow(BaseModel):
+    vacancy_id: int
+    title: str
+    active: bool
+    days_open: int | None = None
+    candidates: int = 0
+    hires: int = 0
+
+
+class DashboardWarrantyClaim(BaseModel):
+    candidate_id: str
+    candidate_name: str
+    vacancy_id: int
+    vacancy_title: str
+    days_worked: int | None = None
+    reason: str | None = None
+    hire_at: str | None = None
+    left_at: str | None = None
+
+
+class DashboardWarrantyRisks(BaseModel):
+    claims_count: int = 0
+    claims: list[DashboardWarrantyClaim] = Field(default_factory=list)
+    warranty_searches: int = 0
+    multi_hire_vacancies: int = 0
+    replacements_total: int = 0
+
+
+class DashboardStatsOut(BaseModel):
+    mode: str
+    period: str
+    period_from: str | None = None
+    period_to: str | None = None
+    kpis: list[DashboardKpi] = Field(default_factory=list)
+    activity_series: list[ActivityBucket] = Field(default_factory=list)
+    funnel_flow: list[StageCount] = Field(default_factory=list)
+    attention: list[DashboardAttentionItem] = Field(default_factory=list)
+    vacancies_table: list[DashboardVacancyRow] = Field(default_factory=list)
+    hh: HhEfficiencyStatsOut | None = None
+    warranty_risks: DashboardWarrantyRisks | None = None
 
 
 class DocumentGenerationOut(BaseModel):
@@ -652,6 +715,8 @@ class AppSettingsPatchIn(BaseModel):
     candidate_comms: dict | None = None
     yandex_disk_root: str | None = None
     yandex_disk_inbox: str | None = None
+    yandex_disk_client_id: str | None = None
+    candidate_intake: dict | None = None
     functions: dict | None = None
     client_notify: dict | None = None
     bitrix: dict | None = None
@@ -684,6 +749,16 @@ class StageSchemaPatchIn(BaseModel):
 
 class GoogleOAuthCompleteIn(BaseModel):
     code: str = ""
+
+
+class ZoomOAuthCompleteIn(BaseModel):
+    code: str = ""
+
+
+class ZoomMeetingScheduleIn(BaseModel):
+    start_date: str = ""
+    start_time: str = ""
+    duration_minutes: int = 60
 
 
 class HhSearchPlanReviseIn(BaseModel):
@@ -751,4 +826,37 @@ class AuthMeOut(BaseModel):
 
 class AuthOkOut(BaseModel):
     ok: bool = True
+
+
+class UsefulLinkItem(BaseModel):
+    id: str
+    label: str
+    url: str
+
+
+class UsefulLinksOut(BaseModel):
+    items: list[UsefulLinkItem] = Field(default_factory=list)
+    auth_disabled: bool = False
+
+
+class UsefulLinksPut(BaseModel):
+    items: list[UsefulLinkItem] = Field(default_factory=list)
+
+
+class NotifyPrefsOut(BaseModel):
+    google_calendar_enabled: bool = True
+    telegram_enabled: bool = False
+    telegram_chat_id: str = ""
+    telegram_period: str = "digest_admin"
+    telegram_text: str = ""
+    auth_disabled: bool = False
+    telegram_bound: bool = False
+
+
+class NotifyPrefsPut(BaseModel):
+    google_calendar_enabled: bool | None = None
+    telegram_enabled: bool | None = None
+    telegram_chat_id: str | None = None
+    telegram_period: str | None = None
+    telegram_text: str | None = None
 

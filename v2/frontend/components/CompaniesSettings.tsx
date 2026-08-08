@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
+import { CommunicationChannelsPanel } from "@/components/CommunicationChannelsPanel";
+import { InfoTip } from "@/components/InfoTip";
+import { TestChatSettings } from "@/components/TestChatSettings";
 import { apiFetch } from "@/lib/api";
 import {
   companyModeLabel,
@@ -34,24 +37,34 @@ export function CompaniesSettings() {
   return (
     <>
       <section className="card-edit" style={{ marginBottom: "1rem" }}>
-        <h2>Создать клиента / компанию</h2>
+        <h2>
+          Создать компанию{" "}
+          <InfoTip text="Сначала создайте компанию (заказчика). Потом при необходимости — подразделения, куда ищете сотрудников. Если подразделения нет, все вакансии привязываются к самой компании. Можно создать несколько компаний." />
+        </h2>
         <p className="muted hh-micro">
-          Новый заказчик. Режим чатов можно сменить позже на странице компании.
+          Шаг 1: название компании. Подразделения добавляются уже на странице компании. Режим чатов
+          можно сменить позже.
         </p>
         {err ? <p className="warn">{err}</p> : null}
         {msg ? <p className="ok">{msg}</p> : null}
         <div className="hh-inline-pair" style={{ marginTop: "0.75rem" }}>
           <div className="hh-field">
-            <label className="hh-label">Название</label>
+            <label className="hh-label">
+              Название{" "}
+              <InfoTip text="Как будет отображаться заказчик в списках вакансий и сайдбаре. Пример: ООО «Компания»." />
+            </label>
             <input
               value={newCompanyName}
               onChange={(e) => setNewCompanyName(e.target.value)}
               disabled={busy}
-              placeholder="YourBox, Пульс Групп…"
+              placeholder="ООО «Компания», ИП Иванов…"
             />
           </div>
           <div className="hh-field">
-            <label className="hh-label">Как устроены чаты?</label>
+            <label className="hh-label">
+              Как устроены чаты?{" "}
+              <InfoTip text="Один чат — все вакансии компании в одной Telegram-группе. По подразделениям — у каждого отдела свой чат (удобно, когда в компании несколько направлений)." />
+            </label>
             <select
               value={newCompanyMode}
               onChange={(e) => setNewCompanyMode(e.target.value as "company" | "departments")}
@@ -82,7 +95,7 @@ export function CompaniesSettings() {
               const data = await res.json().catch(() => ({}));
               if (!res.ok) throw new Error(detailMessage(data, `HTTP ${res.status}`));
               setNewCompanyName("");
-              setMsg("Компания создана");
+              setMsg("Компания создана — откройте её, чтобы добавить подразделения и чат");
               await load();
               if (data?.id != null) {
                 router.push(`/settings/companies/${data.id}`);
@@ -99,11 +112,14 @@ export function CompaniesSettings() {
       </section>
 
       <section style={{ marginBottom: "1rem" }}>
-        <h2 style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>Существующие компании</h2>
+        <h2 style={{ fontSize: "1.05rem", margin: "0 0 0.5rem" }}>
+          Существующие компании{" "}
+          <InfoTip text="Откройте компанию, чтобы задать чат, клиентскую зону и подразделения (если нужны)." />
+        </h2>
         <p className="muted hh-micro" style={{ marginTop: 0 }}>
-          Свёрнуто. Полные настройки — на странице компании.
+          Можно несколько компаний. Внутри каждой — сколько угодно подразделений.
         </p>
-        {!items.length ? <p className="muted">Пока нет компаний.</p> : null}
+        {!items.length ? <p className="muted">Пока нет компаний — создайте первую выше.</p> : null}
         {items.map((co) => {
           const deptCount = co.departments?.length || 0;
           const chatsBound =
@@ -130,6 +146,16 @@ export function CompaniesSettings() {
             </CollapsibleCard>
           );
         })}
+      </section>
+
+      <CommunicationChannelsPanel />
+
+      <section id="test-chat" className="card-edit" style={{ marginBottom: "1rem" }}>
+        <h2>
+          Настройка тестового чата{" "}
+          <InfoTip text="Отдельный чат, чтобы проверить бота и сценарии без риска написать реальному заказчику. Не показывается в обычном списке компаний слева." />
+        </h2>
+        <TestChatSettings embedded />
       </section>
     </>
   );

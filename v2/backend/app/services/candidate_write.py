@@ -53,6 +53,7 @@ CLIENT_STATUS_TO_HR_STAGE = {
 # Payload keys editable via PATCH (plus top-level name/hr columns separately)
 PATCHABLE_PAYLOAD_FIELDS = (
     "phone",
+    "email",
     "age",
     "city",
     "metro",

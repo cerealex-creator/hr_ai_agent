@@ -1,4 +1,6 @@
 .env
+.env.prod
+.env.sidecar
 backend/.venv/
 frontend/node_modules/
 frontend/.next/

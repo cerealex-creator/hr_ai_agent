@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { OwnerOnly } from "@/components/AuthGate";
+import { InfoTip } from "@/components/InfoTip";
+import { ProviderResourceLinks } from "@/components/ProviderResourceLinks";
 import { apiFetch } from "@/lib/api";
 
 type ProviderLink = {
@@ -86,32 +89,41 @@ export default function AiSettingsPage() {
   }
 
   return (
+    <OwnerOnly>
     <AppShell variant="settings" activePath="/settings">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
-      <h1 className="page-title">ИИ и ресурсы</h1>
-      <p className="muted">
-        Достаточно сменить название модели на той же платформе. Ключ и URL API берутся из окружения
-        сервера — их менять не нужно, пока не меняете провайдера.
-      </p>
+      <h1 className="page-title">
+        ИИ и ресурсы
+        <InfoTip text="Здесь выбирается модель и ссылки на кабинеты провайдеров. API-ключ и адрес сервиса задаются на сервере." />
+      </h1>
+      <p className="muted">Смена модели на той же платформе — в поле ниже. Кабинеты провайдеров открываются по кнопкам.</p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
+
+      <section className="card-edit" style={{ marginBottom: "1rem" }}>
+        <h2>Кабинеты</h2>
+        <ProviderResourceLinks compact={false} />
+      </section>
 
       {!data ? (
         <p className="muted">Загрузка…</p>
       ) : (
         <>
           <section className="card-edit">
-            <h2>Модель</h2>
-            <p className="muted hh-micro">
-              Сейчас в коде: <code>{data.ai_provider.model}</code>
-              {data.ai_provider.model_env_default
-                ? ` · по умолчанию из .env: ${data.ai_provider.model_env_default}`
-                : null}
+            <h2>
+              Модель
+              <InfoTip text="Имя модели у текущего провайдера. Пустое поле после сохранения вернёт значение из настроек сервера." />
+            </h2>
+            <p className="muted">
+              Сейчас: <code>{data.ai_provider.model}</code>
             </p>
             <label className="hh-field">
-              <span className="hh-label">Название модели</span>
+              <span className="hh-label">
+                Название модели
+                <InfoTip text="Оставьте пустым и сохраните, чтобы снова брать модель из настроек сервера." />
+              </span>
               <input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
@@ -119,7 +131,9 @@ export default function AiSettingsPage() {
                 disabled={busy}
               />
             </label>
-            <p className="muted hh-micro">Пустое поле = вернуть модель из .env / AI_MODEL_NAME.</p>
+            <p className="muted">
+              Пустое поле = модель по умолчанию с сервера.
+            </p>
             <div className="hh-footer-actions">
               <button
                 type="button"
@@ -237,9 +251,13 @@ export default function AiSettingsPage() {
             ) : null}
           </section>
 
-          <p className="muted hh-micro">Файл настроек: {data.path}</p>
+          <p className="muted">
+            Настройки сохранены на сервере
+            <InfoTip text={`Файл: ${data.path}`} />
+          </p>
         </>
       )}
     </AppShell>
+    </OwnerOnly>
   );
 }

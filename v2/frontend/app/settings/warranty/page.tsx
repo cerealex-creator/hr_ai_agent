@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { OwnerOnly } from "@/components/AuthGate";
 import { apiFetch } from "@/lib/api";
 
 type AppSettings = {
@@ -32,6 +33,7 @@ export default function WarrantySettingsPage() {
   }, []);
 
   return (
+    <OwnerOnly>
     <AppShell variant="settings" activePath="/settings">
       <Link className="back" href="/settings">
         ← К настройкам
@@ -84,5 +86,6 @@ export default function WarrantySettingsPage() {
         )}
       </section>
     </AppShell>
+    </OwnerOnly>
   );
 }

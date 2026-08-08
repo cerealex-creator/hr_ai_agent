@@ -109,6 +109,7 @@ from app.schemas import (
     InboxSettingsPatchIn,
     StageSchemaPatchIn,
     GoogleOAuthCompleteIn,
+    ZoomMeetingScheduleIn,
     HhSearchPlanReviseIn,
     HhManualEvaluateIn,
     HhSoftenSuggestionsIn,
@@ -708,6 +709,35 @@ def refresh_candidate_telegram_endpoint(
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg}
+
+@router.post("/candidates/{candidate_id}/zoom-meeting", response_model=CandidateDetail)
+def schedule_candidate_zoom_meeting(
+    candidate_id: str,
+    body: ZoomMeetingScheduleIn,
+    db: Session = Depends(get_db),
+) -> CandidateDetail:
+    from app.services.zoom_meetings import ZoomMeetingError, schedule_zoom_for_candidate
+
+    try:
+        from uuid import UUID
+
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    try:
+        schedule_zoom_for_candidate(
+            db,
+            candidate,
+            start_date=str(body.start_date or ""),
+            start_time=str(body.start_time or ""),
+            duration_minutes=int(body.duration_minutes or 60),
+        )
+    except ZoomMeetingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    db.refresh(candidate)
+    return _candidate_detail(db, candidate)
+
 
 @router.post("/candidates/{candidate_id}/confirm-meeting", response_model=CandidateDetail)
 def confirm_candidate_meeting(candidate_id: str, db: Session = Depends(get_db)) -> CandidateDetail:
