@@ -5,6 +5,26 @@
 
 ---
 
+## 2026-08-08 — Commit + push: intake, UX, sidecar
+
+**Тип:** `chore`
+
+**Сделано:**
+- Закоммичены и запушены на `origin/feature/v2` изменения до/после sidecar-деплоя.
+- В gitignore: `.env.sidecar`, `.env.prod` (секреты не в репо).
+- Прототипы favicon оставлены локально untracked.
+
+**Файлы:** `v2/` (intake, Disk panels, themes, notify/calendar, Zoom alembic, `docker-compose.sidecar.yml`, brand assets), `.cursor/DEVLOG.md`
+
+**Данные / конфиг:** `.env.sidecar` на сервере не пушили
+
+**Git:** `04b5086` на `origin/feature/v2`
+
+**Следующий шаг:**
+- Логин owner на `http://IP:8080`; после домена — TLS + prod compose.
+
+---
+
 ## 2026-08-08 — v2: sidecar-деплой рядом с LexForge (Timeweb)
 
 **Тип:** `deploy`
@@ -19,7 +39,7 @@
 
 **Данные / конфиг:** `/opt/hr_ai_agent/v2/.env.sidecar` на сервере (не в git)
 
-**Git:** локально незакоммиченные compose/docs; сервер `/opt/hr_ai_agent/v2`
+**Git:** вошло в `04b5086`
 
 **Следующий шаг:**
 - Проверить логин owner; после покупки домена — TLS + `docker-compose.prod.yml`.
@@ -35,7 +55,7 @@
 
 **Файлы:** `calendar/page.tsx`, `notify_prefs.py`, `routes/auth.py`, `settings/page.tsx`, `about/page.tsx`, `globals.css`
 
-**Git:** незакоммичено на `feature/v2`
+**Git:** вошло в `04b5086`
 
 **Следующий шаг:**
 - Проверить хаб и страницу уведомлений под обычным пользователем.
