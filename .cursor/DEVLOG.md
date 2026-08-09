@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-08-09 — Push: async generate + no_response_3d
+
+**Тип:** `ops`
+
+**Сделано:**
+- Локально = функционал с сервера (generate async, этап «не отвечает», repair labels).
+- Push `feature/v2`.
+
+**Git:** commit `fc051b2` → `origin/feature/v2`
+
+**Не в коммите:** `simple-russian.mdc`, favicon-prototype*.png
+
+---
+
 ## 2026-08-09 — Fix: перепутанные подписи этапов (Lamoda)
 
 **Тип:** `fix`
