@@ -43,6 +43,8 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
   const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [genBusy, setGenBusy] = useState<string | null>(null);
+  const [genJobId, setGenJobId] = useState<string | null>(null);
+  const [genKey, setGenKey] = useState<DocKey | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [savedDocs, setSavedDocs] = useState(initialDocuments);
@@ -70,6 +72,55 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
   useEffect(() => {
     void reloadEditor();
   }, [reloadEditor]);
+
+  useEffect(() => {
+    if (!genJobId || !genKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await apiFetch(`/api/v1/jobs/${genJobId}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const job = await res.json();
+        if (cancelled) return;
+        if (job.status === "completed") {
+          const payload = (job.payload || {}) as { value?: string; mode?: string };
+          const value = String(payload.value || "");
+          const key = genKey;
+          if (value) {
+            setDrafts((prev) => ({ ...prev, [key]: value }));
+          } else {
+            await reloadEditor();
+          }
+          setCorrections((prev) => ({ ...prev, [key]: "" }));
+          setMsg(
+            payload.mode === "regenerate"
+              ? `${fieldLabel(key)}: перегенерировано и сохранено`
+              : `${fieldLabel(key)}: сгенерировано и сохранено`,
+          );
+          setGenBusy(null);
+          setGenJobId(null);
+          setGenKey(null);
+          router.refresh();
+          void reloadEditor();
+        } else if (job.status === "failed" || job.status === "cancelled") {
+          setErr(job.error || job.progress_label || "Ошибка генерации");
+          setGenBusy(null);
+          setGenJobId(null);
+          setGenKey(null);
+        } else if (job.progress_label) {
+          setMsg(String(job.progress_label));
+        }
+      } catch {
+        /* ignore transient */
+      }
+    };
+    const id = setInterval(() => void tick(), 2500);
+    void tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [genJobId, genKey, reloadEditor, router]);
 
   const setField = (key: DocKey, value: string) => {
     setDrafts((prev) => ({ ...prev, [key]: value }));
@@ -107,13 +158,9 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
     if (!GENERATABLE.has(key)) return;
     setGenBusy(key);
     setErr(null);
-    setMsg(null);
+    setMsg("В очереди…");
     try {
       const corr = (corrections[key] || "").trim();
-      const filled = isFilled(drafts[key]);
-      if (filled && !corr) {
-        // allow regenerate without corrections (same as Streamlit)
-      }
       const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/documents/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -134,20 +181,13 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
         throw new Error(detail);
       }
       const data = await res.json();
-      const value = String(data.value || "");
-      setDrafts((prev) => ({ ...prev, [key]: value }));
-      setSavedDocs(data.documents || {});
-      setCorrections((prev) => ({ ...prev, [key]: "" }));
-      setMsg(
-        data.mode === "regenerate"
-          ? `${fieldLabel(key)}: перегенерировано и сохранено`
-          : `${fieldLabel(key)}: сгенерировано и сохранено`,
-      );
-      router.refresh();
+      setGenKey(key);
+      setGenJobId(String(data.id || ""));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка генерации");
-    } finally {
       setGenBusy(null);
+      setGenJobId(null);
+      setGenKey(null);
     }
   };
 

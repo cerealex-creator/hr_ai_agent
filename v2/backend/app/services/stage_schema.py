@@ -16,6 +16,7 @@ from app.services.candidate_write import HR_STAGES
 HR_CATALOG_ORDER = [
     "resume_screening",
     "primary_contact",
+    "no_response_3d",
     "interview_scheduled",
     "interview_done",
     "test_task",
@@ -151,7 +152,7 @@ def normalize_stage_schema(raw: dict[str, Any] | None) -> dict[str, Any]:
     base = default_stage_schema()
     if not isinstance(raw, dict):
         return base
-    return {
+    schema = {
         "version": int(raw.get("version") or 1),
         "hr_stages": _normalize_items(
             raw.get("hr_stages"),
@@ -166,6 +167,44 @@ def normalize_stage_schema(raw: dict[str, Any] | None) -> dict[str, Any]:
             protected=PROTECTED_CLIENT_STATUSES,
         ),
     }
+    return _repair_swapped_interview_labels(schema)
+
+
+def _repair_swapped_interview_labels(schema: dict[str, Any]) -> dict[str, Any]:
+    """Undo mis-renames that break date/time UI (scheduled ↔ «не отвечает» / done)."""
+    items = list(schema.get("hr_stages") or [])
+    by_id = {str(i.get("id") or ""): i for i in items if isinstance(i, dict)}
+    sched = by_id.get("interview_scheduled")
+    done = by_id.get("interview_done")
+    no_resp = by_id.get("no_response_3d")
+    if not sched:
+        return schema
+
+    no_resp_label = HR_STAGES.get("no_response_3d", "")
+    sched_label = HR_STAGES.get("interview_scheduled", "")
+    done_label = HR_STAGES.get("interview_done", "")
+
+    corrupted = False
+    if str(sched.get("label") or "").strip() == no_resp_label:
+        corrupted = True
+    if done and str(done.get("label") or "").strip() == sched_label:
+        corrupted = True
+    if (
+        no_resp
+        and str(no_resp.get("label") or "").strip() == no_resp_label
+        and str(sched.get("label") or "").strip() == no_resp_label
+    ):
+        corrupted = True
+    if not corrupted:
+        return schema
+
+    sched["label"] = sched_label
+    if done:
+        done["label"] = done_label
+    if no_resp:
+        no_resp["label"] = no_resp_label
+    schema["hr_stages"] = items
+    return schema
 
 
 def vacancy_has_candidates(db: Session, vacancy_id: int) -> bool:

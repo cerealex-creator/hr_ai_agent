@@ -95,7 +95,6 @@ from app.schemas import (
     VacancyCloseIn,
     VacancyPatchIn,
     VacancyDocumentGenerateIn,
-    VacancyDocumentGenerateOut,
     VacancyDocumentsFromBriefIn,
     VacancyDocumentsPatchIn,
     VacancyListItem,
@@ -400,17 +399,16 @@ def vacancy_documents_editor(vacancy_id: int, db: Session = Depends(get_db)) -> 
 
 @router.post(
     "/vacancies/{vacancy_id}/documents/generate",
-    response_model=VacancyDocumentGenerateOut,
+    response_model=JobCreateOut,
+    status_code=202,
 )
-def generate_vacancy_document(
+async def generate_vacancy_document(
     vacancy_id: int,
     body: VacancyDocumentGenerateIn,
     db: Session = Depends(get_db),
-) -> VacancyDocumentGenerateOut:
-    """Generate or regenerate one document section (profile / text / questions / keywords)."""
-    from app.core.config import get_settings
-    from app.services.document_generate import GENERATABLE_KEYS, generate_document_section
-    from app.services.vacancy_documents_write import save_documents
+) -> JobCreateOut:
+    """Enqueue generate/regenerate of one document section (AI can take 1–2 min)."""
+    from app.services.document_generate import GENERATABLE_KEYS
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
     key = (body.key or "").strip()
@@ -419,34 +417,37 @@ def generate_vacancy_document(
             status_code=400,
             detail=f"Ключ «{key}» нельзя генерировать. Доступно: {', '.join(GENERATABLE_KEYS)}",
         )
-    try:
-        result = generate_document_section(
-            key=key,
-            job_title=vacancy.title,
-            documents=vacancy.documents or {},
-            corrections=body.corrections,
-            settings=get_settings(),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    value = result["value"]
-    applied = False
-    if body.apply:
-        save_documents(db, vacancy, {key: value})
-        applied = True
-        db.refresh(vacancy)
-
-    return VacancyDocumentGenerateOut(
-        vacancy_id=vacancy.id,
-        key=key,
-        mode=str(result.get("mode") or "generate"),
-        value=str(value) if not isinstance(value, str) else value,
-        applied=applied,
-        documents=vacancy.documents or {},
+    payload = {
+        "vacancy_id": vacancy_id,
+        "key": key,
+        "corrections": body.corrections or "",
+        "apply": bool(body.apply),
+    }
+    job = job_svc.create_job_row(
+        db,
+        job_type="vacancy_docs_generate",
+        vacancy_id=vacancy_id,
+        client_id=vacancy.client_id,
+        payload=payload,
     )
+    try:
+        pool = await get_arq_pool()
+        await pool.enqueue_job(
+            "vacancy_docs_generate",
+            str(job.id),
+            _job_id=str(job.id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        job_svc.update_job(
+            db,
+            job.id,
+            status="failed",
+            progress_label="Не удалось поставить в очередь",
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail=f"Очередь задач недоступна: {exc}") from exc
+    return JobCreateOut(id=job.id, status=job.status, job_type=job.job_type)
 
 
 @router.post(
@@ -673,6 +674,7 @@ def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> l
         "test_task",
         "interview_done",
         "interview_scheduled",
+        "no_response_3d",
         "primary_contact",
         "rejected_hr",
         "rejected_client",

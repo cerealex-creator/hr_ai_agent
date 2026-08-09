@@ -15,6 +15,7 @@ from app.db import models
 HR_STAGES: dict[str, str] = {
     "resume_screening": "Отсев резюме",
     "primary_contact": "Первичный контакт",
+    "no_response_3d": "Кандидат не отвечает более 3 дней",
     "interview_scheduled": "Собеседование назначено",
     "interview_done": "Собеседование проведено",
     "test_task": "Тестовое задание",

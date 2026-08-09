@@ -3,6 +3,7 @@
 export const HR_STAGE_LABELS: Record<string, string> = {
   resume_screening: "Отсев резюме",
   primary_contact: "Первичный контакт",
+  no_response_3d: "Кандидат не отвечает более 3 дней",
   interview_scheduled: "Собеседование назначено",
   interview_done: "Собеседование проведено",
   test_task: "Тестовое задание",
@@ -23,6 +24,7 @@ export const HR_STAGE_LABELS: Record<string, string> = {
 export const HR_FUNNEL_STAGES = [
   "resume_screening",
   "primary_contact",
+  "no_response_3d",
   "interview_scheduled",
   "interview_done",
   "test_task",
@@ -68,6 +70,8 @@ export function getStageTone(stage: string | null | undefined): StageTone {
     case "archived":
       return "none";
     case "primary_contact":
+      return "yellow";
+    case "no_response_3d":
       return "yellow";
     case "interview_scheduled":
       return "green-1";

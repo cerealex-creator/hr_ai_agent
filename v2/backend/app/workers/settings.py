@@ -10,6 +10,7 @@ from app.workers.tasks import (
     transcribe_media,
     vacancy_docs_from_brief,
     vacancy_docs_from_materials,
+    vacancy_docs_generate,
     yandex_disk_sync,
 )
 
@@ -27,6 +28,7 @@ class WorkerSettings:
         disk_inbox_router,
         vacancy_docs_from_materials,
         vacancy_docs_from_brief,
+        vacancy_docs_generate,
     ]
     redis_settings = RedisSettings.from_dsn(_settings.redis_url)
     max_jobs = 2

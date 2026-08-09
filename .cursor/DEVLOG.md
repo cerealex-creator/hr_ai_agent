@@ -5,6 +5,105 @@
 
 ---
 
+## 2026-08-09 — Fix: перепутанные подписи этапов (Lamoda)
+
+**Тип:** `fix`
+
+**Сделано:**
+- На вакансии #15 сброшены подписи: `interview_scheduled` / `interview_done` / `no_response_3d` к каталогу (из‑за ручного переименования «Собеседование назначено» было на `interview_done` → не было даты/времени + дубль «не отвечает»).
+- В `normalize_stage_schema` — автопочинка этой типичной путаницы.
+
+**Файлы:** `stage_schema.py` (+ данные `vacancies.payload` на sidecar)
+
+**Следующий шаг:**
+- Обновить страницу кандидата; выбрать «Собеседование назначено» — появятся дата/время.
+
+---
+
+## 2026-08-09 — Домен hr-toolbox.ru LIVE
+
+**Тип:** `ops`
+
+**Сделано:**
+- Let's Encrypt для `hr-toolbox.ru` + `www` (до 2026-11-07), auto-renew certbot.timer.
+- nginx: HTTPS apex → sidecar `:8080`; www → `https://hr-toolbox.ru`; HTTP → HTTPS.
+- Smoke: health/home/login 200; cookies Secure; pilot login `pilot@demo.ru` → Demo Sandbox.
+
+**Данные / конфиг:** `/etc/nginx/sites-available/hr-toolbox`, `/etc/letsencrypt/live/hr-toolbox.ru/`, `.env.sidecar`
+
+**Следующий шаг:**
+- В Bitrix `public_api_base` = `https://hr-toolbox.ru` при необходимости.
+
+---
+
+## 2026-08-09 — Домен hr-toolbox.ru (частично)
+
+**Тип:** `ops`
+
+**Сделано:**
+- Host nginx site `hr-toolbox` → `127.0.0.1:8080` (apex); www → apex (HTTP).
+- certbot установлен; выпуск TLS **не прошёл**: LE валидирует чужой AAAA `2a00:f940:2:2:1:1:0:299` (404) + лишний A `31.31.197.50`.
+- `.env.sidecar`: `PUBLIC_HOST=hr-toolbox.ru`, `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS=https://hr-toolbox.ru`; api перезапущен.
+
+**Данные / конфиг:** `/etc/nginx/sites-available/hr-toolbox`, `.env.sidecar` (+ backup)
+
+**Следующий шаг:**
+- В Reg.ru удалить AAAA и лишний A `31.31.197.50`; оставить только A → `201.34.137.208`. Затем `certbot --nginx -d hr-toolbox.ru -d www.hr-toolbox.ru`.
+
+---
+
+## 2026-08-09 — Этап «не отвечает 3 дня» в каталоге
+
+**Тип:** `feature`
+
+**Сделано:**
+- Новый HR-этап `no_response_3d` («Кандидат не отвечает более 3 дней») между первичным контактом и «Собеседование назначено».
+- Без панели даты/времени (она только у `interview_scheduled`).
+- Порядок в схеме вакансии, воронке UI и сортировке списка кандидатов.
+
+**Файлы:** `candidate_write.py`, `stage_schema.py`, `vacancies.py`, `labels.ts`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- На пилоте: обновить страницу схемы этапов; если «Собеседование назначено» было переименовано вручную — вернуть подпись.
+
+---
+
+## 2026-08-09 — Fix: перегенерация документа async (HTTP 500)
+
+**Тип:** `fix`
+
+**Сделано:**
+- `POST .../documents/generate` → 202 + ARQ `vacancy_docs_generate` (proxy больше не рвёт долгий ИИ).
+- UI `DocumentsEditor` поллит job и обновляет черновик.
+
+**Файлы:** `vacancies.py`, `tasks.py`, `settings.py`, `common.py`, `DocumentsEditor.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- В пилоте: «Перегенерировать» опросник — ждать 1–2 мин без Internal Server Error.
+
+---
+
+## 2026-08-09 — Push: pilot + docs-from-brief
+
+**Тип:** `ops`
+
+**Сделано:**
+- Локально синхронизировано с функционалом пилота/документов (серверные секреты/sidecar не трогали).
+- Коммит и push `feature/v2`.
+
+**Git:** commit `6ea569f` → `origin/feature/v2`
+
+**Не в коммите:** `simple-russian.mdc`, favicon-prototype*.png
+
+**Следующий шаг:**
+- По необходимости — PR в main.
+
+---
+
 ## 2026-08-09 — Опросник: порядок обязательных вопросов
 
 **Тип:** `fix`

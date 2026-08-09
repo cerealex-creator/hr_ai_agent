@@ -1057,3 +1057,93 @@ async def vacancy_docs_from_brief(ctx, job_id: str) -> dict:
         raise
     finally:
         db.close()
+
+
+async def vacancy_docs_generate(ctx, job_id: str) -> dict:
+    """AI: generate/regenerate one vacancy document section (profile/text/questions/keywords)."""
+    from app.db import models
+    from app.services.document_generate import generate_document_section
+    from app.services.vacancy_documents_write import save_documents
+
+    jid = uuid.UUID(job_id)
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        job = job_svc.get_job(db, jid)
+        if not job:
+            raise RuntimeError("Job not found")
+        payload = dict(job.payload or {})
+        vacancy_id = int(job.vacancy_id or payload.get("vacancy_id") or 0)
+        key = str(payload.get("key") or "").strip()
+        corrections = str(payload.get("corrections") or "")
+        apply = bool(payload.get("apply", True))
+        if not vacancy_id or not key:
+            raise RuntimeError("Нужны vacancy_id и key")
+        vacancy = db.get(models.Vacancy, vacancy_id)
+        if not vacancy:
+            raise RuntimeError(f"Вакансия {vacancy_id} не найдена")
+
+        if job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+
+        job_svc.update_job(
+            db,
+            jid,
+            status="running",
+            progress_pct=15,
+            progress_label=f"ИИ пишет «{key}»…",
+        )
+        result = await asyncio.to_thread(
+            lambda: generate_document_section(
+                key=key,
+                job_title=vacancy.title,
+                documents=vacancy.documents or {},
+                corrections=corrections,
+                settings=settings,
+            )
+        )
+        value = result["value"]
+        mode = str(result.get("mode") or "generate")
+
+        if job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+
+        applied = False
+        if apply:
+            job_svc.update_job(db, jid, progress_pct=90, progress_label="Сохранение…")
+            save_documents(db, vacancy, {key: value})
+            applied = True
+
+        value_str = str(value) if not isinstance(value, str) else value
+        job_svc.update_job(
+            db,
+            jid,
+            status="completed",
+            progress_pct=100,
+            progress_label="Готово",
+            payload_patch={
+                "key": key,
+                "mode": mode,
+                "value": value_str,
+                "applied": applied,
+            },
+            result_ref=f"vacancy_docs_generate:{vacancy_id}:{key}",
+        )
+        return {"ok": True, "vacancy_id": vacancy_id, "key": key, "mode": mode}
+    except Exception as exc:  # noqa: BLE001
+        msg = _safe_err(exc)
+        if msg == "Отменено" or job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+        job_svc.update_job(
+            db,
+            jid,
+            status="failed",
+            progress_label="Ошибка генерации документа",
+            error=msg,
+        )
+        raise
+    finally:
+        db.close()

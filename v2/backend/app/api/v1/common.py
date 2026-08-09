@@ -119,6 +119,7 @@ ALLOWED_JOB_TYPES = frozenset(
         "disk_inbox_router",
         "vacancy_docs_from_materials",
         "vacancy_docs_from_brief",
+        "vacancy_docs_generate",
     }
 )
 ARQ_FUNCTION_BY_TYPE = {
@@ -131,6 +132,7 @@ ARQ_FUNCTION_BY_TYPE = {
     "disk_inbox_router": "disk_inbox_router",
     "vacancy_docs_from_materials": "vacancy_docs_from_materials",
     "vacancy_docs_from_brief": "vacancy_docs_from_brief",
+    "vacancy_docs_generate": "vacancy_docs_generate",
 }
 
 
