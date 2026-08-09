@@ -88,6 +88,10 @@ export default function CandidateIntakeSettingsPage() {
           apiFetch(`/api/v1/settings/app`, { cache: "no-store" }),
           apiFetch(`/api/v1/integrations/yandex-disk/status`, { cache: "no-store" }),
         ]);
+        if (!appRes.ok) {
+          const body = await appRes.json().catch(() => ({}));
+          throw new Error(detailMessage(body, `HTTP ${appRes.status}`));
+        }
         const d = (await appRes.json()) as AppSettings;
         const disk = await diskRes.json().catch(() => ({}));
         if (cancelled) return;
@@ -97,7 +101,7 @@ export default function CandidateIntakeSettingsPage() {
           disk_public_sync: Boolean(d.candidate_intake?.disk_public_sync),
           disk_inbox: Boolean(d.candidate_intake?.disk_inbox),
         });
-        setDiskConnected(Boolean(disk.connected));
+        setDiskConnected(Boolean((disk as { connected?: boolean }).connected));
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Ошибка загрузки");
       }

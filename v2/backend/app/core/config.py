@@ -79,28 +79,37 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     def resolved_legacy_data_dir(self) -> Path:
-        """Resolve Streamlit `data/` whether cwd is v2/ or v2/backend/."""
+        """Resolve Streamlit `data/` in local tree or Docker (/app)."""
         raw = Path(self.legacy_data_dir)
         if raw.is_absolute():
             return raw
         here = Path(__file__).resolve()
-        # app/core/config.py → repo root = parents[4]
-        repo_data = here.parents[4] / "data"
-        candidates = [
-            (Path.cwd() / raw).resolve(),
-            (here.parents[3] / raw).resolve(),  # v2/<legacy>
-            repo_data,
-        ]
+        candidates: list[Path] = [(Path.cwd() / raw).resolve()]
+        # Walk up safely — Docker image is shallow (/app/app/core/...), no parents[4].
+        for parent in list(here.parents)[:6]:
+            candidates.append((parent / "data").resolve())
+            candidates.append((parent / raw).resolve())
         markers = (
             "vacancies.json",
             "app_settings.json",
             "google_calendar_credentials.json",
             "clients.json",
+            "yandex_disk_oauth.json",
         )
+        seen: set[Path] = set()
         for path in candidates:
+            if path in seen:
+                continue
+            seen.add(path)
             if any((path / m).exists() for m in markers):
                 return path
-        return candidates[0]
+        # Writable fallback inside the API container
+        fallback = Path("/app/data")
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
+        except OSError:
+            return candidates[0]
 
 
 @lru_cache

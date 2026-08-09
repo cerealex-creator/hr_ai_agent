@@ -33,7 +33,7 @@ function detailMessage(data: unknown, fallback: string): string {
 
 /** Bitrix + Telegram + stubs for WhatsApp / Max — under «Настройка взаимодействия». */
 export function CommunicationChannelsPanel() {
-  const { isOwner } = useAuth();
+  const { isOwner, user } = useAuth();
   const [bx, setBx] = useState<BitrixSettings>({});
   const [status, setStatus] = useState<MessagingStatus | null>(null);
   const [personalChatId, setPersonalChatId] = useState("");
@@ -81,20 +81,30 @@ export function CommunicationChannelsPanel() {
         <InfoTip text="Здесь подключаете, через что программа пишет заказчику и вам. Сначала настройте канал, потом чаты компаний выше." />
       </h2>
       <p className="muted hh-micro" style={{ marginTop: 0 }}>
-        Bitrix и Telegram — рабочие. WhatsApp и Max — появятся позже.
+        {isOwner
+          ? "Bitrix и Telegram — рабочие. WhatsApp и Max — появятся позже."
+          : "Bitrix подключён администратором. Telegram, WhatsApp и Max на этом стенде недоступны."}
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
 
       <CollapsibleCard
         title="Настройка Bitrix24"
-        hint={isOwner ? (bx.enabled ? "включён" : "выключен") : "недоступно"}
+        hint={isOwner ? (bx.enabled ? "включён" : "выключен") : bx.enabled ? "подключён" : "выключен"}
         defaultOpen={false}
       >
         {!isOwner ? (
-          <p className="muted" style={{ margin: 0 }}>
-            В данной версии настройки не редактируются
-          </p>
+          <>
+            <p className="muted" style={{ margin: 0 }}>
+              Настройки Bitrix задаёт администратор. Вы не можете их менять.
+            </p>
+            <p className="muted hh-micro" style={{ marginTop: "0.65rem" }}>
+              Статус: {bx.enabled ? "включён" : "выключен"}
+              {user?.bitrix_responsible_id
+                ? ` · задачи уходят на пользователя Bitrix № ${user.bitrix_responsible_id}`
+                : ""}
+            </p>
+          </>
         ) : (
           <>
             <p className="muted hh-micro">
@@ -199,9 +209,15 @@ export function CommunicationChannelsPanel() {
 
       <CollapsibleCard
         title="Настройка Telegram"
-        hint={status?.bot_ok ? `@${status.bot?.username || "bot"}` : "бот на сервере"}
+        hint={isOwner ? (status?.bot_ok ? `@${status.bot?.username || "bot"}` : "бот на сервере") : "Недоступно"}
         defaultOpen={false}
       >
+        {!isOwner ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Telegram на этом сервере пока не работает. Канал появится позже — как WhatsApp и Max.
+          </p>
+        ) : (
+          <>
         <p className="muted hh-micro">
           Личный Chat ID нужен для ваших уведомлений. Чаты компаний — в карточке компании.{" "}
           <InfoTip text="1) Откройте Telegram и найдите бота вашего HR-помогатора. 2) Нажмите Start / напишите любое сообщение. 3) Узнайте свой числовой id: напишите @userinfobot → он пришлёт Id. 4) Нажмите «Изменить», вставьте число, «Ок», затем «Сохранить мой Chat ID»." />
@@ -249,13 +265,13 @@ export function CommunicationChannelsPanel() {
         <p className="muted hh-micro" style={{ marginTop: "0.65rem" }}>
           Расписание личных уведомлений — в{" "}
           <a href="/settings/calendar">Настройка уведомлений</a>.
-          {isOwner ? (
-            <>
-              {" "}
-              Полный статус бота: <a href="/settings/telegram">Telegram (владелец)</a>.
-            </>
-          ) : null}
+          <>
+            {" "}
+            Полный статус бота: <a href="/settings/telegram">Telegram (владелец)</a>.
+          </>
         </p>
+          </>
+        )}
       </CollapsibleCard>
 
       <CollapsibleCard title="WhatsApp" hint="скоро" defaultOpen={false}>

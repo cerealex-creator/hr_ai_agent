@@ -91,6 +91,16 @@ def create_vacancy(
         user = current_user()
         if not client or (user is not None and not client_in_org(db, client, user.org_id)):
             raise VacancyWriteError("Клиент не найден", 404)
+    else:
+        # Vacancy without client is invisible under org isolation — attach/create root company.
+        from app.services.clients_write import ensure_org_root_company
+        from app.services.tenancy import current_user
+
+        user = current_user()
+        if user is None:
+            raise VacancyWriteError("Нужна авторизация", 401)
+        client = ensure_org_root_company(db, user.org_id)
+        client_id = int(client.id)
 
     documents = empty_vacancy_documents()
     payload: dict[str, Any] = {

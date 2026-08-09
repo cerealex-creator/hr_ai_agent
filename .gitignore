@@ -40,3 +40,6 @@ hri_full_v1_backup_working.py
 # IDE
 .vscode/
 .idea/
+# Pilot dumps for server smoke (PII)
+data_pilot*/
+

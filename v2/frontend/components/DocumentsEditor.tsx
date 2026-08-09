@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DocumentBlock } from "@/components/DocumentBlock";
+import { DocumentsFromBrief } from "@/components/DocumentsFromBrief";
 import { DocumentsFromMaterials } from "@/components/DocumentsFromMaterials";
 import { apiFetch } from "@/lib/api";
 import { fieldLabel } from "@/lib/labels";
@@ -14,6 +15,7 @@ type DocKey = (typeof EDIT_KEYS)[number];
 type Props = {
   vacancyId: number;
   initialDocuments: Record<string, unknown>;
+  vacancyTitle?: string;
 };
 
 function toEditorText(value: unknown): string {
@@ -30,7 +32,7 @@ function isFilled(text: string): boolean {
   return Boolean((text || "").trim());
 }
 
-export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
+export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = "" }: Props) {
   const router = useRouter();
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [drafts, setDrafts] = useState<Record<DocKey, string>>(() => {
@@ -196,11 +198,20 @@ export function DocumentsEditor({ vacancyId, initialDocuments }: Props) {
         <div className="card-edit" style={{ marginBottom: "1rem", borderColor: "var(--accent)" }}>
           <h3 className="hh-subhead">С чего начать</h3>
           <p className="muted" style={{ marginBottom: "0.5rem" }}>
-            Профиль ещё пуст. Загрузите запись встречи или файлы ниже («Документы из материалов»)
-            либо сгенерируйте профиль по названию вакансии в блоке «Профиль».
+            Профиль ещё пуст. Соберите документы по вопросам (ИИ) ниже, загрузите материалы или
+            сгенерируйте профиль по названию вакансии в блоке «Профиль».
           </p>
         </div>
       ) : null}
+
+      <DocumentsFromBrief
+        vacancyId={vacancyId}
+        defaultTitle={vacancyTitle}
+        onDone={() => {
+          void reloadEditor();
+          router.refresh();
+        }}
+      />
 
       <DocumentsFromMaterials
         vacancyId={vacancyId}

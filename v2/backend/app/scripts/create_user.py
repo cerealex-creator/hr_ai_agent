@@ -19,16 +19,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--password", required=True)
     parser.add_argument("--role", default=ROLE_PLATFORM_OWNER, choices=sorted(ALLOWED_ROLES))
     parser.add_argument("--full-name", default="")
+    parser.add_argument("--org-id", default="", help="UUID of existing organization (optional)")
+    parser.add_argument(
+        "--bitrix-responsible-id",
+        default="",
+        help="Fixed Bitrix user id for this account (pilot)",
+    )
     args = parser.parse_args(argv)
 
     db = SessionLocal()
     try:
+        org_id = None
+        if str(args.org_id or "").strip():
+            import uuid as _uuid
+
+            org_id = _uuid.UUID(str(args.org_id).strip())
         user = create_user(
             db,
             email=args.email,
             password=args.password,
             role=args.role,
             full_name=args.full_name,
+            organization_id=org_id,
+            bitrix_responsible_id=args.bitrix_responsible_id or None,
         )
         print(f"Created user {user.email} id={user.id} role={args.role}")
         return 0

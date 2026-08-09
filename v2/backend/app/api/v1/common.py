@@ -118,6 +118,7 @@ ALLOWED_JOB_TYPES = frozenset(
         "yandex_disk_sync",
         "disk_inbox_router",
         "vacancy_docs_from_materials",
+        "vacancy_docs_from_brief",
     }
 )
 ARQ_FUNCTION_BY_TYPE = {
@@ -129,6 +130,7 @@ ARQ_FUNCTION_BY_TYPE = {
     "yandex_disk_sync": "yandex_disk_sync",
     "disk_inbox_router": "disk_inbox_router",
     "vacancy_docs_from_materials": "vacancy_docs_from_materials",
+    "vacancy_docs_from_brief": "vacancy_docs_from_brief",
 }
 
 

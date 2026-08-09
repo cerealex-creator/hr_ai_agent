@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import (
     REFRESH_COOKIE,
+    ROLE_PLATFORM_OWNER,
     AuthUser,
     auth_is_disabled,
     auth_user_from_membership,
@@ -43,13 +44,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _me_out(user: AuthUser) -> AuthMeOut:
+    is_owner = ROLE_PLATFORM_OWNER in (user.roles or ())
     return AuthMeOut(
         id=str(user.id),
         email=user.email,
         full_name=user.full_name,
         org_id=str(user.org_id),
+        org_name=user.org_name or "",
         roles=list(user.roles),
         auth_disabled=user.auth_disabled,
+        bitrix_responsible_id=user.bitrix_responsible_id or "",
+        # Recruiters: Telegram UI is a stub on this deploy
+        telegram_available=bool(user.auth_disabled or is_owner),
     )
 
 
@@ -213,6 +219,11 @@ def put_notify_prefs(
             detail="При AUTH_DISABLED настройки уведомлений хранятся в браузере",
         )
     patch = body.model_dump(exclude_unset=True)
+    is_owner = ROLE_PLATFORM_OWNER in (user.roles or ()) or user.auth_disabled
+    if not is_owner:
+        # Recruiters cannot enable Telegram notify on this deploy
+        for key in ("telegram_enabled", "telegram_chat_id", "telegram_period", "telegram_text"):
+            patch.pop(key, None)
     try:
         prefs = set_user_notify_prefs(db, user.id, patch)
     except LookupError:

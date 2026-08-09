@@ -420,9 +420,14 @@ export default function CalendarSettingsPage() {
 
       <CollapsibleCard
         title="Telegram (личные уведомления)"
-        hint={tgOn ? "включён" : "выключен"}
+        hint={isOwner ? (tgOn ? "включён" : "выключен") : "Недоступно"}
         defaultOpen={false}
       >
+        {!isOwner ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Telegram на этом сервере пока не работает. Личные уведомления в Telegram недоступны.
+          </p>
+        ) : (
         <NotifyEnableRow
           label="Активировать Telegram-уведомления"
           tip="Личные сообщения в ваш чат с ботом. Сначала привяжите Chat ID в «Настройка взаимодействия»."
@@ -488,6 +493,7 @@ export default function CalendarSettingsPage() {
             </>
           ) : null}
         </NotifyEnableRow>
+        )}
       </CollapsibleCard>
 
       <CollapsibleCard title="WhatsApp" hint="скоро" defaultOpen={false}>

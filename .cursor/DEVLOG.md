@@ -5,6 +5,165 @@
 
 ---
 
+## 2026-08-09 — Опросник: порядок обязательных вопросов
+
+**Тип:** `fix`
+
+**Сделано:**
+- В `QUESTIONNAIRE_RULES`: сначала причина поиска/ухода; в конце — вдохновляет / расстраивает / рекомендации; посередине skills/опыт.
+
+**Файлы:** `v2/backend/app/services/document_generate.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Новые опросники уже с новым порядком (sidecar api/worker пересобраны).
+
+---
+
+## 2026-08-09 — from-brief: async job (fix HTTP 500)
+
+**Тип:** `fix`
+
+**Сделано:**
+- `POST /vacancies/{id}/documents/from-brief` → 202 + ARQ job `vacancy_docs_from_brief` (ИИ ~1–2 мин больше не рвёт HTTP proxy).
+- Worker task + регистрация в `WorkerSettings`.
+- UI `DocumentsFromBrief` поллит `/api/v1/jobs/{id}` как «из материалов».
+- Выложено на sidecar: api/web/worker rebuilt; worker видит `vacancy_docs_from_brief`.
+
+**Файлы:** `vacancies.py`, `tasks.py`, `settings.py`, `common.py`, `DocumentsFromBrief.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- У пилота: «Собрать через ИИ» — ждать прогресс 1–2 мин, без HTTP 500.
+
+---
+
+## 2026-08-09 — Sidecar: ROUTERAI_API_KEY
+
+**Тип:** `ops`
+
+**Сделано:**
+- В `/opt/hr_ai_agent/v2/.env.sidecar` добавлены `ROUTERAI_API_KEY` / `AI_API_KEY` (из локального корневого `.env`).
+- Перезапущены api/worker; в контейнере ключ виден.
+- В `.env.sidecar.example` добавлены поля AI.
+
+**Данные / конфиг:** `.env.sidecar` на сервере (не в git)
+
+**Следующий шаг:**
+- Повторить «Собрать через ИИ» у пилота.
+
+---
+
+## 2026-08-09 — Форма «по вопросам» → всегда ИИ
+
+**Тип:** `feature`
+
+**Сделано:**
+- Ответы формы идут в `generate_package_from_sources` (ИИ всегда).
+- UI: «Собрать через ИИ», подсказка про ожидание 15–60 с.
+- Выложено на sidecar.
+
+**Файлы:** `documents_from_brief.py`, `vacancies.py`, `DocumentsFromBrief.tsx`
+
+**Следующий шаг:**
+- Проверить на вакансии пилота с ключом ИИ в `.env.sidecar`.
+
+---
+
+## 2026-08-09 — Шаблоны в Demo + документы по вопросам
+
+**Тип:** `feature`
+
+**Сделано:**
+- 4 шаблона скопированы в Demo Sandbox (client 8) и в org владельца; список шаблонов фильтруется по org.
+- Форма «Собрать документы по вопросам» (без ИИ) на вкладке документов вакансии.
+- Выложено на sidecar.
+
+**Файлы:** `documents_from_brief.py`, `DocumentsFromBrief.tsx`, `DocumentsEditor.tsx`, `seed_demo_templates.py`, `stats_history.py` (templates list)
+
+**Данные / конфиг:** `vacancy_templates_seed.json` → сервер
+
+**Следующий шаг:**
+- Пилот: /templates и «Собрать по вопросам» на вакансии.
+
+---
+
+## 2026-08-08 — Fix: создание вакансии в пустой org (404)
+
+**Тип:** `fix`
+
+**Сделано:**
+- Вакансия без клиента невидима в org → 404 после создания у пилота.
+- При создании без клиента — авто «Моя компания» / root в org.
+- На сервере: vac #16 привязана к «Demo Sandbox».
+
+**Файлы:** `vacancy_write.py`, `clients_write.py`, `CreateVacancyForm.tsx`
+
+**Следующий шаг:**
+- Пилот открывает `/vacancies/16` или создаёт новую.
+
+---
+
+## 2026-08-08 — Fix: настройки пилота (путь data в Docker)
+
+**Тип:** `fix`
+
+**Сделано:**
+- Падение «Способы добавления» у `pilot@demo.ru`: `parents[4]` в контейнере → 500.
+- Починен `resolved_legacy_data_dir`; статус Я.Диска не роняет страницу.
+- Выложено на sidecar (api+web).
+
+**Файлы:** `config.py`, `yandex_disk_oauth.py`, `candidate-intake/page.tsx`
+
+**Следующий шаг:**
+- Обновить страницу у пилота и проверить настройки.
+
+---
+
+## 2026-08-08 — Demo Sandbox org + pilot на сервере
+
+**Тип:** `feature`
+
+**Сделано:**
+- Новая пустая org «Demo Sandbox» + user `pilot@demo.ru` / `password123` (recruiter, Bitrix id `32`).
+- Owner `owner@hr.local` в default org; YourBox-данные не трогали (3 clients).
+- У recruiter Telegram — заглушка «Недоступно»; Bitrix только чтение; задачи пилота → Bitrix user 32.
+- Код выложен, api/web/worker пересобраны.
+
+**Файлы:** `users.py`, `create_demo_sandbox.py`, `auth.py`, `app_settings.py`, UI settings/channels/calendar, alembic `g7h8i9j0k1l2`
+
+**Данные / конфиг:** сервер `/opt/hr_ai_agent/v2`; логин пилота выше
+
+**Git:** незакоммичено на `feature/v2`
+
+**Следующий шаг:**
+- Войти пилотом на `:8080` и проверить пустой кабинет + настройки.
+
+---
+
+## 2026-08-08 — Sidecar: pilot YourBox subset
+
+**Тип:** `ops`
+
+**Сделано:**
+- Собрали урезанный снимок из локальной PG: YourBox (Маркетинг+Продажи), 3 вакансии, 55 кандидатов.
+- Архив: «Графический дизайнер» (41), «Нейро-дизайнер» (12); активная: «Менеджер по маркетплейсам (Lamoda)» (2).
+- Залили на Timeweb (`import_json --replace`), подняли дерево YourBox; owner@hr.local сохранён.
+- Локально: `data_pilot_yourbox/` (+ в `.gitignore` как `data_pilot*/`).
+
+**Файлы:** `data_pilot_yourbox/` (не в git), `.gitignore`
+
+**Данные / конфиг:** сервер `/opt/hr_ai_agent/v2/data_pilot_yourbox`; users не трогали
+
+**Git:** без коммита данных
+
+**Следующий шаг:**
+- Второй user в той же org (recruiter): без Telegram в хабе, Bitrix как сейчас.
+
+---
+
 ## 2026-08-08 — Commit + push: intake, UX, sidecar
 
 **Тип:** `chore`

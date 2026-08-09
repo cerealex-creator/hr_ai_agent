@@ -315,6 +315,8 @@ class User(Base):
     notify_prefs: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     # Personal candidate intake channels (optional ones off by default)
     candidate_intake: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Fixed Bitrix assignee for this user (pilot); empty → use org/global default
+    bitrix_responsible_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     memberships: Mapped[list["OrganizationMember"]] = relationship(back_populates="user")

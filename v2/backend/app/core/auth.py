@@ -45,6 +45,8 @@ class AuthUser:
     org_id: uuid.UUID
     roles: tuple[str, ...]
     auth_disabled: bool = False
+    bitrix_responsible_id: str = ""
+    org_name: str = ""
 
 
 def auth_is_disabled(settings: Settings | None = None) -> bool:
@@ -213,16 +215,27 @@ def load_membership(
     )
     if not member:
         return None
+    # Eager org name for /me
+    _ = member.organization
     return user, member
 
 
 def auth_user_from_membership(user: models.User, member: models.OrganizationMember) -> AuthUser:
+    org_name = ""
+    try:
+        org = getattr(member, "organization", None)
+        if org is not None:
+            org_name = str(org.name or "")
+    except Exception:  # noqa: BLE001
+        org_name = ""
     return AuthUser(
         id=user.id,
         email=user.email,
         full_name=user.full_name or "",
         org_id=member.organization_id,
         roles=(member.role,),
+        bitrix_responsible_id=str(getattr(user, "bitrix_responsible_id", None) or "").strip(),
+        org_name=org_name,
     )
 
 

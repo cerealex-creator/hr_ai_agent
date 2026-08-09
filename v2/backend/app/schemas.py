@@ -181,6 +181,21 @@ class VacancyDocumentGenerateOut(BaseModel):
     documents: dict = Field(default_factory=dict)
 
 
+class VacancyDocumentsFromBriefIn(BaseModel):
+    title: str | None = None
+    tasks: str = ""
+    must_have: str = ""
+    conditions: str = ""
+    interview_questions: str = ""
+    apply: bool = True
+
+
+class VacancyDocumentsFromBriefOut(BaseModel):
+    vacancy_id: int
+    applied: bool
+    documents: dict = Field(default_factory=dict)
+
+
 class CandidateListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -820,8 +835,11 @@ class AuthMeOut(BaseModel):
     email: str
     full_name: str = ""
     org_id: str
+    org_name: str = ""
     roles: list[str] = Field(default_factory=list)
     auth_disabled: bool = False
+    bitrix_responsible_id: str = ""
+    telegram_available: bool = True
 
 
 class AuthOkOut(BaseModel):

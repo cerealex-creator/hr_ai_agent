@@ -470,7 +470,18 @@ def set_bitrix(patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_bitrix_responsible_id(vacancy_payload: dict | None = None) -> str:
-    """Vacancy override (payload.bitrix_responsible_id) → global default."""
+    """Acting user fixed id (pilot) → vacancy override → global default."""
+    # Pilot / per-user fixed assignee wins (temporary test wiring).
+    try:
+        from app.services.tenancy import current_user
+
+        u = current_user()
+        fixed = str(getattr(u, "bitrix_responsible_id", "") or "").strip() if u else ""
+        if fixed:
+            return fixed
+    except Exception:  # noqa: BLE001
+        pass
+
     vac = vacancy_payload if isinstance(vacancy_payload, dict) else {}
     override = str(vac.get("bitrix_responsible_id") or "").strip()
     if override:

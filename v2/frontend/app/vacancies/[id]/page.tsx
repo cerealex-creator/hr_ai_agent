@@ -253,7 +253,11 @@ export default async function VacancyPage({ params, searchParams }: Props) {
                   </Link>
                 </p>
               ) : null}
-              <DocumentsEditor vacancyId={vacancy.id} initialDocuments={vacancy.documents || {}} />
+              <DocumentsEditor
+                vacancyId={vacancy.id}
+                vacancyTitle={vacancy.title || ""}
+                initialDocuments={vacancy.documents || {}}
+              />
             </>
           ) : null}
 

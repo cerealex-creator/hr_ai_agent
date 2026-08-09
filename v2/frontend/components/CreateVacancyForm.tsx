@@ -184,7 +184,7 @@ export function CreateVacancyForm({
           onChange={(e) => setClientId(e.target.value)}
           disabled={busy}
         >
-          <option value="">— без клиента —</option>
+          <option value="">— компания по умолчанию —</option>
           {clients.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}

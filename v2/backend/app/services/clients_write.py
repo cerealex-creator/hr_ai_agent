@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -264,6 +265,65 @@ def create_company(db: Session, name: str, chat_mode: str = CHAT_MODE_COMPANY) -
     row = create_client(db, name, chat_mode=chat_mode, kind=KIND_COMPANY)
     db.commit()
     db.refresh(row)
+    return row
+
+
+def ensure_org_root_company(
+    db: Session,
+    org_id: uuid.UUID | None = None,
+    *,
+    default_name: str = "Моя компания",
+) -> models.Client:
+    """Return an existing root company in the org, or create one (empty sandbox)."""
+    from app.services.tenancy import current_user
+
+    oid = org_id
+    if oid is None:
+        user = current_user()
+        if user is None:
+            raise ClientError("Нужна авторизация", 401)
+        oid = user.org_id
+
+    root = db.scalar(
+        select(models.Client)
+        .where(
+            models.Client.organization_id == oid,
+            models.Client.parent_id.is_(None),
+            models.Client.kind.in_((KIND_COMPANY, KIND_TEST)),
+        )
+        .order_by(models.Client.id.asc())
+        .limit(1)
+    )
+    if root:
+        return root
+
+    # Any root client in org (legacy / mis-tagged)
+    root = db.scalar(
+        select(models.Client)
+        .where(
+            models.Client.organization_id == oid,
+            models.Client.parent_id.is_(None),
+        )
+        .order_by(models.Client.id.asc())
+        .limit(1)
+    )
+    if root:
+        if root.kind not in (KIND_COMPANY, KIND_TEST):
+            root.kind = KIND_COMPANY
+        return root
+
+    row = models.Client(
+        id=_next_client_id(db),
+        organization_id=oid,
+        name=(default_name or "Моя компания").strip() or "Моя компания",
+        slug=_unique_slug(db, default_name or "company"),
+        payload={},
+        parent_id=None,
+        chat_mode=CHAT_MODE_COMPANY,
+        kind=KIND_COMPANY,
+    )
+    db.add(row)
+    db.flush()
     return row
 
 

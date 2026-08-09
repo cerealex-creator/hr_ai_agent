@@ -126,8 +126,11 @@ export type AuthMe = {
   email: string;
   full_name: string;
   org_id: string;
+  org_name?: string;
   roles: string[];
   auth_disabled?: boolean;
+  bitrix_responsible_id?: string;
+  telegram_available?: boolean;
 };
 
 export async function authMe(): Promise<AuthMe | null> {

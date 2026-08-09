@@ -119,10 +119,12 @@ export default function SettingsHubPage() {
             : bxOn
               ? "Подключено"
               : "настраивает администратор",
-          telegramOn: Boolean(status.bot_ok),
-          telegramLabel: status.bot_ok
-            ? `Подключено · @${status.bot?.username || "bot"}`
-            : "отключено",
+          telegramOn: isOwner ? Boolean(status.bot_ok) : false,
+          telegramLabel: isOwner
+            ? status.bot_ok
+              ? `Подключено · @${status.bot?.username || "bot"}`
+              : "отключено"
+            : "Недоступно",
           companiesLabel: items.length
             ? `${items.length} · ${items.map((c) => c.name).slice(0, 2).join(", ")}${
                 items.length > 2 ? "…" : ""
@@ -146,8 +148,12 @@ export default function SettingsHubPage() {
             : isOwner
               ? "отключено"
               : "настраивает администратор",
-          telegramOn: Boolean(prefs.telegram_enabled),
-          telegramLabel: prefs.telegram_enabled ? "Подключено" : "отключено",
+          telegramOn: isOwner ? Boolean(prefs.telegram_enabled) : false,
+          telegramLabel: isOwner
+            ? prefs.telegram_enabled
+              ? "Подключено"
+              : "отключено"
+            : "Недоступно",
         });
       } catch {
         if (!cancelled) {

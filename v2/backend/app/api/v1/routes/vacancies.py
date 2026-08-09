@@ -96,6 +96,7 @@ from app.schemas import (
     VacancyPatchIn,
     VacancyDocumentGenerateIn,
     VacancyDocumentGenerateOut,
+    VacancyDocumentsFromBriefIn,
     VacancyDocumentsPatchIn,
     VacancyListItem,
     WebhookAckOut,
@@ -446,6 +447,61 @@ def generate_vacancy_document(
         applied=applied,
         documents=vacancy.documents or {},
     )
+
+
+@router.post(
+    "/vacancies/{vacancy_id}/documents/from-brief",
+    response_model=JobCreateOut,
+    status_code=202,
+)
+async def vacancy_documents_from_brief(
+    vacancy_id: int,
+    body: VacancyDocumentsFromBriefIn,
+    db: Session = Depends(get_db),
+) -> JobCreateOut:
+    """Enqueue AI pack generation from short manual answers (background job)."""
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    tasks = (body.tasks or "").strip()
+    must_have = (body.must_have or "").strip()
+    if not tasks and not must_have:
+        raise HTTPException(
+            status_code=400,
+            detail="Заполните хотя бы «задачи» или «обязательные требования»",
+        )
+
+    payload = {
+        "vacancy_id": vacancy_id,
+        "title": str(body.title or vacancy.title or "").strip(),
+        "tasks": body.tasks or "",
+        "must_have": body.must_have or "",
+        "conditions": body.conditions or "",
+        "interview_questions": body.interview_questions or "",
+    }
+    job = job_svc.create_job_row(
+        db,
+        job_type="vacancy_docs_from_brief",
+        vacancy_id=vacancy_id,
+        client_id=vacancy.client_id,
+        payload=payload,
+    )
+    try:
+        pool = await get_arq_pool()
+        await pool.enqueue_job(
+            "vacancy_docs_from_brief",
+            str(job.id),
+            _job_id=str(job.id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        job_svc.update_job(
+            db,
+            job.id,
+            status="failed",
+            progress_label="Не удалось поставить в очередь",
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail=f"Очередь задач недоступна: {exc}") from exc
+    return JobCreateOut(id=job.id, status=job.status, job_type=job.job_type)
+
 
 @router.post("/vacancies/{vacancy_id}/documents/from-materials", status_code=202)
 async def vacancy_documents_from_materials(

@@ -164,19 +164,32 @@ def oauth_authorize_url(client_id: str | None = None) -> str | None:
 
 
 def disk_status() -> dict[str, Any]:
-    token = get_disk_token()
-    paths = get_disk_paths()
-    client_id = get_disk_client_id()
+    try:
+        token = get_disk_token()
+    except Exception:  # noqa: BLE001
+        token = ""
+    try:
+        paths = get_disk_paths()
+    except Exception:  # noqa: BLE001
+        paths = {"root": DEFAULT_ROOT, "inbox_path": f"{DEFAULT_ROOT}/{DEFAULT_INBOX}"}
+    try:
+        client_id = get_disk_client_id()
+    except Exception:  # noqa: BLE001
+        client_id = ""
+    try:
+        token_path = str(_token_path())
+    except Exception:  # noqa: BLE001
+        token_path = ""
     out: dict[str, Any] = {
         "connected": bool(token),
-        "token_path": str(_token_path()),
+        "token_path": token_path,
         "token_from_env": bool((get_settings().yandex_disk_oauth_token or "").strip()),
         "client_id": client_id,
         "client_id_configured": bool(client_id),
-        "authorize_url": oauth_authorize_url(client_id),
+        "authorize_url": oauth_authorize_url(client_id) if client_id else None,
         "create_app_url": "https://oauth.yandex.ru/client/new",
-        "root": paths["root"],
-        "inbox_path": paths["inbox_path"],
+        "root": paths.get("root") or DEFAULT_ROOT,
+        "inbox_path": paths.get("inbox_path") or f"{DEFAULT_ROOT}/{DEFAULT_INBOX}",
         "login": None,
         "message": "",
     }

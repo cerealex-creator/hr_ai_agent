@@ -457,9 +457,19 @@ def list_vacancy_templates(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> dict:
-    rows = db.scalars(
-        select(models.VacancyTemplate).order_by(models.VacancyTemplate.title.asc()).limit(limit)
-    ).all()
+    from app.services.tenancy import org_client_ids, require_org_id
+
+    org_id = require_org_id()
+    allowed = org_client_ids(db, org_id)
+    if not allowed:
+        return {"items": []}
+    q = (
+        select(models.VacancyTemplate)
+        .where(models.VacancyTemplate.client_id.in_(allowed))
+        .order_by(models.VacancyTemplate.title.asc())
+        .limit(limit)
+    )
+    rows = db.scalars(q).all()
     return {
         "items": [
             {
@@ -482,6 +492,7 @@ def create_vacancy_from_template(
 ) -> VacancyDetail:
     from uuid import UUID
 
+    from app.services.tenancy import org_client_ids, require_org_id
     from app.services.vacancy_write import VacancyWriteError, create_vacancy
     from app.services.vacancy_documents_write import save_documents
 
@@ -491,6 +502,9 @@ def create_vacancy_from_template(
         raise HTTPException(status_code=400, detail="Invalid template id") from exc
     tmpl = db.get(models.VacancyTemplate, tid)
     if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    allowed = org_client_ids(db, require_org_id())
+    if tmpl.client_id is None or int(tmpl.client_id) not in allowed:
         raise HTTPException(status_code=404, detail="Template not found")
     title = str(body.title or tmpl.title or "").strip()
     client_id = body.client_id

@@ -973,3 +973,87 @@ async def vacancy_docs_from_materials(ctx, job_id: str) -> dict:
         raise
     finally:
         db.close()
+
+
+async def vacancy_docs_from_brief(ctx, job_id: str) -> dict:
+    """AI: short HR answers → vacancy document pack (background; can take 1–2 min)."""
+    from app.db import models
+    from app.services.documents_from_brief import build_documents_from_brief
+    from app.services.vacancy_documents_write import save_documents
+
+    jid = uuid.UUID(job_id)
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        job = job_svc.get_job(db, jid)
+        if not job:
+            raise RuntimeError("Job not found")
+        payload = dict(job.payload or {})
+        vacancy_id = int(job.vacancy_id or payload.get("vacancy_id") or 0)
+        if not vacancy_id:
+            raise RuntimeError("Нужен vacancy_id")
+        vacancy = db.get(models.Vacancy, vacancy_id)
+        if not vacancy:
+            raise RuntimeError(f"Вакансия {vacancy_id} не найдена")
+
+        if job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+
+        job_svc.update_job(
+            db, jid, status="running", progress_pct=10, progress_label="Подготовка анкеты…"
+        )
+        title = str(payload.get("title") or vacancy.title or "").strip()
+        tasks = str(payload.get("tasks") or "")
+        must_have = str(payload.get("must_have") or "")
+        conditions = str(payload.get("conditions") or "")
+        interview_questions = str(payload.get("interview_questions") or "")
+
+        job_svc.update_job(db, jid, progress_pct=30, progress_label="ИИ пишет документы…")
+        built = await asyncio.to_thread(
+            lambda: build_documents_from_brief(
+                title=title,
+                tasks=tasks,
+                must_have=must_have,
+                conditions=conditions,
+                interview_questions=interview_questions,
+                settings=settings,
+            )
+        )
+
+        if job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+
+        job_svc.update_job(db, jid, progress_pct=90, progress_label="Сохранение…")
+        save_documents(db, vacancy, built)
+
+        job_svc.update_job(
+            db,
+            jid,
+            status="completed",
+            progress_pct=100,
+            progress_label="Документы обновлены",
+            payload_patch={
+                "applied_keys": [
+                    k for k in ("profile", "vacancy_text", "questions", "keywords") if built.get(k)
+                ],
+            },
+            result_ref=f"vacancy_docs_brief:{vacancy_id}",
+        )
+        return {"ok": True, "vacancy_id": vacancy_id}
+    except Exception as exc:  # noqa: BLE001
+        msg = _safe_err(exc)
+        if msg == "Отменено" or job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+        job_svc.update_job(
+            db,
+            jid,
+            status="failed",
+            progress_label="Ошибка генерации документов",
+            error=msg,
+        )
+        raise
+    finally:
+        db.close()
