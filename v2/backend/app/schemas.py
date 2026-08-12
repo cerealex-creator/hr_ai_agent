@@ -466,6 +466,24 @@ class DashboardWarrantyRisks(BaseModel):
     replacements_total: int = 0
 
 
+class DashboardClosedVacancyItem(BaseModel):
+    vacancy_id: int
+    title: str
+    closed_at: str | None = None
+
+
+class DashboardClosedReasonRow(BaseModel):
+    reason: str
+    label: str
+    count: int = 0
+    vacancies: list[DashboardClosedVacancyItem] = Field(default_factory=list)
+
+
+class DashboardClosedBreakdown(BaseModel):
+    total: int = 0
+    rows: list[DashboardClosedReasonRow] = Field(default_factory=list)
+
+
 class DashboardStatsOut(BaseModel):
     mode: str
     period: str
@@ -478,6 +496,7 @@ class DashboardStatsOut(BaseModel):
     vacancies_table: list[DashboardVacancyRow] = Field(default_factory=list)
     hh: HhEfficiencyStatsOut | None = None
     warranty_risks: DashboardWarrantyRisks | None = None
+    closed_breakdown: DashboardClosedBreakdown | None = None
 
 
 class StatsAiBriefIn(BaseModel):

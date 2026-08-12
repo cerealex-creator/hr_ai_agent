@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.services.candidate_fields import normalize_gender, payload_get
-from app.services.vacancy_outcome import HIRE_STAGES
+from app.services.vacancy_outcome import HIRE_STAGES, close_reason_from_payload, soft_vacancy_outcome
 
 CLIENT_ZONE_STAGES = (
     "client_review",
@@ -444,6 +444,13 @@ def build_activity_stats(
 
 
 DASHBOARD_MODES = frozenset({"operational", "executive"})
+
+CLOSE_OUTCOME_LABELS: dict[str, str] = {
+    "success": "Успешно закрыта",
+    "client_cancelled": "Закрыта заказчиком",
+    "no_result": "Без результата",
+}
+CLOSE_OUTCOME_ORDER = ("success", "client_cancelled", "no_result")
 # day=текущие сутки (с 00:00); week=текущая календарная неделя (пн→сейчас); month=скользящие 30д;
 # mtd/ytd=с начала месяца/года; m1..m12=N календарных месяцев назад; all=всё время
 DASHBOARD_PERIODS = frozenset(
@@ -803,6 +810,54 @@ def _build_operational(
     }
 
 
+def _vacancy_close_outcome(
+    vacancy: models.Vacancy,
+    candidates: list[models.Candidate],
+) -> str:
+    close_reason = close_reason_from_payload(vacancy.payload)
+    has_hire = any(
+        str(c.hr_stage or "") in HIRE_STAGES for c in candidates if c.vacancy_id == vacancy.id
+    )
+    outcome = soft_vacancy_outcome(
+        active=bool(vacancy.active),
+        close_reason=close_reason,
+        has_hire=has_hire,
+    )
+    return outcome or "no_result"
+
+
+def _build_closed_breakdown(
+    closed_vacancies: list[models.Vacancy],
+    candidates: list[models.Candidate],
+) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for v in closed_vacancies:
+        outcome = _vacancy_close_outcome(v, candidates)
+        closed_at = _parse_dt(v.closed_at)
+        grouped[outcome].append(
+            {
+                "vacancy_id": v.id,
+                "title": v.title,
+                "closed_at": closed_at.isoformat() if closed_at else None,
+            }
+        )
+    rows: list[dict[str, Any]] = []
+    for reason in CLOSE_OUTCOME_ORDER:
+        items = grouped.get(reason, [])
+        if not items:
+            continue
+        items.sort(key=lambda x: x.get("closed_at") or "", reverse=True)
+        rows.append(
+            {
+                "reason": reason,
+                "label": CLOSE_OUTCOME_LABELS.get(reason, reason),
+                "count": len(items),
+                "vacancies": items,
+            }
+        )
+    return {"total": len(closed_vacancies), "rows": rows}
+
+
 def _build_executive(
     db: Session,
     *,
@@ -826,6 +881,7 @@ def _build_executive(
         if not v.active and _in_window(_parse_dt(v.closed_at), start, end)
     ]
     closed_count = len(closed_in_period)
+    closed_breakdown = _build_closed_breakdown(closed_in_period, candidates)
 
     hire_durations: list[int] = []
     for v in closed_in_period:
@@ -963,4 +1019,5 @@ def _build_executive(
             "multi_hire_vacancies": multi_hire,
             "replacements_total": replacements_total,
         },
+        "closed_breakdown": closed_breakdown,
     }

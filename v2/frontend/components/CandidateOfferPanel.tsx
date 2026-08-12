@@ -69,6 +69,8 @@ export function CandidateOfferPanel({ candidateId }: Props) {
     } catch {
       /* ignore */
     }
+  };
+
   const load = async () => {
     setBusy(true);
     setErr(null);

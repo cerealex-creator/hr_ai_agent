@@ -7,8 +7,10 @@ import { StatsPeriodEditor } from "@/components/StatsPeriodEditor";
 import { WarrantyRegistry } from "@/components/WarrantyRegistry";
 import {
   apiGet,
+  outcomeLabel,
   type ClientItem,
   type VacancyListItem,
+  type VacancyOutcome,
 } from "@/lib/api";
 import { hrStageLabel } from "@/lib/labels";
 
@@ -80,6 +82,15 @@ type Dashboard = {
     warranty_searches: number;
     multi_hire_vacancies: number;
     replacements_total: number;
+  } | null;
+  closed_breakdown: {
+    total: number;
+    rows: {
+      reason: VacancyOutcome;
+      label: string;
+      count: number;
+      vacancies: { vacancy_id: number; title: string; closed_at: string | null }[];
+    }[];
   } | null;
 };
 
@@ -333,6 +344,9 @@ export default async function StatsPage({ searchParams }: Props) {
   const showClosedHint = mode === "executive" && activeOnly;
   const maxFlow = Math.max(1, ...(dash?.funnel_flow.map((s) => s.count) || [1]));
   const risks = dash?.warranty_risks;
+  const closedBreakdown = dash?.closed_breakdown;
+  const maxClosed =
+    closedBreakdown?.rows.reduce((m, r) => Math.max(m, r.count), 0) ?? 0;
 
   const inputFrom = dateFrom || toInputDate(dash?.period_from);
   const inputTo = dateTo || toInputDate(dash?.period_to);
@@ -603,6 +617,72 @@ export default async function StatsPage({ searchParams }: Props) {
             </>
           ) : (
             <>
+              <section className="rec-dash-section">
+                <div className="rec-dash-section-head">
+                  <h2 className="rec-dash-section-title">
+                    Закрытые вакансии по причинам
+                    <InfoTip text="Считаются вакансии, у которых дата закрытия попадает в выбранный период. Для полного списка выберите «Все вакансии» в области." />
+                  </h2>
+                </div>
+                {closedBreakdown && closedBreakdown.total > 0 ? (
+                  <>
+                    <div className="rec-dash-kpis">
+                      {closedBreakdown.rows.map((row, i) => {
+                        const tones = ["teal", "orange", "gray"] as const;
+                        const tone = tones[i % tones.length];
+                        return (
+                          <div key={row.reason} className={`rec-dash-kpi rec-dash-kpi-${tone}`}>
+                            <span className="rec-dash-kpi-label">{row.label}</span>
+                            <span className="rec-dash-kpi-val">{row.count}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="rec-card vac-list-card">
+                      <div className="vac-list">
+                        {closedBreakdown.rows.flatMap((row) =>
+                          row.vacancies.map((v) => (
+                            <Link
+                              key={`${row.reason}-${v.vacancy_id}`}
+                              href={`/vacancies/${v.vacancy_id}`}
+                              className="rec-row rec-row-compact"
+                            >
+                              <div className="rec-row-body">
+                                <div className="rec-row-top">
+                                  <span className="rec-row-name">{v.title}</span>
+                                </div>
+                                <p className="rec-row-sub">
+                                  {v.closed_at
+                                    ? new Date(v.closed_at).toLocaleDateString("ru-RU")
+                                    : "—"}
+                                </p>
+                                <div className="bar-track" style={{ marginTop: 6 }}>
+                                  <div
+                                    className="bar-fill"
+                                    style={{
+                                      width: `${maxClosed > 0 ? Math.max(4, Math.round((row.count / maxClosed) * 100)) : 0}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div className="rec-row-aside">
+                                <span className={`outcome outcome-${row.reason}`}>
+                                  {outcomeLabel(row.reason)}
+                                </span>
+                              </div>
+                            </Link>
+                          )),
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rec-card">
+                    <p className="rec-empty">В периоде нет закрытых вакансий</p>
+                  </div>
+                )}
+              </section>
+
               <section className="rec-dash-section">
                 <div className="rec-dash-section-head">
                   <h2 className="rec-dash-section-title">Воронка (переходы за период)</h2>
