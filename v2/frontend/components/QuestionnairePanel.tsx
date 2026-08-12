@@ -48,9 +48,12 @@ type Props = {
   onCandidateChange: (next: CandidateDetail) => void;
   onTranscribeAndEvaluate: () => Promise<void>;
   onEvaluateInterview?: () => Promise<void>;
+  onEvaluateResume?: () => Promise<void>;
   transcriptionBusy?: boolean;
   transcriptionStatus?: string | null;
   evaluateBusy?: boolean;
+  evaluateResumeBusy?: boolean;
+  evaluateResumeStatus?: string | null;
   /** When true, render body only (parent provides CollapsibleCard chrome). */
   embedded?: boolean;
 };
@@ -72,9 +75,12 @@ export function QuestionnairePanel({
   onCandidateChange,
   onTranscribeAndEvaluate,
   onEvaluateInterview,
+  onEvaluateResume,
   transcriptionBusy = false,
   transcriptionStatus = null,
   evaluateBusy = false,
+  evaluateResumeBusy = false,
+  evaluateResumeStatus = null,
   embedded = false,
 }: Props) {
   const [items, setItems] = useState<QItem[]>(initialItems || []);
@@ -158,32 +164,13 @@ export function QuestionnairePanel({
   };
 
   const generateFromResume = async () => {
-    setBusy(true);
+    if (!onEvaluateResume) return;
     setErr(null);
     setMsg(null);
     try {
-      const res = await apiFetch(`/api/v1/candidates/${candidate.id}/evaluate-resume`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
-      }
-      if (data.candidate) onCandidateChange(data.candidate as CandidateDetail);
-      const qItems = Array.isArray(data.candidate?.interview_questionnaire)
-        ? (data.candidate.interview_questionnaire as QItem[])
-        : [];
-      setItems(qItems);
-      setOpen(true);
-      setMsg(
-        data.questionnaire_generated
-          ? `Оценка по резюме готова, опросник сформирован (${data.questionnaire_count || 0})`
-          : "Оценка по резюме готова",
-      );
+      await onEvaluateResume();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка формирования");
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -246,15 +233,39 @@ export function QuestionnairePanel({
   const hasTranscriptLink = Boolean(
     (videoLinkDraft || "").trim() || (candidate.video_link || "").trim(),
   );
-  const hasTranscriptText = Boolean((candidate.transcript || "").trim());
+  const hasTranscriptText = Boolean(
+    (candidate.transcript || "").trim() ||
+      Boolean(String((candidate.payload as { transcript?: string } | undefined)?.transcript || "").trim()),
+  );
+  // Top-level field or payload fallback (after job reload / SSR quirks).
+  const digestRaw =
+    candidate.interview_digest ||
+    ((candidate.payload as { interview_digest?: CandidateDetail["interview_digest"] } | undefined)
+      ?.interview_digest ??
+      null);
+  const digest = digestRaw
+    ? {
+        summary: String(digestRaw.summary || "").trim(),
+        communication: String(digestRaw.communication || "").trim(),
+        public_url: digestRaw.public_url || null,
+        created_at: digestRaw.created_at || null,
+        qa: (Array.isArray(digestRaw.qa) ? digestRaw.qa : [])
+          .map((row) => ({
+            q: String((row as { q?: string; вопрос?: string }).q || (row as { вопрос?: string }).вопрос || "").trim(),
+            a: String((row as { a?: string; ответ?: string }).a || (row as { ответ?: string }).ответ || "").trim(),
+          }))
+          .filter((row) => row.q || row.a),
+      }
+    : null;
+  const hasDigest = Boolean(digest && (digest.summary || digest.qa.length > 0));
   const regenerateBlocked = Boolean((candidate.video_link || "").trim());
   const filledCount = items.filter((q) => (q.ответ_кандидата || "").trim()).length;
-  const locked = busy || transcriptionBusy || evaluateBusy;
+  const locked = busy || transcriptionBusy || evaluateBusy || evaluateResumeBusy;
 
   const body = (
     <>
       {embedded ? (
-        <div className="q-head" style={{ marginBottom: "0.5rem" }}>
+        <div className="q-head" style={{ marginTop: "0.75rem", marginBottom: "0.5rem" }}>
           <button type="button" className="chip" onClick={() => setOpen((v) => !v)}>
             {open ? "Свернуть вопросы" : "Развернуть вопросы"}
             {items.length ? ` · ${items.length}` : ""}
@@ -263,20 +274,62 @@ export function QuestionnairePanel({
       ) : (
         <div className="q-head">
           <h2>Опросник и собеседование</h2>
-          <button type="button" className="chip" onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="chip" onClick={() => setOpen((v) => !v)} style={{ marginTop: "0.5rem" }}>
             {open ? "Свернуть вопросы" : "Развернуть вопросы"}
             {items.length ? ` · ${items.length}` : ""}
           </button>
         </div>
       )}
+      {!hasAiEval && !items.length ? (
+        <div className="rec-warn-banner" style={{ marginBottom: "0.75rem" }}>
+          ⚠️ Оценка кандидата ИИ не проводилась и опросника ещё нет. Нажмите «Сформировать опросник» или «Оценить резюме ИИ».
+        </div>
+      ) : null}
       <p className="muted hh-micro">
-        Сначала оценка по резюме и опросник, затем запись собеседования → расшифровка → заполнение
-        ответов.
+        Сначала оценка по резюме и опросник, затем запись собеседования → расшифровка → выжимка
+        вопрос–ответ → заполнение ответов.
       </p>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
       {transcriptionStatus ? (
         <p className="muted hh-micro">Статус обработки: {transcriptionStatus}</p>
+      ) : null}
+      {evaluateResumeStatus ? (
+        <p className="muted hh-micro">Оценка резюме: {evaluateResumeStatus}</p>
+      ) : null}
+
+      {hasDigest && digest ? (
+        <div className="q-digest" id="interview-digest">
+          <h3 className="hh-subhead">Выжимка собеседования</h3>
+          {digest.summary ? <p className="q-digest-summary">{digest.summary}</p> : null}
+          {digest.communication ? (
+            <p className="muted hh-micro q-digest-comm">
+              Стиль речи: {digest.communication}
+            </p>
+          ) : null}
+          {digest.qa.length ? (
+            <div className="q-digest-list">
+              {digest.qa.map((row, i) => (
+                <div key={`${i}-${row.q.slice(0, 24)}`} className="q-digest-item">
+                  <p className="q-digest-q">
+                    <strong>В:</strong> {row.q || "—"}
+                  </p>
+                  <p className="q-digest-a">
+                    <strong>О:</strong> {row.a || "—"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {digest.public_url ? (
+            <p className="muted hh-micro">
+              Ссылка для заказчика:{" "}
+              <a href={digest.public_url} target="_blank" rel="noreferrer">
+                {digest.public_url}
+              </a>
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="chip-row" style={{ marginBottom: "0.75rem" }}>
@@ -284,12 +337,21 @@ export function QuestionnairePanel({
           <button
             type="button"
             className="chip chip-active"
-            disabled={locked}
-            onClick={generateFromResume}
+            disabled={locked || !onEvaluateResume}
+            onClick={() => void generateFromResume()}
           >
-            {busy ? "Оценка…" : "Оценить и сформировать опросник"}
+            {evaluateResumeBusy ? "Оценка…" : "Сформировать опросник"}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="chip"
+          disabled={locked || !onEvaluateResume}
+          onClick={() => void generateFromResume()}
+          title="Получить оценку ИИ без формирования опросника"
+        >
+          {evaluateResumeBusy ? "Оценка…" : "Оценить резюме ИИ"}
+        </button>
         {hasTranscriptLink ? (
           <button
             type="button"

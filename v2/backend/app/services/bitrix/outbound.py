@@ -42,7 +42,9 @@ def _bb_link(url: str | None, label: str) -> str | None:
     u = (url or "").strip()
     if not u:
         return None
-    display = yandex_link_for_display(u) or u
+    display = (yandex_link_for_display(u) or "").strip()
+    if not display.startswith(("http://", "https://")):
+        return None
     return f"[url={display}]{_bb_esc(label)}[/url]"
 
 
@@ -57,6 +59,7 @@ def build_task_description(
     task_link: str | None,
     hr_comment: str | None,
     candidate_id: str,
+    interview_digest_url: str | None = None,
 ) -> str:
     lines = [
         f"[b]Новый кандидат:[/b] {_bb_esc(name)}",
@@ -71,6 +74,7 @@ def build_task_description(
     for label, url in (
         ("📄 Резюме PDF", resume_link),
         ("📄 Резюме HH", hh_resume_link if not (resume_link or "").strip() else None),
+        ("📝 Выжимка собеседования", interview_digest_url),
         ("🎥 Запись собеседования", video_link),
         ("🎨 Портфолио", portfolio_link),
         ("✅ Задание", task_link),
@@ -194,6 +198,8 @@ def send_candidate_bitrix_task(
         candidate.status_updated_at = datetime.now(ZoneInfo("UTC")).replace(microsecond=0).isoformat()
 
     hours = int(cfg.get("task_deadline_hours") or 24)
+    from app.services.interview_digest import interview_digest_public_url
+
     description = build_task_description(
         name=candidate.name,
         vacancy_title=vacancy.title or "",
@@ -203,6 +209,7 @@ def send_candidate_bitrix_task(
         portfolio_link=fields_pub.get("portfolio_link"),
         task_link=fields_pub.get("task_link"),
         hr_comment=(candidate.payload or {}).get("hr_comment"),
+        interview_digest_url=interview_digest_public_url(candidate.payload),
         candidate_id=str(candidate.id),
     )
 

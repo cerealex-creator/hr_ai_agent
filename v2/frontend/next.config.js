@@ -7,6 +7,10 @@ const apiRewriteTarget = (
 
 const nextConfig = {
   output: "standalone",
+  // Долгие ИИ-запросы (оффер/оценка) через rewrite /api → backend
+  experimental: {
+    proxyTimeout: 1000 * 180,
+  },
   async rewrites() {
     // D4: same-origin /api/v1/* → backend (cookies + EventSource).
     return [

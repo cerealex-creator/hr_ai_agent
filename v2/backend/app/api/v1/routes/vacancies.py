@@ -160,6 +160,8 @@ def list_vacancies(
             return []
         q = q.where(models.Vacancy.client_id == client_id)
     result: list[VacancyListItem] = []
+    from app.services.vacancy_avatar import resolve_avatar_key
+
     for vacancy, client_name, cnt, hire_cnt in db.execute(q).all():
         close_reason = close_reason_from_payload(vacancy.payload)
         has_hire = int(hire_cnt or 0) > 0
@@ -181,6 +183,7 @@ def list_vacancies(
                     close_reason=close_reason,
                     has_hire=has_hire,
                 ),
+                avatar_key=resolve_avatar_key(vacancy.payload, vacancy.title),
             )
         )
     return result
@@ -286,6 +289,14 @@ def patch_vacancy_settings(
         payload["control_word"] = str(data.get("control_word") or "").strip()
     if "chat_id" in data:
         vacancy.chat_id = str(data.get("chat_id") or "").strip() or None
+    if "avatar_key" in data:
+        from app.services.vacancy_avatar import normalize_avatar_key
+
+        key = normalize_avatar_key(data.get("avatar_key"))
+        if key:
+            payload["avatar_key"] = key
+        else:
+            payload.pop("avatar_key", None)
     vacancy.payload = payload
     flag_modified(vacancy, "payload")
     db.add(vacancy)

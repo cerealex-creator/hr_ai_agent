@@ -47,6 +47,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   disk_inbox_router: "Inbox Я.Диска",
   vacancy_docs_from_materials: "Документы из материалов",
   candidate_interview_process: "Собеседование",
+  candidate_evaluate_resume: "Оценка резюме",
 };
 
 function jobLabel(job: JobEvent): string {
@@ -69,7 +70,9 @@ export function JobsLiveProvider({ children }: { children: ReactNode }) {
     pathname === "/login" ||
     pathname?.startsWith("/login/") ||
     pathname === "/c" ||
-    pathname?.startsWith("/c/");
+    pathname?.startsWith("/c/") ||
+    pathname === "/i" ||
+    pathname?.startsWith("/i/");
 
   const [activeCount, setActiveCount] = useState(0);
   const [activeJobs, setActiveJobs] = useState<JobEvent[]>([]);

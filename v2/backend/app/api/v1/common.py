@@ -114,6 +114,7 @@ ALLOWED_JOB_TYPES = frozenset(
         "import_legacy",
         "transcribe_media",
         "candidate_interview_process",
+        "candidate_evaluate_resume",
         "hh_cold_search",
         "yandex_disk_sync",
         "disk_inbox_router",
@@ -127,6 +128,7 @@ ARQ_FUNCTION_BY_TYPE = {
     "import_legacy": "import_legacy",
     "transcribe_media": "transcribe_media",
     "candidate_interview_process": "candidate_interview_process",
+    "candidate_evaluate_resume": "candidate_evaluate_resume",
     "hh_cold_search": "hh_cold_search",
     "yandex_disk_sync": "yandex_disk_sync",
     "disk_inbox_router": "disk_inbox_router",
@@ -156,6 +158,8 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
     )
     close_reason = close_reason_from_payload(vacancy.payload)
     has_hire = int(hire_cnt or 0) > 0
+    from app.services.vacancy_avatar import resolve_avatar_key
+
     return VacancyDetail(
         id=vacancy.id,
         title=vacancy.title,
@@ -176,6 +180,7 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
         payload=vacancy.payload or {},
         candidates_count=int(cnt or 0),
         document_keys=nonempty_document_keys(vacancy.documents),
+        avatar_key=resolve_avatar_key(vacancy.payload, vacancy.title),
     )
 
 

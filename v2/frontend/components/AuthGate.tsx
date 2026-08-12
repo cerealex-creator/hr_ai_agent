@@ -46,7 +46,14 @@ export function AuthGate({ children }: Props) {
   const router = useRouter();
   const [user, setUser] = useState<AuthMe | null | undefined>(undefined);
   const isLogin = pathname === "/login" || pathname?.startsWith("/login/");
-  const isClientZone = pathname === "/c" || pathname?.startsWith("/c/");
+  const isPublicPage =
+    pathname === "/c" ||
+    pathname?.startsWith("/c/") ||
+    pathname === "/i" ||
+    pathname?.startsWith("/i/") ||
+    pathname === "/design-preview" ||
+    pathname?.startsWith("/design-preview/") ||
+    pathname === "/";
 
   const refresh = async () => {
     const me = await authMe();
@@ -54,7 +61,7 @@ export function AuthGate({ children }: Props) {
   };
 
   useEffect(() => {
-    if (isClientZone) {
+    if (isPublicPage) {
       setUser(null);
       return;
     }
@@ -81,7 +88,7 @@ export function AuthGate({ children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, isLogin, isClientZone, router]);
+  }, [pathname, isLogin, isPublicPage, router]);
 
   const logout = async () => {
     await authLogout();
@@ -92,16 +99,16 @@ export function AuthGate({ children }: Props) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user: user ?? null,
-      loading: user === undefined && !isLogin && !isClientZone,
+      loading: user === undefined && !isLogin && !isPublicPage,
       isOwner: rolesIncludeOwner(user ?? null),
       logout,
       refresh,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- logout/refresh stable enough for shell
-    [user, isLogin, isClientZone],
+    [user, isLogin, isPublicPage],
   );
 
-  if (isLogin || isClientZone) {
+  if (isLogin || isPublicPage) {
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
   }
 

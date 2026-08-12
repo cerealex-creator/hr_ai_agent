@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import models
+from app.services.candidate_photo import hh_photo_url_from_data
 
 
 def _now_iso() -> str:
@@ -54,6 +55,7 @@ def find_candidate_by_hh_resume(
 
 def build_payload_from_shortlist(item: models.HhShortlistItem) -> dict[str, Any]:
     snap = item.snapshot if isinstance(item.snapshot, dict) else {}
+    photo_url = hh_photo_url_from_data(snap) or ""
     url = (item.url or snap.get("url") or "").strip()
     if not url and item.hh_resume_id:
         url = f"https://hh.ru/resume/{item.hh_resume_id}"
@@ -83,6 +85,7 @@ def build_payload_from_shortlist(item: models.HhShortlistItem) -> dict[str, Any]
         "hr_comment": (item.note or "").strip(),
         "interview_eval_notes": "",
         "client_comment": "",
+        "photo_url": photo_url,
         "office_interview_date": "",
         "office_interview_time": "",
         "client_final_verdict": "",
@@ -172,6 +175,19 @@ def create_candidate_from_shortlist(
     snap = item.snapshot if isinstance(item.snapshot, dict) else {}
     now = _now_iso()
     payload = build_payload_from_shortlist(item)
+    if not str(payload.get("photo_url") or "").strip() and rid:
+        try:
+            from app.core.config import get_settings
+            from app.services.hh_client import HhClient
+
+            client = HhClient(get_settings())
+            resume = client.get_resume(rid)
+            if isinstance(resume, dict):
+                url = hh_photo_url_from_data(resume)
+                if url:
+                    payload["photo_url"] = url
+        except Exception:  # noqa: BLE001
+            pass
     cand = models.Candidate(
         id=uuid.uuid4(),
         vacancy_id=vacancy_id,

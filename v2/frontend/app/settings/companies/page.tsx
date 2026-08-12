@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { CompaniesSettings } from "@/components/CompaniesSettings";
 import { InfoTip } from "@/components/InfoTip";
 
 export default function CompaniesSettingsPage() {
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -19,6 +19,6 @@ export default function CompaniesSettingsPage() {
         Настройка взаимодействия по вакансиям с внешним и внутренним заказчиком.
       </p>
       <CompaniesSettings />
-    </AppShell>
+    </RecruitingShell>
   );
 }

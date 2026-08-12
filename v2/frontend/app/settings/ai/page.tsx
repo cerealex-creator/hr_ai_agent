@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { OwnerOnly } from "@/components/AuthGate";
 import { InfoTip } from "@/components/InfoTip";
 import { ProviderResourceLinks } from "@/components/ProviderResourceLinks";
@@ -90,7 +90,7 @@ export default function AiSettingsPage() {
 
   return (
     <OwnerOnly>
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -257,7 +257,7 @@ export default function AiSettingsPage() {
           </p>
         </>
       )}
-    </AppShell>
+    </RecruitingShell>
     </OwnerOnly>
   );
 }

@@ -2,6 +2,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.workers.tasks import (
+    candidate_evaluate_resume,
     candidate_interview_process,
     demo_progress,
     disk_inbox_router,
@@ -23,6 +24,7 @@ class WorkerSettings:
         import_legacy,
         transcribe_media,
         candidate_interview_process,
+        candidate_evaluate_resume,
         hh_cold_search,
         yandex_disk_sync,
         disk_inbox_router,

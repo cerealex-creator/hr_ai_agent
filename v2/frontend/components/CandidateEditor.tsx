@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CandidateDetail, apiFetch } from "@/lib/api";
 import { HR_STAGE_LABELS, clientStatusLabel, clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
@@ -8,19 +8,53 @@ import { StageMarker } from "@/components/StageMarker";
 import { StageProgress } from "@/components/StageProgress";
 import { AiCommentBlock } from "@/components/AiCommentBlock";
 import { QuestionnairePanel, type QItem } from "@/components/QuestionnairePanel";
-import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { LinkField } from "@/components/LinkField";
 import { ActionBanner } from "@/components/ActionBanner";
+import { CandidateAvatar } from "@/components/CandidateAvatar";
+import { CandidateOfferPanel } from "@/components/CandidateOfferPanel";
 import { daysBetween, daysLabel, formatDateRu, isEventPassed, parseLocalDate } from "@/lib/dates";
 import { resolveNextAction } from "@/lib/nextAction";
 
 type Props = { initial: CandidateDetail };
+
+type CandTab = "overview" | "profile" | "materials" | "pipeline" | "offer" | "interview" | "client" | "ai";
+
+const CAND_TABS: { id: CandTab; label: string }[] = [
+  { id: "profile", label: "Анкета" },
+  { id: "materials", label: "Материалы" },
+  { id: "pipeline", label: "Воронка" },
+  { id: "offer", label: "Оффер" },
+  { id: "interview", label: "Интервью" },
+  { id: "client", label: "Заказчик" },
+  { id: "ai", label: "ИИ" },
+];
+
+function isCandTab(value: string | null): value is CandTab {
+  return CAND_TABS.some((t) => t.id === value);
+}
+
+function sectionToTab(section: string): CandTab {
+  if (section === "anketa") return "profile";
+  if (section === "stage") return "pipeline";
+  if (section === "quest") return "interview";
+  if (section === "client") return "client";
+  if (section === "ai") return "ai";
+  return "profile";
+}
+
+function photoUrlFromCandidate(c: CandidateDetail): string | null {
+  const top = (c.photo_url || "").trim();
+  if (top) return top;
+  const fromPayload = c.payload?.photo_url;
+  return typeof fromPayload === "string" && fromPayload.trim() ? fromPayload.trim() : null;
+}
 
 type JobStatus = {
   id: string;
   status: string;
   progress_label: string | null;
   error: string | null;
+  job_type: string;
 };
 
 type WaitingInfo = {
@@ -156,6 +190,16 @@ function resolveWaiting(c: CandidateDetail): WaitingInfo | null {
 
 export function CandidateEditor({ initial }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab: CandTab = isCandTab(tabParam) ? tabParam : "profile";
+  const setActiveTab = (tab: CandTab) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (tab === "overview") params.delete("tab");
+    else params.set("tab", tab);
+    const q = params.toString();
+    router.replace(q ? `?${q}` : "?", { scroll: false });
+  };
   const [c, setC] = useState(initial);
   const [name, setName] = useState(initial.name || "");
   const [phone, setPhone] = useState(field(initial.phone));
@@ -196,6 +240,9 @@ export function CandidateEditor({ initial }: Props) {
   const [vacancies, setVacancies] = useState<{ id: number; title: string }[]>([]);
   const [moveToClientReview, setMoveToClientReview] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editingMaterials, setEditingMaterials] = useState(false);
+  const [editingPipeline, setEditingPipeline] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -204,11 +251,23 @@ export function CandidateEditor({ initial }: Props) {
   const [job, setJob] = useState<JobStatus | null>(null);
   const [stageOpen, setStageOpen] = useState(false);
   const [anketaOpen, setAnketaOpen] = useState(false);
-  const [questOpen, setQuestOpen] = useState(false);
+  const [questOpen, setQuestOpen] = useState(() => {
+    const dig =
+      initial.interview_digest ||
+      (initial.payload as { interview_digest?: { summary?: string; qa?: unknown[] } } | undefined)
+        ?.interview_digest;
+    const hasDig = Boolean(
+      dig && ((dig.summary || "").trim() || (Array.isArray(dig.qa) && dig.qa.length > 0)),
+    );
+    return (
+      hasDig ||
+      (Array.isArray(initial.interview_questionnaire) && initial.interview_questionnaire.length > 0) ||
+      Boolean((initial.transcript || "").trim())
+    );
+  });
   const [clientOpen, setClientOpen] = useState(false);
   const [notifyChannels, setNotifyChannels] = useState<string[]>(["bitrix", "web"]);
   const [aiSectionOpen, setAiSectionOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<CandidateDetail | null>(null);
   const [bannerTone, setBannerTone] = useState<"success" | "warning" | "error">("success");
   const [actionSection, setActionSection] = useState<
@@ -290,6 +349,7 @@ export function CandidateEditor({ initial }: Props) {
 
   const openAiComment = () => {
     if (!hasAiComment && c.ai_score == null) return;
+    setActiveTab("ai");
     setAiSectionOpen(true);
     setAiCommentOpen(true);
     setScoreJumpPending(true);
@@ -299,18 +359,6 @@ export function CandidateEditor({ initial }: Props) {
   const waiting = useMemo(() => resolveWaiting(c), [c]);
   const nextAction = useMemo(() => resolveNextAction(c), [c]);
 
-  useEffect(() => {
-    if (!nextAction) return;
-    const section = nextAction.section;
-    if (section === "anketa") setAnketaOpen(true);
-    else if (section === "stage") setStageOpen(true);
-    else if (section === "quest") setQuestOpen(true);
-    else if (section === "client") setClientOpen(true);
-    else if (section === "ai") {
-      setAiSectionOpen(true);
-      setAiCommentOpen(true);
-    }
-  }, [nextAction?.label, nextAction?.section]);
   const hasQuestionnaire = Array.isArray(c.interview_questionnaire) && c.interview_questionnaire.length > 0;
 
   const applyCandidate = (next: CandidateDetail) => {
@@ -466,10 +514,24 @@ export function CandidateEditor({ initial }: Props) {
         setJob(next);
         if (next.status === "completed") {
           await reloadCandidate();
-          setMsg(next.progress_label || "Собеседование обработано");
-          setScoreJumpPending(false);
+          setMsg(next.progress_label || "Готово");
+          if (next.job_type === "candidate_evaluate_resume") {
+            setScoreJumpPending(true);
+            setQuestOpen(true);
+          }
+          if (next.job_type === "candidate_interview_process") {
+            setQuestOpen(true);
+            setTimeout(() => {
+              document.getElementById("interview-digest")?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              });
+            }, 120);
+          }
+          setJob(null);
         } else if (next.status === "failed" || next.status === "cancelled") {
-          setErr(next.error || next.progress_label || "Обработка собеседования не завершена");
+          setErr(next.error || next.progress_label || "Задача не завершена");
+          setJob(null);
         }
       } catch {
         /* ignore polling errors */
@@ -477,6 +539,53 @@ export function CandidateEditor({ initial }: Props) {
     }, 2000);
     return () => clearInterval(timer);
   }, [job]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/v1/jobs?limit=40`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          items?: Array<{
+            id: string;
+            status: string;
+            job_type: string;
+            progress_label: string | null;
+            error: string | null;
+            payload?: { candidate_id?: string };
+          }>;
+        };
+        const hit = (data.items || []).find(
+          (j) =>
+            (j.status === "queued" || j.status === "running") &&
+            (j.job_type === "candidate_evaluate_resume" ||
+              j.job_type === "candidate_interview_process") &&
+            String(j.payload?.candidate_id || "") === c.id,
+        );
+        if (hit && !cancelled) {
+          setJob({
+            id: hit.id,
+            status: hit.status,
+            progress_label: hit.progress_label,
+            error: hit.error,
+            job_type: hit.job_type,
+          });
+          setMsg(
+            hit.job_type === "candidate_evaluate_resume"
+              ? "Оценка резюме уже идёт — можно следить в «Задачи»"
+              : "Обработка собеседования уже идёт",
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restore once per candidate
+  }, [c.id]);
 
   const saveStage = async () => {
     setBusy(true);
@@ -651,6 +760,7 @@ export function CandidateEditor({ initial }: Props) {
 
   const sendToChat = async () => {
     setBusy(true);
+    setClientOpen(true);
     setFeedback("client", null);
     try {
       const res = await apiFetch(`/api/v1/candidates/${c.id}/send-to-chat`, {
@@ -672,16 +782,23 @@ export function CandidateEditor({ initial }: Props) {
       if (data.candidate) applyCandidate(data.candidate as CandidateDetail);
       const partial =
         Array.isArray(data.errors) && data.errors.length > 0 && Boolean(data.ok);
+      const baseMsg = data.message || "Отправлено заказчику";
+      const errExtra =
+        partial && Array.isArray(data.errors) && data.errors.length
+          ? `\n${data.errors.join("\n")}`
+          : "";
       setFeedback(
         "client",
-        data.message || "Отправлено заказчику",
+        `${baseMsg}${errExtra}`,
         null,
         partial ? "warning" : "success",
       );
       setStage(data.hr_stage || c.hr_stage);
+      document.getElementById("cand-client")?.scrollIntoView({ behavior: "smooth", block: "start" });
       router.refresh();
     } catch (e) {
       setFeedback("client", null, e instanceof Error ? e.message : "Ошибка отправки заказчику");
+      document.getElementById("cand-client")?.scrollIntoView({ behavior: "smooth", block: "start" });
     } finally {
       setBusy(false);
     }
@@ -742,6 +859,30 @@ export function CandidateEditor({ initial }: Props) {
     }
   };
 
+  const evaluateResume = async () => {
+    setErr(null);
+    setMsg(null);
+    const res = await apiFetch(`/api/v1/candidates/${c.id}/evaluate-resume`, {
+      method: "POST",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+    }
+    setJob({
+      id: String(data.id || ""),
+      status: String(data.status || "queued"),
+      progress_label: data.progress_label || "Оценка резюме в очереди",
+      error: null,
+      job_type: "candidate_evaluate_resume",
+    });
+    setMsg(
+      data.reused
+        ? "Оценка резюме уже идёт — следите в «Задачи» или строке статуса ниже"
+        : "Запущена оценка резюме и формирование опросника",
+    );
+  };
+
   const transcribeAndEvaluate = async () => {
     setBusy(true);
     setErr(null);
@@ -768,6 +909,7 @@ export function CandidateEditor({ initial }: Props) {
         status: String(data.status || "queued"),
         progress_label: data.progress_label || "Задача поставлена в очередь",
         error: null,
+        job_type: "candidate_interview_process",
       });
       await reloadCandidate();
       setMsg(
@@ -782,7 +924,10 @@ export function CandidateEditor({ initial }: Props) {
     }
   };
 
-  const transcriptionBusy = Boolean(job && (job.status === "queued" || job.status === "running"));
+  const activeJob =
+    job && (job.status === "queued" || job.status === "running") ? job : null;
+  const transcriptionBusy = activeJob?.job_type === "candidate_interview_process";
+  const resumeEvalBusy = activeJob?.job_type === "candidate_evaluate_resume";
 
   const showInterviewDateFields =
     stage === "interview_scheduled" ||
@@ -798,11 +943,35 @@ export function CandidateEditor({ initial }: Props) {
 
   return (
     <>
-      <h1 className="page-title">{c.name || "Без имени"}</h1>
-      <p className="muted">
-        {c.vacancy_title || `Вакансия #${c.vacancy_id}`}
-        {c.client_name ? ` · ${c.client_name}` : ""}
-      </p>
+      <div className="cand-workspace-head">
+        <CandidateAvatar
+          name={c.name || "Без имени"}
+          photoUrl={photoUrlFromCandidate(c)}
+          gender={c.gender}
+          size={64}
+        />
+        <div className="cand-workspace-main">
+          <h1 className="cand-workspace-title page-title">{c.name || "Без имени"}</h1>
+          <p className="muted cand-workspace-meta">
+            {c.vacancy_title || `Вакансия #${c.vacancy_id}`}
+            {c.client_name ? ` · ${c.client_name}` : ""}
+          </p>
+          <div className="cand-workspace-badges">
+            <span className="cand-workspace-badge is-accent">
+              <StageMarker stage={c.hr_stage} />
+            </span>
+            {c.ai_score != null ? (
+              <span className="cand-workspace-badge">
+                ИИ {c.ai_score}/4
+                {c.ai_score_source ? ` · ${aiScoreSourceLabel(c.ai_score_source)}` : ""}
+              </span>
+            ) : null}
+            <span className="cand-workspace-badge">
+              {clientStatusLabelForCard(c.hr_stage, c.client_status)}
+            </span>
+          </div>
+        </div>
+      </div>
 
       <div className="cand-summary">
         <div className="cand-summary-row">
@@ -963,26 +1132,7 @@ export function CandidateEditor({ initial }: Props) {
             type="button"
             className="chip chip-active"
             onClick={() => {
-              const section = nextAction.section;
-              if (section === "anketa") {
-                setAnketaOpen(true);
-                document.getElementById("cand-anketa")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              } else if (section === "stage") {
-                setStageOpen(true);
-                document.getElementById("cand-stage")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              } else if (section === "quest") {
-                setQuestOpen(true);
-                document.getElementById("questionnaire")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              } else if (section === "client") {
-                setClientOpen(true);
-                document.getElementById("cand-client")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              } else if (section === "ai") {
-                setAiSectionOpen(true);
-                setAiCommentOpen(true);
-                document.getElementById("ai-comment-block")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              } else {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }
+              setActiveTab(sectionToTab(nextAction.section));
             }}
           >
             Открыть
@@ -990,178 +1140,303 @@ export function CandidateEditor({ initial }: Props) {
         </div>
       ) : null}
 
+      <nav className="cand-tabs" aria-label="Разделы карточки">
+        {CAND_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`cand-tab${activeTab === tab.id ? " is-active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
       <StageProgress stage={c.hr_stage} />
 
-      {(actionSection === null ||
-        actionSection === "top" ||
-        (msg &&
-          (msg.startsWith("Оценка по резюме:") ||
-            msg.startsWith("Оценка по интервью:") ||
-            msg.includes("Собеседование обработано")))) &&
-      (err || msg) ? (
-        <>
-          {err ? <p className="warn">{err}</p> : null}
-          {msg ? (
-            hasAiComment &&
-            (msg.startsWith("Оценка по резюме:") ||
-              msg.startsWith("Оценка по интервью:") ||
-              msg.includes("Собеседование обработано")) ? (
-              <p className="ok">
-                <button
-                  type="button"
-                  className="score-jump-link score-jump-ok"
-                  onClick={openAiComment}
-                >
-                  {msg}
-                </button>
-              </p>
-            ) : (
-              <p className="ok">{msg}</p>
-            )
-          ) : null}
-        </>
+      {err || msg ? (
+        <ActionBanner msg={msg} err={err} tone={bannerTone} />
       ) : null}
 
-      <CollapsibleCard
-        id="cand-anketa"
-        title="Анкета"
-        hint={[phone, email, city].filter(Boolean).join(" · ") || undefined}
-        open={anketaOpen}
-        onOpenChange={setAnketaOpen}
-      >
-        <div className="hh-field">
-          <label className="hh-label" htmlFor="cand-name">
-            Имя
-          </label>
-          <input id="cand-name" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
-        </div>
-        <div className="hh-inline-pair">
-          <div className="hh-field">
-            <label className="hh-label" htmlFor="cand-phone">
-              Телефон
-            </label>
-            <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
-          </div>
-          <div className="hh-field">
-            <label className="hh-label" htmlFor="cand-email">
-              Email
-            </label>
-            <input
-              id="cand-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={busy}
-              placeholder="опционально"
+      {activeTab === "profile" ? (
+      <div className="rec-card">
+        {!editingProfile ? (
+          <>
+            <div className="cand-profile-view">
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Телефон</span>
+                <span className="cand-profile-value">{phone || "—"}</span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Email</span>
+                <span className="cand-profile-value">{email || "—"}</span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Возраст</span>
+                <span className="cand-profile-value">{age || "—"}</span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Город</span>
+                <span className="cand-profile-value">{city || "—"}{metro ? `, м. ${metro}` : ""}</span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Зарплата</span>
+                <span className="cand-profile-value">{salary || "—"}</span>
+              </div>
+              {hrComment ? (
+                <div className="cand-profile-row" style={{ alignItems: "flex-start" }}>
+                  <span className="cand-profile-label">HR</span>
+                  <span className="cand-profile-value">{hrComment}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="cand-profile-links">
+              {resumeLink ? (
+                <a href={resumeLink} target="_blank" rel="noreferrer" className="chip chip-active">PDF резюме</a>
+              ) : null}
+              {hhLink ? (
+                <a href={hhLink} target="_blank" rel="noreferrer" className="chip">HH.ru</a>
+              ) : null}
+              {!resumeLink && !hhLink ? (
+                <span className="muted hh-micro">Ссылки на резюме не добавлены</span>
+              ) : null}
+            </div>
+
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              <button type="button" className="chip" onClick={() => setEditingProfile(true)}>
+                Редактировать
+              </button>
+              <button type="button" className="chip" disabled={busy} onClick={remove}>
+                Удалить
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {bannerFor("anketa")}
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="cand-name">Имя</label>
+              <input id="cand-name" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
+            </div>
+            <div className="hh-inline-pair">
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="cand-phone">Телефон</label>
+                <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+              </div>
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="cand-email">Email</label>
+                <input id="cand-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} placeholder="опционально" />
+              </div>
+            </div>
+            <div className="hh-inline-pair">
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="cand-age">Возраст</label>
+                <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
+              </div>
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="cand-city">Город</label>
+                <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} />
+              </div>
+            </div>
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="cand-metro">Метро</label>
+              <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
+            </div>
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="cand-salary">Зарплатные ожидания</label>
+              <input id="cand-salary" value={salary} onChange={(e) => setSalary(e.target.value)} disabled={busy} />
+            </div>
+
+            <h3 className="hh-subhead">Ссылки</h3>
+            <LinkField id="cand-resume" label="Резюме PDF (Яндекс.Диск)" openLabel="Открыть PDF" value={resumeLink} onChange={setResumeLink} disabled={busy} placeholder="https://disk.yandex.ru/…" />
+            <LinkField id="cand-hh" label="HH (без контактов)" openLabel="Открыть HH" value={hhLink} onChange={setHhLink} disabled={busy} placeholder="https://hh.ru/resume/…" />
+
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="cand-hr">Комментарий HR</label>
+              <textarea id="cand-hr" rows={3} value={hrComment} onChange={(e) => setHrComment(e.target.value)} disabled={busy} />
+            </div>
+
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              <button type="button" className="chip chip-active" disabled={busy} onClick={() => { void saveCard(); setEditingProfile(false); }}>
+                Сохранить
+              </button>
+              <button type="button" className="chip" onClick={() => setEditingProfile(false)}>
+                Отмена
+              </button>
+              <button type="button" className="chip" disabled={busy} onClick={remove}>
+                Удалить
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      ) : null}
+
+      {activeTab === "materials" ? (
+      <div className="rec-card">
+        <h3 className="rec-card-title">Материалы кандидата</h3>
+        {!editingMaterials ? (
+          <>
+            <div className="cand-profile-view">
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Запись</span>
+                <span className="cand-profile-value">
+                  {video ? (
+                    <a href={video} target="_blank" rel="noreferrer">Открыть запись</a>
+                  ) : (
+                    "—"
+                  )}
+                </span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Портфолио</span>
+                <span className="cand-profile-value">
+                  {portfolio ? (
+                    <a href={portfolio} target="_blank" rel="noreferrer">Открыть портфолио</a>
+                  ) : (
+                    "—"
+                  )}
+                </span>
+              </div>
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">Задание</span>
+                <span className="cand-profile-value">
+                  {taskLink ? (
+                    <a href={taskLink} target="_blank" rel="noreferrer">Открыть задание</a>
+                  ) : (
+                    "—"
+                  )}
+                </span>
+              </div>
+            </div>
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              <button type="button" className="chip" onClick={() => setEditingMaterials(true)}>
+                Редактировать
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="muted hh-micro" style={{ marginBottom: "0.75rem" }}>
+              Записи собеседований, портфолио, задания и другие файлы.
+            </p>
+            <LinkField
+              id="cand-video"
+              label="Запись собеседования"
+              openLabel="Открыть запись"
+              value={video}
+              onChange={setVideo}
+              disabled={busy || transcriptionBusy}
+              placeholder="Ссылка на запись видео/аудио"
             />
-          </div>
-        </div>
-        <div className="hh-inline-pair">
-          <div className="hh-field">
-            <label className="hh-label" htmlFor="cand-age">
-              Возраст
-            </label>
-            <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
-          </div>
-          <div className="hh-field">
-            <label className="hh-label" htmlFor="cand-city">
-              Город
-            </label>
-            <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} />
-          </div>
-        </div>
-        <div className="hh-field">
-          <label className="hh-label" htmlFor="cand-metro">
-            Метро
-          </label>
-          <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
-        </div>
-        <div className="hh-field">
-          <label className="hh-label" htmlFor="cand-salary">
-            Зарплатные ожидания
-          </label>
-          <input id="cand-salary" value={salary} onChange={(e) => setSalary(e.target.value)} disabled={busy} />
-        </div>
+            <LinkField
+              id="cand-portfolio"
+              label="Портфолио"
+              openLabel="Открыть портфолио"
+              value={portfolio}
+              onChange={setPortfolio}
+              disabled={busy}
+            />
+            <LinkField
+              id="cand-task"
+              label="Тестовое задание"
+              openLabel="Открыть задание"
+              value={taskLink}
+              onChange={setTaskLink}
+              disabled={busy}
+              placeholder="https://…"
+            />
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              <button
+                type="button"
+                className="chip chip-active"
+                disabled={busy}
+                onClick={() => {
+                  void saveCard();
+                  setEditingMaterials(false);
+                }}
+              >
+                Сохранить
+              </button>
+              <button type="button" className="chip" onClick={() => setEditingMaterials(false)}>
+                Отмена
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      ) : null}
 
-        <h3 className="hh-subhead">Ссылки</h3>
-        {bannerFor("anketa")}
-        <LinkField
-          id="cand-resume"
-          label="Резюме PDF (Яндекс.Диск)"
-          openLabel="Открыть PDF резюме"
-          value={resumeLink}
-          onChange={setResumeLink}
-          disabled={busy}
-          placeholder="https://disk.yandex.ru/…"
-          hint="Сюда — ссылка на PDF после открытия контактов. HH без контактов — ниже."
-        />
-        <LinkField
-          id="cand-hh"
-          label="HH (без контактов)"
-          openLabel="Открыть резюме на HH.ru"
-          value={hhLink}
-          onChange={setHhLink}
-          disabled={busy}
-          placeholder="https://hh.ru/resume/…"
-        />
-        <LinkField
-          id="cand-portfolio"
-          label="Портфолио"
-          openLabel="Открыть портфолио"
-          value={portfolio}
-          onChange={setPortfolio}
-          disabled={busy}
-        />
-        <LinkField
-          id="cand-video"
-          label="Запись собеседования"
-          openLabel="Открыть запись"
-          value={video}
-          onChange={setVideo}
-          disabled={busy || transcriptionBusy}
-          placeholder="Ссылка на запись — затем «Расшифровать» в блоке ниже"
-        />
-        <LinkField
-          id="cand-task"
-          label="Ссылка на задание"
-          openLabel="Открыть задание"
-          value={taskLink}
-          onChange={setTaskLink}
-          disabled={busy}
-          placeholder="https://…"
-        />
-
-        <div className="hh-field">
-          <label className="hh-label" htmlFor="cand-hr">
-            Комментарий HR
-          </label>
-          <textarea
-            id="cand-hr"
-            rows={4}
-            value={hrComment}
-            onChange={(e) => setHrComment(e.target.value)}
-            disabled={busy}
-          />
-        </div>
-
-        <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
-          <button type="button" className="chip chip-active" disabled={busy} onClick={saveCard}>
-            Сохранить карточку
-          </button>
-          <button type="button" className="chip" disabled={busy} onClick={remove}>
-            Удалить
-          </button>
-        </div>
-      </CollapsibleCard>
-
-      <CollapsibleCard
-        id="cand-stage"
-        title="Этап"
-        hint={hrStageLabel(stage || c.hr_stage)}
-        open={stageOpen}
-        onOpenChange={setStageOpen}
-      >
+      {activeTab === "pipeline" ? (
+      <>
+      <div className="rec-card" id="cand-stage">
+        <h3 className="rec-card-title">
+          Этап
+          <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+            {hrStageLabel(stage || c.hr_stage)}
+          </span>
+        </h3>
         {bannerFor("stage")}
+        {!editingPipeline ? (
+          <>
+            <div className="cand-profile-view">
+              <div className="cand-profile-row">
+                <span className="cand-profile-label">HR-этап</span>
+                <span className="cand-profile-value">{hrStageLabel(stage || c.hr_stage)}</span>
+              </div>
+              {showInterviewDateFields ? (
+                <div className="cand-profile-row">
+                  <span className="cand-profile-label">
+                    {stage === "client_meeting" || c.hr_stage === "client_meeting"
+                      ? "Встреча"
+                      : "Собеседование"}
+                  </span>
+                  <span className="cand-profile-value">
+                    {[interviewDate, interviewTime].filter(Boolean).join(" · ") || "—"}
+                  </span>
+                </div>
+              ) : null}
+              {meetingLink ? (
+                <div className="cand-profile-row">
+                  <span className="cand-profile-label">Zoom</span>
+                  <span className="cand-profile-value">
+                    <a href={meetingLink} target="_blank" rel="noreferrer">Открыть ссылку</a>
+                  </span>
+                </div>
+              ) : null}
+              {stageNote ? (
+                <div className="cand-profile-row">
+                  <span className="cand-profile-label">Заметка</span>
+                  <span className="cand-profile-value">{stageNote}</span>
+                </div>
+              ) : null}
+              {["offer", "internship", "started_work"].includes(stage) ? (
+                <div className="cand-profile-row">
+                  <span className="cand-profile-label">Гарантия</span>
+                  <span className="cand-profile-value">
+                    {[warrantyDate, warrantyMonths ? `${warrantyMonths} мес.` : ""]
+                      .filter(Boolean)
+                      .join(" · ") || "—"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              <button type="button" className="chip" onClick={() => setEditingPipeline(true)}>
+                Редактировать
+              </button>
+              <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
+                Применить этап по статусу заказчика
+              </button>
+              <button type="button" className="chip" onClick={() => setActiveTab("offer")}>
+                К разделу «Оффер»
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         <div className="hh-field">
           <label className="hh-label" htmlFor="hr-stage">
             HR-этап
@@ -1336,40 +1611,58 @@ export function CandidateEditor({ initial }: Props) {
           Удалить событие из Google Calendar
         </label>
         <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
-          <button type="button" className="chip chip-active" disabled={busy} onClick={saveStage}>
+          <button
+            type="button"
+            className="chip chip-active"
+            disabled={busy}
+            onClick={() => {
+              void (async () => {
+                await saveStage();
+                setEditingPipeline(false);
+              })();
+            }}
+          >
             Зафиксировать этап
+          </button>
+          <button type="button" className="chip" onClick={() => setEditingPipeline(false)}>
+            Отмена
           </button>
           <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
             Применить этап по статусу заказчика
           </button>
         </div>
-        <CollapsibleCard
-          title="История этапов"
-          hint={
-            Array.isArray(c.payload?.hr_stage_history)
-              ? `${(c.payload.hr_stage_history as unknown[]).length}`
-              : undefined
-          }
-          open={historyOpen}
-          onOpenChange={setHistoryOpen}
-        >
-          <ul className="muted" style={{ margin: 0, paddingLeft: "1.1rem" }}>
-            {(Array.isArray(c.payload?.hr_stage_history)
-              ? (c.payload.hr_stage_history as { stage?: string; at?: string; note?: string }[])
-              : []
-            ).map((h, i) => (
-              <li key={`${h.at || i}-${h.stage}`}>
-                {hrStageLabel(h.stage || "")} · {formatDateRu(h.at || null)}
-                {h.note ? ` — ${h.note}` : ""}
-              </li>
-            ))}
-            {!Array.isArray(c.payload?.hr_stage_history) ||
-            !(c.payload.hr_stage_history as unknown[]).length ? (
-              <li>Пока пусто</li>
-            ) : null}
-          </ul>
-        </CollapsibleCard>
-        <div className="hh-field" style={{ marginTop: "0.75rem" }}>
+          </>
+        )}
+      </div>
+
+      <div className="rec-card" id="cand-stage-history">
+        <h3 className="rec-card-title">
+          История этапов
+          {Array.isArray(c.payload?.hr_stage_history) ? (
+            <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+              {(c.payload.hr_stage_history as unknown[]).length}
+            </span>
+          ) : null}
+        </h3>
+        <ul className="muted" style={{ margin: 0, paddingLeft: "1.1rem" }}>
+          {(Array.isArray(c.payload?.hr_stage_history)
+            ? (c.payload.hr_stage_history as { stage?: string; at?: string; note?: string }[])
+            : []
+          ).map((h, i) => (
+            <li key={`${h.at || i}-${h.stage}`}>
+              {hrStageLabel(h.stage || "")} · {formatDateRu(h.at || null)}
+              {h.note ? ` — ${h.note}` : ""}
+            </li>
+          ))}
+          {!Array.isArray(c.payload?.hr_stage_history) ||
+          !(c.payload.hr_stage_history as unknown[]).length ? (
+            <li>Пока пусто</li>
+          ) : null}
+        </ul>
+      </div>
+
+      <div className="rec-card">
+        <div className="hh-field">
           <label className="hh-label" htmlFor="copy-target">
             Копировать в вакансию
           </label>
@@ -1396,21 +1689,42 @@ export function CandidateEditor({ initial }: Props) {
             Скопировать кандидата
           </button>
         </div>
-      </CollapsibleCard>
+      </div>
+      </>
+      ) : null}
 
-      <CollapsibleCard
-        id="questionnaire"
-        title="Опросник и собеседование"
-        hint={
-          hasQuestionnaire
-            ? `${(c.interview_questionnaire as unknown[]).length} вопросов`
-            : (c.transcript || "").trim()
-              ? "есть расшифровка"
-              : undefined
-        }
-        open={questOpen}
-        onOpenChange={setQuestOpen}
-      >
+      {activeTab === "offer" ? <CandidateOfferPanel candidateId={c.id} /> : null}
+
+      {activeTab === "interview" ? (
+      <div className="rec-card" id="questionnaire">
+        <h3 className="rec-card-title">
+          Опросник и собеседование
+          {(() => {
+            const dig =
+              c.interview_digest ||
+              (c.payload as { interview_digest?: { summary?: string; qa?: unknown[] } } | undefined)
+                ?.interview_digest;
+            const hasDig = Boolean(
+              dig &&
+                ((dig.summary || "").trim() || (Array.isArray(dig.qa) && dig.qa.length > 0)),
+            );
+            let hint: string | undefined;
+            if (hasDig && hasQuestionnaire) {
+              hint = `${(c.interview_questionnaire as unknown[]).length} вопросов · есть выжимка`;
+            } else if (hasQuestionnaire) {
+              hint = `${(c.interview_questionnaire as unknown[]).length} вопросов`;
+            } else if (hasDig) {
+              hint = "есть выжимка";
+            } else if ((c.transcript || "").trim()) {
+              hint = "есть расшифровка";
+            }
+            return hint ? (
+              <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+                {hint}
+              </span>
+            ) : null;
+          })()}
+        </h3>
         <QuestionnairePanel
           embedded
           candidate={c}
@@ -1425,23 +1739,26 @@ export function CandidateEditor({ initial }: Props) {
           onCandidateChange={applyCandidate}
           onTranscribeAndEvaluate={transcribeAndEvaluate}
           onEvaluateInterview={evaluateInterview}
+          onEvaluateResume={evaluateResume}
           transcriptionBusy={transcriptionBusy}
-          transcriptionStatus={job ? job.progress_label : null}
+          transcriptionStatus={transcriptionBusy && job ? job.progress_label : null}
           evaluateBusy={evalBusy}
+          evaluateResumeBusy={resumeEvalBusy}
+          evaluateResumeStatus={resumeEvalBusy && job ? job.progress_label : null}
         />
-      </CollapsibleCard>
+      </div>
+      ) : null}
 
-      <CollapsibleCard
-        id="cand-client"
-        title="Заказчик"
-        hint={
-          c.client_status === "wait"
-            ? clientStatusLabelForCard(c.hr_stage, c.client_status)
-            : clientStatusLabel(c.client_status)
-        }
-        open={clientOpen}
-        onOpenChange={setClientOpen}
-      >
+      {activeTab === "client" ? (
+      <div className="rec-card" id="cand-client">
+        <h3 className="rec-card-title">
+          Заказчик
+          <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+            {c.client_status === "wait"
+              ? clientStatusLabelForCard(c.hr_stage, c.client_status)
+              : clientStatusLabel(c.client_status)}
+          </span>
+        </h3>
         {bannerFor("client")}
         <p className="muted hh-micro">
           {telegramNotifyEnabled && bitrixNotifyEnabled
@@ -1539,16 +1856,19 @@ export function CandidateEditor({ initial }: Props) {
             ))}
           </ul>
         ) : null}
-      </CollapsibleCard>
+      </div>
+      ) : null}
 
-      {(c.client_comment || hasAiComment || c.ai_score != null) && (
-        <CollapsibleCard
-          id="ai-comment-block"
-          title="Комментарий ИИ"
-          hint={c.ai_score != null ? `${c.ai_score}/4` : undefined}
-          open={aiSectionOpen}
-          onOpenChange={setAiSectionOpen}
-        >
+      {activeTab === "ai" && (c.client_comment || hasAiComment || c.ai_score != null) ? (
+        <div className="rec-card" id="ai-comment-block">
+          <h3 className="rec-card-title">
+            Комментарий ИИ
+            {c.ai_score != null ? (
+              <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+                {c.ai_score}/4
+              </span>
+            ) : null}
+          </h3>
           <div className="meta-grid">
             <div className="meta-item">
               <span>Оценка</span>
@@ -1579,8 +1899,12 @@ export function CandidateEditor({ initial }: Props) {
             open={aiCommentOpen}
             onOpenChange={setAiCommentOpen}
           />
-        </CollapsibleCard>
-      )}
+        </div>
+      ) : null}
+
+      {activeTab === "ai" && !(c.client_comment || hasAiComment || c.ai_score != null) ? (
+        <p className="muted">Оценка ИИ ещё не проводилась. Загрузите резюме и нажмите «Оценить по резюме» во вкладке «Интервью».</p>
+      ) : null}
 
       {scheduleModalOpen ? (
         <div

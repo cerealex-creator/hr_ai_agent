@@ -7,6 +7,11 @@ from io import BytesIO
 import requests
 
 from app.services.transcription import get_yandex_download_url, get_yandex_public_meta, parse_yandex_link
+from app.services.yandex_disk_oauth import (
+    DiskApiError,
+    download_disk_path_bytes,
+    parse_yadisk_app_path,
+)
 from app.services.yandex_public import is_yandex_pdf, is_yandex_video_or_audio
 
 
@@ -40,11 +45,28 @@ def download_url_bytes(url: str, *, timeout: int = 60) -> bytes:
     return r.content
 
 
+def _download_yadisk_app_bytes(url: str) -> tuple[bytes, str]:
+    path = parse_yadisk_app_path(url)
+    if not path:
+        return b"", "Некорректная ссылка yadisk-app"
+    try:
+        return download_disk_path_bytes(path), ""
+    except DiskApiError as exc:
+        return b"", str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return b"", f"Не удалось скачать с Яндекс.Диска: {exc}"
+
+
 def extract_text_from_pdf_url(url: str) -> str:
-    """Public Yandex Disk or direct PDF URL → text."""
+    """Public Yandex Disk, yadisk-app (OAuth) or direct PDF URL → text."""
     url = (url or "").strip()
     if not url:
         return ""
+    if url.startswith("yadisk-app:"):
+        content, _err = _download_yadisk_app_bytes(url)
+        if not content:
+            return ""
+        return _pdf_text_from_bytes(content)
     download = url
     if url.startswith("yadisk:") or "disk.yandex" in url or "yadi.sk" in url:
         direct = get_yandex_download_url(url)
@@ -71,6 +93,17 @@ def fetch_resume_text_from_url(url: str) -> tuple[str, str]:
     url = (url or "").strip()
     if not url:
         return "", "Пустая ссылка"
+
+    if url.startswith("yadisk-app:"):
+        content, err = _download_yadisk_app_bytes(url)
+        if err:
+            return "", err
+        text = _pdf_text_from_bytes(content)
+        if len(text) >= 50:
+            return text, ""
+        if content.lstrip().startswith(b"%PDF"):
+            return "", "PDF скачан, но текст не извлечён (возможно скан)"
+        return "", "Файл на Яндекс.Диске не PDF или текст слишком короткий"
 
     if url.startswith("yadisk:") or "disk.yandex" in url or "yadi.sk" in url:
         root, path = parse_yandex_link(url)

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import models
-from app.services.hh_seen import REASON_AI_LOW, REASON_IN_FUNNEL, REASON_RECRUITER
+from app.services.candidate_fields import normalize_gender, payload_get
 from app.services.vacancy_outcome import HIRE_STAGES
 
 CLIENT_ZONE_STAGES = (
@@ -71,6 +71,7 @@ def _filter_vacancies(
     vacancy_id: int | None,
     active_only: bool,
     organization_id: Any | None = None,
+    client_ids: list[int] | None = None,
 ) -> list[models.Vacancy]:
     q = select(models.Vacancy)
     if organization_id is not None:
@@ -82,12 +83,29 @@ def _filter_vacancies(
         q = q.where(models.Vacancy.client_id.in_(cids))
     if vacancy_id is not None:
         q = q.where(models.Vacancy.id == vacancy_id)
+    elif client_ids:
+        q = q.where(models.Vacancy.client_id.in_(client_ids))
     elif client_id is not None:
         q = q.where(models.Vacancy.client_id == client_id)
     vacancies = list(db.scalars(q).all())
     if active_only:
         vacancies = [v for v in vacancies if v.active]
     return vacancies
+
+
+def resolve_stats_client_ids(db: Session, client_id: int | None) -> list[int] | None:
+    """Expand company → company + departments; otherwise single id."""
+    if client_id is None:
+        return None
+    from app.services import clients_write as cw
+
+    client = db.get(models.Client, int(client_id))
+    if not client:
+        return [int(client_id)]
+    if client.kind == cw.KIND_COMPANY and client.chat_mode == cw.CHAT_MODE_DEPARTMENTS:
+        depts = cw.list_departments(db, client.id)
+        return [client.id] + [d.id for d in depts]
+    return [client.id]
 
 
 def _candidates_for_vacancies(db: Session, vac_ids: list[int]) -> list[models.Candidate]:
@@ -196,6 +214,41 @@ def build_funnel_stats(
         "vacancy_id": vacancy_id,
         "vacancy_title": scope_vacancies[0].title if vacancy_id and scope_vacancies else None,
     }
+
+
+def _parse_meeting_date(raw: Any) -> datetime | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        try:
+            dt = datetime.strptime(text[:10], fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return _parse_dt(raw)
+
+
+def _count_meetings_today(candidates: list[models.Candidate], *, now: datetime) -> int:
+    today = now.date()
+    count = 0
+    for c in candidates:
+        payload = c.payload or {}
+        meeting = _parse_meeting_date(payload_get(payload, "office_interview_date"))
+        if meeting and meeting.date() == today:
+            count += 1
+    return count
+
+
+def _count_waiting_client(candidates: list[models.Candidate]) -> int:
+    return sum(
+        1
+        for c in candidates
+        if c.hr_stage in ("client_review", "client_pause")
+        and (c.client_status or "wait") == "wait"
+    )
 
 
 def build_hh_stats(
@@ -391,10 +444,10 @@ def build_activity_stats(
 
 
 DASHBOARD_MODES = frozenset({"operational", "executive"})
-# week=текущая календарная неделя (пн→сейчас); month=скользящие 30д;
+# day=текущие сутки (с 00:00); week=текущая календарная неделя (пн→сейчас); month=скользящие 30д;
 # mtd/ytd=с начала месяца/года; m1..m12=N календарных месяцев назад; all=всё время
 DASHBOARD_PERIODS = frozenset(
-    {"week", "month", "all", "mtd", "ytd", "m1", "m2", "m3", "m6", "m12"}
+    {"day", "week", "month", "all", "mtd", "ytd", "m1", "m2", "m3", "m6", "m12", "custom"}
 )
 EXECUTIVE_PERIODS = DASHBOARD_PERIODS  # alias for route validation
 OPERATIONAL_PERIODS = DASHBOARD_PERIODS
@@ -408,6 +461,10 @@ def _start_of_day(dt: datetime) -> datetime:
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _end_of_day(dt: datetime) -> datetime:
+    return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+
 def _add_calendar_months(dt: datetime, months: int) -> datetime:
     """Shift by calendar months (negative = back). Clamps day to month length."""
     import calendar
@@ -419,11 +476,27 @@ def _add_calendar_months(dt: datetime, months: int) -> datetime:
     return dt.replace(year=y, month=m, day=d)
 
 
-def _period_window(period: str) -> tuple[datetime | None, datetime]:
+def _period_window(
+    period: str,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[datetime | None, datetime]:
     """Return (start, end). start=None means all time."""
     now = datetime.now(timezone.utc)
+    if date_from or date_to or period == "custom":
+        end = _parse_dt(date_to) if date_to else now
+        if end is None:
+            end = now
+        end = _end_of_day(end) if date_to else now
+        start = _parse_dt(date_from) if date_from else None
+        if start is not None:
+            start = _start_of_day(start)
+        return start, end
     if period == "all":
         return None, now
+    if period == "day":
+        return _start_of_day(now), now
     if period == "week":
         # Monday 00:00 UTC of current week → now
         start = _start_of_day(now - timedelta(days=now.weekday()))
@@ -442,7 +515,7 @@ def _period_window(period: str) -> tuple[datetime | None, datetime]:
 
 def _chart_grain(period: str) -> str:
     """Bucket grain for activity charts."""
-    if period in ("week", "mtd", "month", "m1", "m2", "m3"):
+    if period in ("day", "week", "mtd", "month", "m1", "m2", "m3", "custom"):
         return "week"  # daily labels
     return "half_year"  # monthly labels
 
@@ -532,26 +605,33 @@ def build_dashboard_stats(
     db: Session,
     *,
     mode: str,
-    period: str = "week",
+    period: str = "day",
     client_id: int | None = None,
     vacancy_id: int | None = None,
     active_vacancies_only: bool = False,
     organization_id: Any | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> dict[str, Any]:
     if mode not in DASHBOARD_MODES:
         raise ValueError(f"mode: {', '.join(sorted(DASHBOARD_MODES))}")
 
     allowed = OPERATIONAL_PERIODS if mode == "operational" else EXECUTIVE_PERIODS
-    if period not in allowed:
-        period = "week" if mode == "operational" else "month"
+    if date_from or date_to:
+        period = "custom"
+    elif period not in allowed:
+        period = "day"
 
     now = datetime.now(timezone.utc)
-    start, end = _period_window(period)
+    start, end = _period_window(period, date_from=date_from, date_to=date_to)
     activity_start = start if start is not None else (now - PERIOD_PRESETS["year"])
+
+    scope_client_ids = resolve_stats_client_ids(db, client_id)
 
     vacancies = _filter_vacancies(
         db,
-        client_id=client_id,
+        client_id=None,
+        client_ids=scope_client_ids,
         vacancy_id=vacancy_id,
         active_only=False,
         organization_id=organization_id,
@@ -684,9 +764,14 @@ def _build_operational(
             "vacancy_id": c.vacancy_id,
             "vacancy_title": titles.get(c.vacancy_id),
             "reason": getattr(c, "_attention_reason", None),
+            "photo_url": ((c.payload or {}).get("photo_url") or "").strip() or None,
+            "gender": normalize_gender((c.payload or {}).get("gender") or (c.payload or {}).get("sex")),
         }
         for c in attention_cands[:30]
     ]
+
+    meetings_today = _count_meetings_today(candidates, now=now)
+    waiting_client = _count_waiting_client(candidates)
 
     hh = build_hh_stats(
         db,
@@ -706,6 +791,8 @@ def _build_operational(
             {"key": "candidates_in_work", "label": "Кандидаты в работе", "value": in_work},
             {"key": "new_period", "label": "Новые за период", "value": new_in_period},
             {"key": "attention", "label": "Требуют внимания", "value": len(attention_cands)},
+            {"key": "meetings_today", "label": "Встречи сегодня", "value": meetings_today},
+            {"key": "waiting_client", "label": "Ждут заказчика", "value": waiting_client},
         ],
         "activity_series": series,
         "funnel_flow": [],

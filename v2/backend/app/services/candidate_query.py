@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.candidate_fields import normalize_gender
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -160,6 +162,8 @@ def serialize_list_item(
         "client_name": client_name,
         "last_contact_at": contact,
         "attention_reason": getattr(c, "_attention_reason", None),
+        "photo_url": (p.get("photo_url") or "").strip() or None,
+        "gender": normalize_gender(p.get("gender") or p.get("sex")),
     }
 
 

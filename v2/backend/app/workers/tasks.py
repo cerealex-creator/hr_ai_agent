@@ -261,6 +261,30 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
         db.commit()
         db.refresh(candidate)
 
+        job_svc.update_job(db, jid, progress_pct=88, progress_label="Выжимка вопрос–ответ")
+        from app.services.interview_digest import (
+            ensure_interview_digest_token,
+            structure_interview_digest,
+        )
+
+        vac = db.get(models.Vacancy, candidate.vacancy_id)
+        digest = await asyncio.to_thread(
+            lambda: structure_interview_digest(
+                cleaned,
+                settings=settings,
+                candidate_name=candidate.name or "",
+                vacancy_title=(vac.title if vac else "") or "",
+            )
+        )
+        cand_payload = dict(candidate.payload or {})
+        ensure_interview_digest_token(cand_payload)
+        cand_payload["interview_digest"] = digest
+        candidate.payload = cand_payload
+        flag_modified(candidate, "payload")
+        db.add(candidate)
+        db.commit()
+        db.refresh(candidate)
+
         job_svc.update_job(db, jid, progress_pct=92, progress_label="Оценка кандидата по собеседованию")
         ev = evaluate_candidate_interview(db, candidate, settings=settings)
         db.refresh(candidate)
@@ -277,6 +301,7 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
                 "candidate_name": candidate.name,
                 "source_url": source_url,
                 "transcript": cleaned,
+                "interview_digest": digest,
                 "preview": cleaned[:280] + ("…" if len(cleaned) > 280 else ""),
                 "chars": len(cleaned),
                 "ai_score": ev.get("ai_score"),
@@ -293,6 +318,94 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
             jid,
             status="failed",
             progress_label="Ошибка обработки собеседования",
+            error=msg,
+        )
+        raise
+    finally:
+        db.close()
+
+
+async def candidate_evaluate_resume(ctx, job_id: str) -> dict:
+    """Download resume PDF, AI funnel eval + questionnaire (background)."""
+    jid = uuid.UUID(job_id)
+    db = SessionLocal()
+    try:
+        from app.db import models
+        from app.services.candidate_resume_eval import CandidateEvalError, evaluate_candidate_resume
+
+        job = job_svc.get_job(db, jid)
+        if not job:
+            raise RuntimeError("Job not found")
+        payload = dict(job.payload or {})
+        candidate_id = str(payload.get("candidate_id") or "").strip()
+        if not candidate_id:
+            raise RuntimeError("Нужен candidate_id")
+        candidate = db.get(models.Candidate, uuid.UUID(candidate_id))
+        if not candidate:
+            raise RuntimeError("Кандидат не найден")
+
+        job_svc.update_job(
+            db, jid, status="running", progress_pct=5, progress_label="Скачиваем резюме…"
+        )
+        if job_svc.is_cancelled(db, jid):
+            return {"ok": False, "cancelled": True}
+
+        settings = get_settings()
+
+        def _run() -> dict:
+            job_svc.update_job_isolated(jid, progress_pct=20, progress_label="Извлекаем текст резюме…")
+            if job_svc.is_cancelled_isolated(jid):
+                raise RuntimeError("Отменено")
+            job_svc.update_job_isolated(jid, progress_pct=40, progress_label="Оценка резюме ИИ…")
+            result = evaluate_candidate_resume(db, candidate, populate_fields=True, settings=settings)
+            if job_svc.is_cancelled_isolated(jid):
+                raise RuntimeError("Отменено")
+            job_svc.update_job_isolated(jid, progress_pct=85, progress_label="Формируем опросник…")
+            return result
+
+        result = await asyncio.to_thread(_run)
+        db.refresh(candidate)
+
+        q_count = int(result.get("questionnaire_count") or 0)
+        ai_score = result.get("ai_score")
+        job_svc.update_job(
+            db,
+            jid,
+            status="completed",
+            progress_pct=100,
+            progress_label=(
+                f"Готово · оценка {ai_score if ai_score is not None else '—'}/4"
+                + (f" · опросник {q_count}" if q_count else "")
+            ),
+            result_ref=f"candidate_resume:{candidate.id}",
+            payload_patch={
+                "candidate_id": str(candidate.id),
+                "candidate_name": candidate.name,
+                "ai_score": ai_score,
+                "questionnaire_generated": bool(result.get("questionnaire_generated")),
+                "questionnaire_count": q_count,
+            },
+        )
+        return {"ok": True, "candidate_id": str(candidate.id), **result}
+    except CandidateEvalError as exc:
+        job_svc.update_job(
+            db,
+            jid,
+            status="failed",
+            progress_label="Ошибка оценки резюме",
+            error=exc.message,
+        )
+        return {"ok": False, "error": exc.message}
+    except Exception as exc:  # noqa: BLE001
+        msg = _safe_err(exc)
+        if msg == "Отменено" or job_svc.is_cancelled(db, jid):
+            job_svc.update_job(db, jid, status="cancelled", progress_label="Отменено")
+            return {"ok": False, "cancelled": True}
+        job_svc.update_job(
+            db,
+            jid,
+            status="failed",
+            progress_label="Ошибка оценки резюме",
             error=msg,
         )
         raise

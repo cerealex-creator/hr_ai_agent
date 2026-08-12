@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { CompanyEditor } from "@/components/CompanyEditor";
 
 type Props = {
@@ -16,23 +16,23 @@ export default function CompanySettingsPage({ params }: Props) {
 
   if (!Number.isFinite(companyId) || companyId <= 0) {
     return (
-      <AppShell variant="settings" activePath="/settings">
+      <RecruitingShell activePath="/settings" title="Настройки">
         <p className="warn">Некорректный id компании</p>
         <Link className="back" href="/settings">
           ← К настройкам
         </Link>
-      </AppShell>
+      </RecruitingShell>
     );
   }
 
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings/companies">
         ← К списку компаний
       </Link>
       <h1 className="page-title">{title}</h1>
       <p className="muted">Настройки компании: режим чатов, подразделения, Telegram.</p>
       <CompanyEditor companyId={companyId} onRenamed={setTitle} />
-    </AppShell>
+    </RecruitingShell>
   );
 }

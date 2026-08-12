@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { AppearanceSettings } from "@/components/AppearanceSettings";
 import { InfoTip } from "@/components/InfoTip";
 
 export default function AppearanceSettingsPage() {
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -17,6 +17,6 @@ export default function AppearanceSettingsPage() {
       </h1>
       <p className="muted">Тема оформления и размер шрифта.</p>
       <AppearanceSettings />
-    </AppShell>
+    </RecruitingShell>
   );
 }

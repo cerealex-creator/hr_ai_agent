@@ -211,6 +211,62 @@ class DiskApiError(RuntimeError):
     pass
 
 
+def parse_yadisk_app_path(url: str) -> str | None:
+    """yadisk-app:/HR_…/file.pdf → абсолютный путь на Диске."""
+    text = (url or "").strip()
+    if not text.lower().startswith("yadisk-app:"):
+        return None
+    path = text.split(":", 1)[1].strip()
+    if not path:
+        return None
+    return path if path.startswith("/") else f"/{path}"
+
+
+def download_disk_path_bytes(path: str, *, token: str | None = None) -> bytes:
+    """Скачать файл по пути на подключённом Яндекс.Диске (OAuth)."""
+    tok = (token or get_disk_token()).strip()
+    if not tok:
+        raise DiskApiError(
+            "Яндекс.Диск не подключён — подключите в Настройках или задайте YANDEX_DISK_OAUTH_TOKEN"
+        )
+    meta = _api_get(f"{DISK_API}/resources/download", tok, {"path": path})
+    href = str(meta.get("href") or "").strip()
+    if not href:
+        raise DiskApiError("Нет ссылки на скачивание с Диска")
+    resp = requests.get(href, timeout=120)
+    if resp.status_code >= 400:
+        raise DiskApiError(f"Скачивание с Диска: HTTP {resp.status_code}")
+    return resp.content
+
+
+def public_url_for_app_link(url_or_path: str, *, token: str | None = None) -> str:
+    """
+    yadisk-app:/… или путь на Диске → публичный https URL для заказчика.
+    Если файл ещё не опубликован — публикуем через OAuth.
+    """
+    path = parse_yadisk_app_path(url_or_path)
+    if not path:
+        text = (url_or_path or "").strip()
+        if text.startswith("/"):
+            path = text
+        else:
+            return ""
+    tok = (token or get_disk_token()).strip()
+    if not tok:
+        return ""
+    try:
+        meta = _api_get(f"{DISK_API}/resources", tok, {"path": path})
+        public = str(meta.get("public_url") or "").strip()
+        if public.startswith("http"):
+            return public
+        _api_put_publish(path, tok)
+        meta = _api_get(f"{DISK_API}/resources", tok, {"path": path})
+        public = str(meta.get("public_url") or "").strip()
+        return public if public.startswith("http") else ""
+    except DiskApiError:
+        return ""
+
+
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"OAuth {token}", "Accept": "application/json"}
 

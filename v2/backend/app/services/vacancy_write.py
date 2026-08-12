@@ -132,6 +132,9 @@ def create_vacancy(
         },
         "stage_schema": default_stage_schema(),
     }
+    from app.services.vacancy_avatar import infer_avatar_key, normalize_avatar_key
+
+    payload["avatar_key"] = infer_avatar_key(title)
 
     if source_vacancy_id is not None:
         source = db.get(models.Vacancy, int(source_vacancy_id))
@@ -143,6 +146,11 @@ def create_vacancy(
         payload["show_portfolio_field"] = bool(src_p.get("show_portfolio_field"))
         payload["control_word_enabled"] = bool(src_p.get("control_word_enabled"))
         payload["control_word"] = str(src_p.get("control_word") or "")
+        src_avatar = normalize_avatar_key(src_p.get("avatar_key"))
+        if src_avatar:
+            payload["avatar_key"] = src_avatar
+        else:
+            payload["avatar_key"] = infer_avatar_key(title)
         yandex = src_p.get("yandex_disk")
         if isinstance(yandex, dict):
             yd = copy.deepcopy(yandex)

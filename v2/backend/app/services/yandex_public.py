@@ -38,9 +38,19 @@ def yandex_public_view_url(root_url: str, path: str) -> str:
 
 
 def yandex_link_for_display(url: str) -> str:
+    """Convert stored resume/video links to a client-openable https URL when possible."""
     url = (url or "").strip()
     if not url:
         return ""
+    # Inbox / OAuth paths are not valid Telegram/Bitrix hyperlinks.
+    if url.lower().startswith("yadisk-app:") or (
+        url.startswith("/") and not url.startswith("//")
+    ):
+        from app.services.yandex_disk_oauth import public_url_for_app_link
+
+        return public_url_for_app_link(url)
+    if url.startswith(("http://", "https://")):
+        return url
     root, path = parse_yandex_link(url)
     if not root:
         return url

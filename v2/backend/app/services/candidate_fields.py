@@ -5,6 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 
+def normalize_gender(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+    if text in ("male", "m", "муж", "мужской", "man"):
+        return "male"
+    if text in ("female", "f", "жен", "женский", "woman"):
+        return "female"
+    return None
+
+
 def payload_get(payload: dict | None, *keys: str) -> Any:
     if not payload:
         return None
@@ -40,6 +53,13 @@ def candidate_public_fields(payload: dict | None) -> dict[str, Any]:
         "task_link": payload_get(p, "task_link"),
         "hr_comment": payload_get(p, "hr_comment"),
         "transcript": payload_get(p, "transcript"),
+        "interview_digest": (
+            (lambda d: d)(
+                __import__(
+                    "app.services.interview_digest", fromlist=["digest_for_api"]
+                ).digest_for_api(p)
+            )
+        ),
         "interview_eval_notes": payload_get(p, "interview_eval_notes"),
         "questionnaire_recruiter_notes": payload_get(p, "questionnaire_recruiter_notes"),
         "client_comment": payload_get(p, "client_comment"),
@@ -59,5 +79,7 @@ def candidate_public_fields(payload: dict | None) -> dict[str, Any]:
         "control_word_note": payload_get(p, "control_word_note"),
         "office_interview_date": payload_get(p, "office_interview_date"),
         "office_interview_time": payload_get(p, "office_interview_time"),
+        "photo_url": payload_get(p, "photo_url"),
+        "gender": normalize_gender(payload_get(p, "gender", "sex")),
         "hh_resume_id": payload_get(p, "hh_resume_id"),
     }

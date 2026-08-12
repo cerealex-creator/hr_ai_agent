@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { OwnerOnly } from "@/components/AuthGate";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { type ClientItem, apiFetch } from "@/lib/api";
@@ -102,7 +102,7 @@ export default function TelegramSettingsPage() {
 
   return (
     <OwnerOnly>
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -501,7 +501,7 @@ export default function TelegramSettingsPage() {
           </button>
         </div>
       </CollapsibleCard>
-    </AppShell>
+    </RecruitingShell>
     </OwnerOnly>
   );
 }

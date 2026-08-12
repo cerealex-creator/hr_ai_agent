@@ -70,6 +70,8 @@ from app.schemas import (
     HhEfficiencyStatsOut,
     ActivityStatsOut,
     DashboardStatsOut,
+    StatsAiBriefIn,
+    StatsAiBriefOut,
     HealthOut,
     HhSearchCriteriaIn,
     HhPresetIn,
@@ -309,10 +311,12 @@ def activity_stats(
 @router.get("/stats/dashboard", response_model=DashboardStatsOut)
 def dashboard_stats(
     mode: str = Query(default="operational"),
-    period: str = Query(default="week"),
+    period: str = Query(default="day"),
     client_id: int | None = Query(default=None),
     vacancy_id: int | None = Query(default=None),
     active_vacancies_only: bool = Query(default=True),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
     db: Session = Depends(get_db),
 ) -> DashboardStatsOut:
     from app.services.stats_service import (
@@ -327,7 +331,7 @@ def dashboard_stats(
             status_code=400,
             detail=f"mode: {', '.join(sorted(DASHBOARD_MODES))}",
         )
-    if period not in DASHBOARD_PERIODS:
+    if not date_from and not date_to and period not in DASHBOARD_PERIODS:
         raise HTTPException(
             status_code=400,
             detail=f"period: {', '.join(sorted(DASHBOARD_PERIODS))}",
@@ -341,10 +345,43 @@ def dashboard_stats(
             vacancy_id=vacancy_id,
             active_vacancies_only=active_vacancies_only,
             organization_id=require_org_id(),
+            date_from=date_from,
+            date_to=date_to,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DashboardStatsOut.model_validate(data)
+
+
+@router.post("/stats/ai-brief", response_model=StatsAiBriefOut)
+def stats_ai_brief(body: StatsAiBriefIn, db: Session = Depends(get_db)) -> StatsAiBriefOut:
+    from app.services.stats_ai_brief import generate_stats_ai_brief
+    from app.services.stats_service import DASHBOARD_PERIODS
+    from app.services.tenancy import require_org_id
+
+    period = (body.period or "day").strip() or "day"
+    if not body.date_from and not body.date_to and period not in DASHBOARD_PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"period: {', '.join(sorted(DASHBOARD_PERIODS))}",
+        )
+    try:
+        data = generate_stats_ai_brief(
+            db,
+            prompt=body.prompt,
+            client_id=body.client_id,
+            vacancy_id=body.vacancy_id,
+            period=period,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            active_vacancies_only=body.active_vacancies_only,
+            organization_id=require_org_id(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return StatsAiBriefOut.model_validate(data)
 
 
 @router.get("/history", response_model=list[DocumentGenerationOut])

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { apiGet, type HistoryItem } from "@/lib/api";
 import { formatLegacyStamp } from "@/lib/dates";
 
@@ -14,7 +14,8 @@ export default async function HistoryPage() {
   }
 
   return (
-    <AppShell activePath="/history">
+    <RecruitingShell activePath="/history">
+      <div className="rec-card">
       <h1 className="page-title">История документов</h1>
       <p className="muted">Сохранённые версии пакетов документов по вакансиям.</p>
       {error ? <p className="warn">{error}</p> : null}
@@ -47,6 +48,7 @@ export default async function HistoryPage() {
           ) : null}
         </tbody>
       </table>
-    </AppShell>
+      </div>
+    </RecruitingShell>
   );
 }

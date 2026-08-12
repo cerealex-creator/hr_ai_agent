@@ -1,13 +1,16 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { AddCandidateForm } from "@/components/AddCandidateForm";
+import { CandidateCompactRow } from "@/components/CandidateCompactRow";
 import { DocumentsEditor } from "@/components/DocumentsEditor";
 import { HhSearchPanel } from "@/components/HhSearchPanel";
 import { YandexDiskPanel } from "@/components/YandexDiskPanel";
 import { VacancyTitleEditor } from "@/components/VacancyTitleEditor";
 import { VacancyDigestButton } from "@/components/VacancyDigestButton";
+import { VacancyCloseButton } from "@/components/VacancyCloseButton";
 import { VacancyLifecycle } from "@/components/VacancyLifecycle";
 import { VacancySettingsPanel } from "@/components/VacancySettingsPanel";
+import { VacancyAvatar } from "@/components/VacancyAvatar";
 import {
   apiGet,
   docLabel,
@@ -16,8 +19,6 @@ import {
   type VacancyDetail,
 } from "@/lib/api";
 import { daysBetween, daysLabel, formatDateRu } from "@/lib/dates";
-import { clientStatusLabelForCard } from "@/lib/labels";
-import { StageMarker } from "@/components/StageMarker";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -32,6 +33,8 @@ type YandexDiskConfig = {
   last_sync_at: string | null;
   seen_count: number;
 };
+
+type VacView = "candidates" | "docs" | "hh" | "disk" | "settings";
 
 export default async function VacancyPage({ params, searchParams }: Props) {
   const { id } = await params;
@@ -61,7 +64,6 @@ export default async function VacancyPage({ params, searchParams }: Props) {
       };
     }
   } catch {
-    // If settings unavailable — keep legacy behaviour (HH search stays visible).
     hhSearchEnabled = true;
     intake = {
       manual: true,
@@ -72,15 +74,17 @@ export default async function VacancyPage({ params, searchParams }: Props) {
     };
   }
 
-  const viewFromSection =
+  const viewFromSection: VacView =
     section === "docs"
       ? "docs"
       : section === "hh"
         ? "hh"
         : section === "disk"
           ? "disk"
-          : "candidates";
-  let view = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
+          : section === "settings"
+            ? "settings"
+            : "candidates";
+  let view: VacView = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
   if (view === "disk" && !intake.disk_public_sync) {
     view = "candidates";
   }
@@ -115,76 +119,87 @@ export default async function VacancyPage({ params, searchParams }: Props) {
     ? daysBetween(vacancy.created_at, vacancy.active ? null : vacancy.closed_at)
     : null;
   const docKeys = vacancy?.document_keys?.length ? vacancy.document_keys : [];
+  const candCount = vacancy?.candidates_count ?? candidates.length;
+  const isWarranty = (vacancy?.payload || {}).search_mode === "warranty";
+  const isTest = Boolean((vacancy?.payload || {}).is_test);
 
   return (
-    <AppShell activePath="/vacancies">
+    <RecruitingShell activePath="/vacancies" title={vacancy?.title || "Вакансия"}>
       <Link
-        className="back"
+        className="rec-back"
         href={vacancy?.active === false ? "/vacancies?tab=archive" : "/vacancies?tab=active"}
       >
         ← К списку вакансий
       </Link>
       {error ? <p className="warn">{error}</p> : null}
+
       {vacancy ? (
         <>
-          <VacancyTitleEditor
-            vacancyId={vacancy.id}
-            title={vacancy.title}
-            searchModeWarranty={(vacancy.payload || {}).search_mode === "warranty"}
-            isTest={Boolean((vacancy.payload || {}).is_test)}
-          />
-          <p className="muted">
-            {vacancy.client_name || "без клиента"} · #{vacancy.id}
-          </p>
-
-          <div className="meta-grid">
-            <div className="meta-item">
-              <span>Состояние</span>
-              <strong>{vacancy.active ? "В работе" : "Архив"}</strong>
-            </div>
-            <div className="meta-item">
-              <span>{vacancy.active ? "Старт" : "Период"}</span>
-              <strong>
-                {vacancy.active
-                  ? `с ${formatDateRu(vacancy.created_at)}`
-                  : `${formatDateRu(vacancy.created_at)} — ${formatDateRu(vacancy.closed_at)}`}
-              </strong>
-            </div>
-            <div className="meta-item">
-              <span>Длительность</span>
-              <strong>{daysLabel(days)}</strong>
-            </div>
-            {!vacancy.active ? (
-              <div className="meta-item">
-                <span>Исход</span>
-                <strong>
-                  <span className={`outcome outcome-${vacancy.outcome || "none"}`}>
+          <div className="rec-card vac-head">
+            <div className="vac-head-main">
+              <div className="vac-head-title-row">
+                <VacancyAvatar
+                  avatarKey={vacancy.avatar_key || (vacancy.payload as { avatar_key?: string })?.avatar_key}
+                  size={48}
+                />
+                <VacancyTitleEditor
+                  vacancyId={vacancy.id}
+                  title={vacancy.title}
+                  searchModeWarranty={isWarranty}
+                  isTest={isTest}
+                />
+              </div>
+              <p className="vac-head-meta">
+                {[
+                  vacancy.client_name || "без клиента",
+                  `#${vacancy.id}`,
+                  vacancy.active ? "В работе" : "Архив",
+                  daysLabel(days),
+                ].join(" · ")}
+              </p>
+              <div className="vac-head-chips">
+                <span className="cand-workspace-badge">
+                  {candCount}{" "}
+                  {candCount === 1 ? "кандидат" : candCount < 5 ? "кандидата" : "кандидатов"}
+                </span>
+                <span className="cand-workspace-badge">
+                  {docKeys.length
+                    ? `${docKeys.length} док. · ${docKeys.map(docLabel).join(", ")}`
+                    : "нет документов"}
+                </span>
+                {vacancy.active ? (
+                  <span className="cand-workspace-badge is-accent">
+                    с {formatDateRu(vacancy.created_at)}
+                  </span>
+                ) : (
+                  <span className="cand-workspace-badge">
+                    {formatDateRu(vacancy.created_at)} — {formatDateRu(vacancy.closed_at)}
+                    {" · "}
                     {outcomeLabel(vacancy.outcome)}
                   </span>
-                </strong>
+                )}
               </div>
-            ) : null}
-            <div className="meta-item">
-              <span>Кандидаты</span>
-              <strong>{vacancy.candidates_count ?? candidates.length}</strong>
             </div>
-            <div className="meta-item">
-              <span>Документы</span>
-              <strong>{docKeys.length ? docKeys.map(docLabel).join(", ") : "нет"}</strong>
+            <div className="vac-head-actions">
+              <VacancyCloseButton vacancy={vacancy} />
             </div>
           </div>
 
-          <div className="tabs" role="tablist">
+          <nav className="cand-tabs" role="tablist" aria-label="Разделы вакансии">
             <Link
               href={`/vacancies/${id}?section=candidates`}
-              className={view === "candidates" ? "tab tab-active" : "tab"}
+              className={`cand-tab${view === "candidates" ? " is-active" : ""}`}
+              role="tab"
+              aria-selected={view === "candidates"}
             >
               Кандидаты
               <span className="tab-count">{candidates.length}</span>
             </Link>
             <Link
               href={`/vacancies/${id}?section=docs`}
-              className={view === "docs" ? "tab tab-active" : "tab"}
+              className={`cand-tab${view === "docs" ? " is-active" : ""}`}
+              role="tab"
+              aria-selected={view === "docs"}
             >
               Документы
               <span className="tab-count">{docKeys.length}</span>
@@ -192,7 +207,9 @@ export default async function VacancyPage({ params, searchParams }: Props) {
             {hhSearchEnabled ? (
               <Link
                 href={`/vacancies/${id}?section=hh`}
-                className={view === "hh" ? "tab tab-active" : "tab"}
+                className={`cand-tab${view === "hh" ? " is-active" : ""}`}
+                role="tab"
+                aria-selected={view === "hh"}
               >
                 Поиск HH
               </Link>
@@ -200,55 +217,48 @@ export default async function VacancyPage({ params, searchParams }: Props) {
             {intake.disk_public_sync ? (
               <Link
                 href={`/vacancies/${id}?section=disk`}
-                className={view === "disk" ? "tab tab-active" : "tab"}
+                className={`cand-tab${view === "disk" ? " is-active" : ""}`}
+                role="tab"
+                aria-selected={view === "disk"}
               >
                 Я.Диск
               </Link>
             ) : null}
-          </div>
+            <Link
+              href={`/vacancies/${id}?section=settings`}
+              className={`cand-tab${view === "settings" ? " is-active" : ""}`}
+              role="tab"
+              aria-selected={view === "settings"}
+            >
+              Настройки
+            </Link>
+          </nav>
 
           {view === "candidates" ? (
-            <>
+            <div className="rec-card">
               <AddCandidateForm vacancyId={vacancy.id} intake={intake} />
-              <table>
-                <thead>
-                  <tr>
-                    <th>Имя</th>
-                    <th>HR-этап</th>
-                    <th>Оценка заказчика</th>
-                    <th>Город</th>
-                    <th>Телефон</th>
-                  </tr>
-                </thead>
-                <tbody>
+              {candidates.length ? (
+                <div className="vac-cand-list">
                   {candidates.map((c) => (
-                    <tr key={c.id}>
-                      <td>
-                        <Link href={`/candidates/${c.id}`}>{c.name || "—"}</Link>
-                      </td>
-                      <td>
-                        <StageMarker stage={c.hr_stage} />
-                      </td>
-                      <td>{clientStatusLabelForCard(c.hr_stage, c.client_status)}</td>
-                      <td>{c.city || "—"}</td>
-                      <td>{c.phone || "—"}</td>
-                    </tr>
+                    <CandidateCompactRow
+                      key={c.id}
+                      candidate={c}
+                      subtitle={[c.city, c.phone].filter(Boolean).join(" · ") || "—"}
+                      compact
+                    />
                   ))}
-                  {!candidates.length ? (
-                    <tr>
-                      <td colSpan={5}>Нет кандидатов</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </>
+                </div>
+              ) : (
+                <p className="rec-empty">Нет кандидатов по этой вакансии</p>
+              )}
+            </div>
           ) : null}
 
           {view === "docs" ? (
-            <>
+            <div className="rec-card">
               {candidate ? (
                 <p style={{ marginTop: 0 }}>
-                  <Link className="back" href={`/candidates/${candidate}#questionnaire-settings`}>
+                  <Link className="rec-back" href={`/candidates/${candidate}#questionnaire-settings`}>
                     ← К настройкам кандидата
                   </Link>
                 </p>
@@ -258,25 +268,36 @@ export default async function VacancyPage({ params, searchParams }: Props) {
                 vacancyTitle={vacancy.title || ""}
                 initialDocuments={vacancy.documents || {}}
               />
-            </>
+            </div>
           ) : null}
 
-          {view === "hh" ? <HhSearchPanel vacancyId={vacancy.id} /> : null}
+          {view === "hh" ? (
+            <div className="rec-card">
+              <HhSearchPanel vacancyId={vacancy.id} />
+            </div>
+          ) : null}
 
           {view === "disk" && diskConfig ? (
-            <YandexDiskPanel vacancyId={vacancy.id} initial={diskConfig} />
+            <div className="rec-card">
+              <YandexDiskPanel vacancyId={vacancy.id} initial={diskConfig} />
+            </div>
           ) : null}
 
-          <div className="vacancy-bottom-blocks">
-            <VacancyDigestButton
-              vacancyId={vacancy.id}
-              hasChatId={Boolean((vacancy.chat_id || "").trim())}
-            />
-            <VacancySettingsPanel vacancy={vacancy} />
-            <VacancyLifecycle vacancy={vacancy} />
-          </div>
+          {view === "settings" ? (
+            <div className="vac-settings-stack">
+              <div className="rec-card">
+                <h3 className="rec-card-title">Сводка</h3>
+                <VacancyDigestButton
+                  vacancyId={vacancy.id}
+                  hasChatId={Boolean((vacancy.chat_id || "").trim())}
+                />
+              </div>
+              <VacancySettingsPanel vacancy={vacancy} />
+              <VacancyLifecycle vacancy={vacancy} />
+            </div>
+          ) : null}
         </>
       ) : null}
-    </AppShell>
+    </RecruitingShell>
   );
 }

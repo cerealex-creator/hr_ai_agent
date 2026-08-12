@@ -102,6 +102,7 @@ from app.schemas import (
     YandexDiskSyncOut,
     VacancySettingsPatchIn,
     WarrantyApplyIn,
+    OfferTemplateInfoOut,
     AppSettingsPatchIn,
     OauthTokenIn,
     InboxProcessIn,
@@ -283,6 +284,36 @@ def patch_settings_app(
     )
     out["is_platform_owner"] = owner
     return out
+
+
+@router.get("/settings/offer-template", response_model=OfferTemplateInfoOut)
+def get_offer_template_info(_user: AuthUser = Depends(require_auth)) -> OfferTemplateInfoOut:
+    from app.services.offer_docx import offer_template_info
+
+    return OfferTemplateInfoOut.model_validate(offer_template_info())
+
+
+@router.post("/settings/offer-template", response_model=OfferTemplateInfoOut)
+async def upload_offer_template(
+    file: UploadFile = File(...),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> OfferTemplateInfoOut:
+    from app.services.offer_docx import offer_template_info, save_custom_offer_template
+
+    raw = await file.read()
+    try:
+        save_custom_offer_template(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return OfferTemplateInfoOut.model_validate(offer_template_info())
+
+
+@router.delete("/settings/offer-template", response_model=OfferTemplateInfoOut)
+def delete_offer_template(_user: AuthUser = Depends(require_platform_owner)) -> OfferTemplateInfoOut:
+    from app.services.offer_docx import clear_custom_offer_template, offer_template_info
+
+    clear_custom_offer_template()
+    return OfferTemplateInfoOut.model_validate(offer_template_info())
 
 
 @router.post("/settings/bitrix/test-task")

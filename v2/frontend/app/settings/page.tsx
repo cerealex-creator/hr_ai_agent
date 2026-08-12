@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { useAuth } from "@/components/AuthGate";
 import { apiFetch } from "@/lib/api";
 import { companyModeLabel, type CompanyNode } from "@/lib/companies";
@@ -245,12 +245,13 @@ export default function SettingsHubPage() {
   const visible = cards.filter((c) => !c.ownerOnly || isOwner);
 
   return (
-    <AppShell variant="settings" activePath="/settings">
-      <h1 className="page-title">Настройки</h1>
-      <p className="muted">Выберите раздел. Детали открываются на отдельных страницах.</p>
-      <div className="hub-grid settings-hub">
+    <RecruitingShell activePath="/settings" title="Настройки">
+      <p className="muted" style={{ marginTop: 0 }}>
+        Выберите раздел. Детали открываются на отдельных страницах.
+      </p>
+      <div className="hub-grid settings-hub rec-settings-hub">
         {visible.map((card) => (
-          <Link key={card.href} href={card.href} className="hub-card">
+          <Link key={card.href} href={card.href} className="hub-card rec-settings-card">
             <h2>{card.title}</h2>
             {card.special === "candidate-intake" ? (
               <ul className="hub-intake-list">
@@ -343,6 +344,6 @@ export default function SettingsHubPage() {
           </Link>
         ))}
       </div>
-    </AppShell>
+    </RecruitingShell>
   );
 }

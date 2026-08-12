@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { OwnerOnly } from "@/components/AuthGate";
 import { apiFetch } from "@/lib/api";
 
@@ -75,7 +75,7 @@ export default function FunctionsSettingsPage() {
 
   return (
     <OwnerOnly>
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -105,7 +105,7 @@ export default function FunctionsSettingsPage() {
           </label>
         </section>
       )}
-    </AppShell>
+    </RecruitingShell>
     </OwnerOnly>
   );
 }

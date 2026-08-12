@@ -11,7 +11,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.config import Settings, get_settings
 from app.db import models
 from app.services.ai_json import chat_json
-from app.services.pdf_extract import fetch_resume_text_from_url
+from app.services.candidate_fields import normalize_gender
 from app.services.vacancy_docs import extract_profile_text
 
 RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из текста резюме поля карточки кандидата.
@@ -23,6 +23,7 @@ RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из �
   "age": "возраст числом или пусто",
   "city": "город или пусто",
   "metro": "метро или пусто",
+  "gender": "male или female, если явно указано в резюме, иначе null",
   "salary": "ожидания по ЗП текстом или пусто"
 }
 Не выдумывай данные, которых нет в резюме. Если ФИО нет — full_name: \"Нет информации\"."""
@@ -133,6 +134,7 @@ def extract_fields_from_resume(resume_text: str, settings: Settings) -> dict[str
         "city": str(data.get("city") or "").strip(),
         "metro": str(data.get("metro") or "").strip(),
         "salary_expected": str(data.get("salary") or "").strip(),
+        "gender": normalize_gender(data.get("gender")),
     }
 
 
@@ -195,9 +197,14 @@ def apply_extract_to_candidate(candidate: models.Candidate, fields: dict[str, An
     elif not (candidate.name or "").strip() or candidate.name.startswith("HH ·"):
         if name:
             candidate.name = name
-    for key in ("phone", "email", "age", "city", "metro", "salary_expected"):
+    for key in ("phone", "email", "age", "city", "metro", "salary_expected", "gender"):
         val = fields.get(key)
         if val is None:
+            continue
+        if key == "gender":
+            g = normalize_gender(val)
+            if g:
+                payload[key] = g
             continue
         text = str(val).strip()
         if text:
@@ -286,6 +293,18 @@ def evaluate_candidate_resume(
         questionnaire_count = len(get_candidate_questionnaire(candidate))
     db.commit()
     db.refresh(candidate)
+    if not str((candidate.payload or {}).get("photo_url") or "").strip():
+        link = str((candidate.payload or {}).get("resume_link") or "").strip()
+        if link:
+            try:
+                from app.services.pdf_extract import download_url_bytes
+                from app.services.candidate_photo import try_attach_candidate_photo
+
+                blob = download_url_bytes(link)
+                if blob.lstrip().startswith(b"%PDF"):
+                    try_attach_candidate_photo(db, candidate, pdf_bytes=blob)
+            except Exception:  # noqa: BLE001
+                pass
     return {
         "ok": True,
         "ai_score": ev.get("ai_score"),
@@ -347,6 +366,17 @@ def bulk_add_from_resume_links(
         flag_modified(cand, "payload")
         db.commit()
         db.refresh(cand)
+
+        if not (cand.payload or {}).get("photo_url"):
+            from app.services.pdf_extract import download_url_bytes
+            from app.services.candidate_photo import try_attach_candidate_photo
+
+            try:
+                blob = download_url_bytes(link)
+                if blob.lstrip().startswith(b"%PDF"):
+                    try_attach_candidate_photo(db, cand, pdf_bytes=blob)
+            except Exception:  # noqa: BLE001
+                pass
 
         if evaluate and text:
             try:
@@ -429,6 +459,11 @@ def add_candidate_from_resume_file(
     flag_modified(cand, "payload")
     db.commit()
     db.refresh(cand)
+
+    if ext.lower() == ".pdf":
+        from app.services.candidate_photo import try_attach_candidate_photo
+
+        try_attach_candidate_photo(db, cand, pdf_bytes=content)
 
     messages: list[str] = []
     if evaluate and text.strip():

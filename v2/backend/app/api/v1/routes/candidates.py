@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,9 @@ from app.schemas import (
     CandidateListItem,
     CandidatePatchIn,
     CandidateStageIn,
+    CandidateOfferDraftIn,
+    CandidateOfferDraftOut,
+    CompanyOfferLogoIn,
     CandidateSendToChatIn,
     CandidateSendToChatOut,
     CandidateEvaluateOut,
@@ -210,6 +214,165 @@ def get_candidate(candidate_id: str, db: Session = Depends(get_db)) -> Candidate
     candidate = get_candidate_or_404(db, cid)
     return _candidate_detail(db, candidate)
 
+
+@router.get("/candidates/{candidate_id}/offer.docx")
+def download_candidate_offer(candidate_id: str, db: Session = Depends(get_db)) -> Response:
+    from uuid import UUID
+
+    from app.services.offer_docx import attachment_content_disposition, generate_candidate_offer_docx
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    try:
+        data, filename = generate_candidate_offer_docx(db, candidate, settings=get_settings())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Не удалось собрать Word: {exc}") from exc
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": attachment_content_disposition(filename)},
+    )
+
+
+def _offer_out(db: Session, candidate: models.Candidate, draft: dict) -> CandidateOfferDraftOut:
+    from app.services.offer_draft import OFFER_KEYS, company_logo_data_url, resolve_company_client
+
+    vacancy = db.get(models.Vacancy, candidate.vacancy_id)
+    company = resolve_company_client(db, vacancy)
+    payload = {k: str(draft.get(k) or "") for k in OFFER_KEYS}
+    return CandidateOfferDraftOut(
+        **payload,
+        logo_data_url=company_logo_data_url(db, vacancy),
+        company_client_id=int(company.id) if company else None,
+    )
+
+
+@router.get("/candidates/{candidate_id}/offer", response_model=CandidateOfferDraftOut)
+def get_candidate_offer(candidate_id: str, db: Session = Depends(get_db)) -> CandidateOfferDraftOut:
+    from uuid import UUID
+
+    from app.services.offer_draft import get_offer_draft, prefill_offer_draft
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    draft = get_offer_draft(candidate)
+    if not any(draft.values()):
+        draft = prefill_offer_draft(db, candidate)
+    return _offer_out(db, candidate, draft)
+
+
+@router.put("/candidates/{candidate_id}/offer", response_model=CandidateOfferDraftOut)
+def put_candidate_offer(
+    candidate_id: str,
+    body: CandidateOfferDraftIn,
+    db: Session = Depends(get_db),
+) -> CandidateOfferDraftOut:
+    from uuid import UUID
+
+    from app.services.offer_draft import save_offer_draft
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    draft = save_offer_draft(db, candidate, body.model_dump(exclude_unset=True))
+    return _offer_out(db, candidate, draft)
+
+
+@router.post("/candidates/{candidate_id}/offer/prefill", response_model=CandidateOfferDraftOut)
+def prefill_candidate_offer(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> CandidateOfferDraftOut:
+    from uuid import UUID
+
+    from app.services.offer_draft import prefill_offer_draft, save_offer_draft
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    draft = prefill_offer_draft(db, candidate)
+    draft = save_offer_draft(db, candidate, draft)
+    return _offer_out(db, candidate, draft)
+
+
+@router.post("/candidates/{candidate_id}/offer/ai-fill", response_model=CandidateOfferDraftOut)
+def ai_fill_candidate_offer(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> CandidateOfferDraftOut:
+    from uuid import UUID
+
+    from app.services.offer_draft import ai_fill_offer_fields
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    try:
+        draft = ai_fill_offer_fields(db, candidate, settings=get_settings())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Не удалось дописать оффер ИИ: {exc}",
+        ) from exc
+    return _offer_out(db, candidate, draft)
+
+
+@router.patch("/clients/{client_id}/offer-branding", response_model=ClientOut)
+def patch_client_offer_branding(
+    client_id: int,
+    body: CompanyOfferLogoIn,
+    db: Session = Depends(get_db),
+) -> ClientOut:
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.tenancy import get_client_or_404
+
+    client = get_client_or_404(db, client_id)
+    payload = dict(client.payload or {})
+    data = body.model_dump(exclude_unset=True)
+    if "logo_data_url" in data:
+        logo = data.get("logo_data_url")
+        if logo is None or str(logo).strip() == "":
+            payload.pop("offer_logo_data_url", None)
+        else:
+            s = str(logo).strip()
+            if len(s) > 2_000_000:
+                raise HTTPException(status_code=400, detail="Логотип слишком большой (макс. ~1.5 МБ)")
+            if not s.startswith("data:image/"):
+                raise HTTPException(status_code=400, detail="Нужен data URL изображения")
+            payload["offer_logo_data_url"] = s
+    if "office_address" in data and data.get("office_address") is not None:
+        payload["office_address"] = str(data.get("office_address") or "").strip()
+    if "offer_manager_name" in data and data.get("offer_manager_name") is not None:
+        payload["offer_manager_name"] = str(data.get("offer_manager_name") or "").strip()
+    if "default_work_schedule" in data and data.get("default_work_schedule") is not None:
+        payload["default_work_schedule"] = str(data.get("default_work_schedule") or "").strip()
+    client.payload = payload
+    flag_modified(client, "payload")
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return ClientOut.model_validate(client)
+
+
 @router.patch("/candidates/{candidate_id}", response_model=CandidateDetail)
 def patch_candidate_endpoint(
     candidate_id: str,
@@ -353,14 +516,13 @@ def delete_candidate_endpoint(candidate_id: str, db: Session = Depends(get_db)) 
 
 @router.post(
     "/candidates/{candidate_id}/evaluate-resume",
-    response_model=CandidateEvaluateOut,
+    response_model=JobCreateOut,
+    status_code=202,
 )
-def evaluate_candidate_resume_endpoint(
+async def evaluate_candidate_resume_endpoint(
     candidate_id: str,
     db: Session = Depends(get_db),
-) -> CandidateEvaluateOut:
-    from app.services.candidate_resume_eval import CandidateEvalError, evaluate_candidate_resume
-
+) -> JobCreateOut:
     try:
         from uuid import UUID
 
@@ -368,23 +530,45 @@ def evaluate_candidate_resume_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
     candidate = get_candidate_or_404(db, cid)
+    existing = job_svc.find_active_job_for_candidate(
+        db,
+        job_type="candidate_evaluate_resume",
+        candidate_id=str(candidate.id),
+    )
+    if existing:
+        return JobCreateOut(
+            id=existing.id,
+            status=existing.status,
+            job_type=existing.job_type,
+            reused=True,
+            progress_label=existing.progress_label,
+        )
+    job = job_svc.create_job_row(
+        db,
+        job_type="candidate_evaluate_resume",
+        vacancy_id=candidate.vacancy_id,
+        payload={
+            "candidate_id": str(candidate.id),
+            "candidate_name": candidate.name,
+        },
+    )
     try:
-        result = evaluate_candidate_resume(db, candidate, populate_fields=True)
-    except CandidateEvalError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        pool = await get_arq_pool()
+        await pool.enqueue_job("candidate_evaluate_resume", str(job.id), _job_id=str(job.id))
     except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    db.refresh(candidate)
-    return CandidateEvaluateOut(
-        ok=True,
-        ai_score=result.get("ai_score"),
-        extract_error=result.get("extract_error"),
-        profile_present=bool(result.get("profile_present")),
-        questionnaire_generated=bool(result.get("questionnaire_generated")),
-        questionnaire_count=int(result.get("questionnaire_count") or 0),
-        candidate=_candidate_detail(db, candidate),
+        job_svc.update_job(
+            db,
+            job.id,
+            status="failed",
+            progress_label="Не удалось поставить в очередь",
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail=f"Redis/ARQ unavailable: {exc}") from exc
+    return JobCreateOut(
+        id=job.id,
+        status=job.status,
+        job_type=job.job_type,
+        progress_label=job.progress_label or "Оценка резюме в очереди",
     )
 
 @router.post(

@@ -12,11 +12,21 @@ def _esc(text: Any) -> str:
     return html.escape(str(text or "").strip())
 
 
-def _link(url: str, label: str) -> str:
+def _client_https_url(url: str) -> str:
     from app.services.yandex_public import yandex_link_for_display
 
-    u = _esc(yandex_link_for_display(url) or url)
-    return f'<a href="{u}"><b>{_esc(label)}</b></a>'
+    display = (yandex_link_for_display(url) or "").strip()
+    if display.startswith(("http://", "https://")):
+        return display
+    return ""
+
+
+def _link(url: str, label: str) -> str | None:
+    """HTML <a> only when URL is openable by the client (https)."""
+    display = _client_https_url(url)
+    if not display:
+        return None
+    return f'<a href="{_esc(display)}"><b>{_esc(label)}</b></a>'
 
 
 def _format_label(remote: bool, office: bool) -> str:
@@ -62,6 +72,7 @@ def build_candidate_card_html(
     office_interview: bool = False,
     meeting_hr_confirmed: bool = False,
     interview_prompt: str | None = None,
+    interview_digest_url: str | None = None,
 ) -> str:
     lines = [
         "<b>🆕 Новый кандидат:</b>",
@@ -72,19 +83,29 @@ def build_candidate_card_html(
     ]
     resume = (resume_link or "").strip()
     hh = (hh_resume_link or "").strip()
-    if resume:
-        lines.extend(["", f"📄 {_link(resume, 'Резюме')}"])
-    elif hh:
-        lines.extend(["", f"📄 {_link(hh, 'Резюме HH')}"])
+    resume_row = _link(resume, "Резюме") if resume else None
+    if resume_row:
+        lines.extend(["", f"📄 {resume_row}"])
+    else:
+        hh_row = _link(hh, "Резюме HH") if hh else None
+        if hh_row:
+            lines.extend(["", f"📄 {hh_row}"])
+    digest_url = (interview_digest_url or "").strip()
+    digest_row = _link(digest_url, "Выжимка собеседования") if digest_url else None
+    if digest_row:
+        lines.extend(["", f"📝 {digest_row}"])
     video = (video_link or "").strip()
-    if video:
-        lines.extend(["", f"🎥 {_link(video, 'Запись собеседования')}"])
+    video_row = _link(video, "Запись собеседования") if video else None
+    if video_row:
+        lines.extend(["", f"🎥 {video_row}"])
     portfolio = (portfolio_link or "").strip()
-    if portfolio:
-        lines.extend(["", f"🎨 {_link(portfolio, 'Портфолио кандидата')}"])
+    portfolio_row = _link(portfolio, "Портфолио кандидата") if portfolio else None
+    if portfolio_row:
+        lines.extend(["", f"🎨 {portfolio_row}"])
     task = (task_link or "").strip()
-    if task:
-        lines.extend(["", f"✅ {_link(task, 'Выполненное задание')}"])
+    task_row = _link(task, "Выполненное задание") if task else None
+    if task_row:
+        lines.extend(["", f"✅ {task_row}"])
     comment = (hr_comment or "").strip()
     if comment:
         lines.extend(["", "<b>Комментарий HR:</b>", _esc(comment)])

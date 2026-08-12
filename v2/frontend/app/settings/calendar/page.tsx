@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { useAuth } from "@/components/AuthGate";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { InfoTip } from "@/components/InfoTip";
@@ -169,7 +169,7 @@ export default function CalendarSettingsPage() {
   const tgOn = Boolean(prefs?.telegram_enabled);
 
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -507,6 +507,6 @@ export default function CalendarSettingsPage() {
           Канал Max — в расширенной версии.
         </p>
       </CollapsibleCard>
-    </AppShell>
+    </RecruitingShell>
   );
 }

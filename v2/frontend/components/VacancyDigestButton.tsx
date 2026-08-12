@@ -37,7 +37,7 @@ export function VacancyDigestButton({ vacancyId, hasChatId }: Props) {
   };
 
   return (
-    <div style={{ margin: "0.75rem 0 1rem" }}>
+    <div>
       <ActionBanner msg={msg} err={err} />
       <button
         type="button"

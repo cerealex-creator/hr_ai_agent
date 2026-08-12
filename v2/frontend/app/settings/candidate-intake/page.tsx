@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { useAuth } from "@/components/AuthGate";
 import { YandexDiskConnectPanel } from "@/components/YandexDiskConnectPanel";
 import { YandexDiskInboxPanel } from "@/components/YandexDiskInboxPanel";
@@ -155,7 +155,7 @@ export default function CandidateIntakeSettingsPage() {
   };
 
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -226,6 +226,6 @@ export default function CandidateIntakeSettingsPage() {
           ) : null}
         </>
       )}
-    </AppShell>
+    </RecruitingShell>
   );
 }

@@ -85,7 +85,7 @@ export function VacancyTitleEditor({
   }
 
   return (
-    <h1 className="page-title">
+    <h1 className="vac-head-title">
       <button
         type="button"
         className="vacancy-title-btn"

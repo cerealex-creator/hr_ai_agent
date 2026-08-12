@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { CandidatesGroupedList } from "@/components/CandidatesGroupedList";
 import { CandidateSearchPanel } from "@/components/CandidateSearchPanel";
+import { RecruitingShell } from "@/components/RecruitingShell";
+import { RecruitingToolbar } from "@/components/RecruitingToolbar";
 import { apiGet, type CandidateListItem } from "@/lib/api";
-import { StageMarker } from "@/components/StageMarker";
+import { groupCandidatesByStage } from "@/lib/groupCandidates";
 import { clientStatusLabel, hrStageLabel } from "@/lib/labels";
 
 type Props = {
@@ -45,68 +47,6 @@ function statsBackHref(opts: {
   return q ? `/stats?${q}` : "/stats";
 }
 
-function formatLastContact(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
-  return d.toLocaleDateString("ru-RU");
-}
-
-function CandidatesTable({
-  rows,
-  error,
-  showReason,
-}: {
-  rows: CandidateListItem[];
-  error: string | null;
-  showReason?: boolean;
-}) {
-  const cols = showReason ? 8 : 7;
-  return (
-    <table>
-      <thead>
-        <tr>
-          <th>Имя</th>
-          <th>Вакансия</th>
-          <th>Клиент</th>
-          <th>HR-этап</th>
-          {showReason ? <th>Что сделать</th> : null}
-          <th>Оценка заказчика</th>
-          <th>Город</th>
-          <th>Последний контакт</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((c) => (
-          <tr key={c.id}>
-            <td>
-              <Link href={`/candidates/${c.id}`}>{c.name || "—"}</Link>
-            </td>
-            <td>
-              <Link href={`/vacancies/${c.vacancy_id}`}>
-                {c.vacancy_title || `#${c.vacancy_id}`}
-              </Link>
-            </td>
-            <td>{c.client_name || "—"}</td>
-            <td>
-              <StageMarker stage={c.hr_stage} />
-            </td>
-            {showReason ? <td>{c.attention_reason || "—"}</td> : null}
-            <td>{clientStatusLabel(c.client_status)}</td>
-            <td>{c.city || "—"}</td>
-            <td>{formatLastContact(c.last_contact_at)}</td>
-          </tr>
-        ))}
-        {!rows.length && !error ? (
-          <tr>
-            <td colSpan={cols}>Нет кандидатов в этой выборке</td>
-          </tr>
-        ) : null}
-      </tbody>
-    </table>
-  );
-}
-
 export default async function CandidatesListPage({ searchParams }: Props) {
   const sp = await searchParams;
   const clientId = sp.client && /^\d+$/.test(sp.client) ? Number(sp.client) : null;
@@ -127,68 +67,58 @@ export default async function CandidatesListPage({ searchParams }: Props) {
   if (preset) qs.set("preset", preset);
 
   let rows: CandidateListItem[] = [];
-  let attention: CandidateListItem[] = [];
   let error: string | null = null;
-  let attentionError: string | null = null;
 
-  if (hasFilters) {
-    try {
-      rows = await apiGet<CandidateListItem[]>(`/api/v1/candidates?${qs.toString()}`);
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Ошибка API";
-    }
-  } else {
-    try {
-      attention = await apiGet<CandidateListItem[]>(
-        "/api/v1/candidates?preset=attention&active_vacancies_only=true",
+  try {
+    if (hubMode) {
+      rows = await apiGet<CandidateListItem[]>(
+        "/api/v1/candidates?active_vacancies_only=true",
       );
-    } catch (e) {
-      attentionError = e instanceof Error ? e.message : "Ошибка API";
+    } else {
+      rows = await apiGet<CandidateListItem[]>(`/api/v1/candidates?${qs.toString()}`);
     }
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Ошибка API";
   }
 
+  const groups = groupCandidatesByStage(rows);
   const heading = titleFor({ hr_stage: hrStage, client_status: clientStatus, preset });
   const back = statsBackHref({ clientId, vacancyId, activeOnly });
+  const filterHref = hasFilters ? back : "/stats";
 
   return (
-    <AppShell activePath={hasFilters && preset !== "attention" ? "/stats" : "/candidates"}>
+    <RecruitingShell
+      activePath="/candidates"
+      title={hubMode ? "Кандидаты" : heading}
+      toolbar={<RecruitingToolbar filterHref={filterHref} />}
+    >
       {hasFilters && preset !== "attention" ? (
-        <Link className="back" href={back}>
+        <Link className="rec-back" href={back}>
           ← К статистике
         </Link>
       ) : null}
-      <h1 className="page-title">{hubMode ? "Кандидаты" : heading}</h1>
+
+      {!hubMode ? (
+        <p className="rec-empty" style={{ marginBottom: 16 }}>
+          {rows.length} {rows.length === 1 ? "кандидат" : "кандидатов"}
+          {activeOnly ? " · только вакансии в работе" : ""}
+        </p>
+      ) : null}
+
+      {error ? <p className="warn">{error}</p> : null}
+
+      <CandidatesGroupedList
+        groups={groups}
+        showAttentionReason={preset === "attention" || hubMode}
+        emptyMessage={error ? "Не удалось загрузить список" : "Нет кандидатов в этой выборке"}
+      />
 
       {hubMode ? (
-        <>
-          <section className="cand-attention-list">
-            <h2 style={{ fontSize: "1.15rem", margin: "0 0 0.35rem" }}>Требуют внимания</h2>
-            <p className="muted">
-              Активные вакансии · {attention.length}{" "}
-              {attention.length === 1 ? "кандидат" : "кандидатов"}
-            </p>
-            {attentionError ? <p className="warn">{attentionError}</p> : null}
-            <CandidatesTable rows={attention} error={attentionError} showReason />
-            <p className="muted" style={{ marginTop: "0.75rem" }}>
-              <Link href="/candidates?preset=attention&scope=active">Открыть полный inbox →</Link>
-            </p>
-          </section>
+        <section id="cand-search" className="rec-search-section">
+          <h2>Расширенный поиск</h2>
           <CandidateSearchPanel />
-        </>
-      ) : (
-        <>
-          <p className="muted">
-            {rows.length} {rows.length === 1 ? "кандидат" : "кандидатов"}
-            {activeOnly ? " · только вакансии в работе" : ""}
-          </p>
-          {error ? <p className="warn">{error}</p> : null}
-          <CandidatesTable
-            rows={rows}
-            error={error}
-            showReason={preset === "attention"}
-          />
-        </>
-      )}
-    </AppShell>
+        </section>
+      ) : null}
+    </RecruitingShell>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { Suspense } from "react";
 import { CandidateEditor } from "@/components/CandidateEditor";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { apiGet, type CandidateDetail } from "@/lib/api";
 
 type Props = { params: Promise<{ id: string }> };
@@ -17,18 +18,22 @@ export default async function CandidatePage({ params }: Props) {
   }
 
   return (
-    <AppShell variant="search" activePath="/candidates">
+    <RecruitingShell activePath="/candidates">
       {candidate ? (
-        <Link className="back" href={`/vacancies/${candidate.vacancy_id}?section=candidates`}>
+        <Link className="rec-back" href={`/vacancies/${candidate.vacancy_id}?section=candidates`}>
           ← К вакансии{candidate.vacancy_title ? `: ${candidate.vacancy_title}` : ""}
         </Link>
       ) : (
-        <Link className="back" href="/">
-          ← К вакансиям
+        <Link className="rec-back" href="/candidates">
+          ← К кандидатам
         </Link>
       )}
       {error ? <p className="warn">{error}</p> : null}
-      {candidate ? <CandidateEditor initial={candidate} /> : null}
-    </AppShell>
+      {candidate ? (
+        <Suspense fallback={<p className="muted">Загрузка…</p>}>
+          <CandidateEditor initial={candidate} />
+        </Suspense>
+      ) : null}
+    </RecruitingShell>
   );
 }

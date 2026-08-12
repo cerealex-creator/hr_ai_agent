@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { DocumentBlock } from "@/components/DocumentBlock";
 import { HistoryApplyButton } from "@/components/HistoryApplyButton";
 import { docLabel, apiGet, type HistoryDetail } from "@/lib/api";
@@ -25,7 +25,8 @@ export default async function HistoryDetailPage({ params }: Props) {
     : [];
 
   return (
-    <AppShell activePath="/history">
+    <RecruitingShell activePath="/history">
+      <div className="rec-card">
       <Link className="back" href="/history">
         ← К истории
       </Link>
@@ -53,6 +54,7 @@ export default async function HistoryDetailPage({ params }: Props) {
           </div>
         </>
       ) : null}
-    </AppShell>
+      </div>
+    </RecruitingShell>
   );
 }

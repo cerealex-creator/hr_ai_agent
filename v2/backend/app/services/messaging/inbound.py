@@ -327,6 +327,8 @@ def build_card_text(db: Session, candidate: models.Candidate, *, locked: bool) -
     fields = candidate_public_fields(candidate.payload)
     view = candidate_view_dict(candidate)
     status = candidate.client_status or "wait"
+    from app.services.interview_digest import interview_digest_public_url
+
     return build_candidate_card_html(
         name=candidate.name,
         vacancy_title=(vacancy.title if vacancy else "") or "",
@@ -336,6 +338,7 @@ def build_card_text(db: Session, candidate: models.Candidate, *, locked: bool) -
         portfolio_link=fields.get("portfolio_link"),
         task_link=fields.get("task_link"),
         hr_comment=fields.get("hr_comment") or (candidate.payload or {}).get("hr_comment"),
+        interview_digest_url=interview_digest_public_url(candidate.payload),
         locked=locked,
         status_key=status if locked else None,
         client_comment=view.get("client_comment"),

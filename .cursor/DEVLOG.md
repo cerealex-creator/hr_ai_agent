@@ -5,6 +5,573 @@
 
 ---
 
+## 2026-08-12 — Оффер: загрузка шаблона + история этапов rec-card
+
+**Тип:** `feature` + `ui`
+
+**Сделано:**
+- API `GET/POST/DELETE /settings/offer-template` — свой `.docx` в `data/offer_template.docx`.
+- UI в разделе «Оффер»: загрузка шаблона и возврат к встроенному.
+- «История этапов» на вкладке воронки — отдельный `rec-card`.
+
+**Файлы:** `offer_docx.py`, `settings.py`, `schemas.py`, `CandidateOfferPanel.tsx`, `CandidateEditor.tsx`, `OFFER_TEMPLATE.md`
+
+**Git:** коммит + push
+
+**Следующий шаг:**
+- Загрузить фирменный шаблон и проверить Word.
+
+---
+
+## 2026-08-12 — Оффер Word: маркеры условий и срок в месяцах
+
+**Тип:** `fix`
+
+**Сделано:**
+- Условия работы в Word — маркированный список с «•», как обязанности.
+- Испытательный срок: в поле только число (`3` → «3 месяца» в письме).
+
+**Файлы:** `offer_docx.py`, `offer_draft.py`, `CandidateOfferPanel.tsx`, `OFFER_TEMPLATE.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Скачать Word и проверить списки.
+
+---
+
+## 2026-08-12 — Скачивание оффера Word: кириллица в имени файла
+
+**Тип:** `fix`
+
+**Сделано:**
+- Ошибка 500 при «Скачать Word»: `Content-Disposition` с русским именем не кодировался в latin-1.
+- Добавлен `attachment_content_disposition`: ASCII fallback + `filename*=UTF-8''…`.
+
+**Файлы:** `offer_docx.py`, `candidates.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить скачивание в карточке кандидата.
+
+---
+
+## 2026-08-12 — Оффер ИИ: таймаут прокси Next
+
+**Тип:** `fix`
+
+**Сделано:**
+- `experimental.proxyTimeout: 180s` в `next.config.js` — «Дописать ИИ» больше не обрывается на 30 сек.
+- Понятный статус ожидания в UI; шире перехват ошибок API.
+
+**Файлы:** `next.config.js`, `CandidateOfferPanel.tsx`, `candidates.py`, `offer_draft.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перезапустить `npm run dev`, снова нажать «Дописать ИИ».
+
+---
+
+## 2026-08-12 — Раздел «Оффер» в карточке кандидата
+
+**Тип:** `feature`
+
+**Сделано:**
+- Вкладка «Оффер»: черновик полей (в т.ч. ЗП+премия на ИС и после), сохранение в `payload.offer`.
+- Кнопки: заполнить из данных, дописать ИИ (режим/обязанности), сохранить, скачать Word.
+- Логотип компании → `clients.payload.offer_logo_data_url`, в колонтитул Word.
+- Шаблон `app/assets/offer_template.docx` с плейсхолдерами под письмо.
+
+**Файлы:** `offer_draft.py`, `offer_docx.py`, `candidates.py`, `schemas.py`, `CandidateOfferPanel.tsx`, `CandidateEditor.tsx`, `OFFER_TEMPLATE.md`, `offer_template.docx`
+
+**Данные / конфиг:** `payload.offer`; `OFFER_TEMPLATE_PATH` (опц.)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить на кандидате: вкладка Оффер → заполнить → Word.
+
+---
+
+## 2026-08-12 — Макет раздела «Оффер»
+
+**Тип:** `ui` (макет)
+
+**Сделано:**
+- Страница-макет `/design-preview/offer`: вкладка «Оффер», поля письма, лого, обязанности, превью, кнопки авто/ИИ/Word.
+
+**Файлы:** `design-preview/offer/page.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Согласовать макет → реализация боевого раздела в карточке.
+
+---
+
+## 2026-08-12 — Аватарки вакансий + оффер Word
+
+**Тип:** `feature`
+
+**Сделано:**
+- Аватарки вакансий: тема по названию (12 иконок), показ в списке и шапке; ручной выбор в Настройках вакансии (`payload.avatar_key`).
+- Оффер → Word: `GET /api/v1/candidates/{id}/offer.docx`, кнопка «Скачать оффер (Word)» во вкладке Воронка.
+- Шаблон: `v2/backend/app/assets/offer_template.docx` (+ инструкция `OFFER_TEMPLATE.md`); опционально `OFFER_TEMPLATE_PATH` в `.env`.
+
+**Файлы:** `vacancy_avatar.py`, `offer_docx.py`, `assets/OFFER_TEMPLATE.md`, `VacancyAvatar.tsx`, `VacancyCompactRow.tsx`, `VacancySettingsPanel.tsx`, `CandidateEditor.tsx`, `vacancies/[id]/page.tsx`, `vacancies.py`, `candidates.py`, `schemas.py`, `config.py`, `globals.css`, `.env.example`
+
+**Данные / конфиг:** `OFFER_TEMPLATE_PATH` (опц.); `payload.avatar_key`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Подложить свой фирменный `offer_template.docx` по инструкции; проверить список вакансий и скачивание оффера.
+
+---
+
+## 2026-08-12 — Статистика: убрать dynamic ssr:false
+
+**Тип:** `fix`
+
+**Сделано:**
+- На серверной `/stats` нельзя `next/dynamic` с `ssr: false` — вернули обычный импорт клиентского `StatsAiBriefPanel`.
+
+**Файлы:** `stats/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Обновить `/stats`, проверить «Помощь ИИ».
+
+---
+
+## 2026-08-11 — Статистика: фикс ИИ + «Все компании»
+
+**Тип:** `fix` + `ui`
+
+**Сделано:**
+- Плашка «Все компании» (`company=all`): статистика по всей организации без выбора одной компании.
+- AI-brief: `client_id` необязателен (сценарий «все компании»).
+
+**Файлы:** `stats/page.tsx`, `StatsAiBriefPanel.tsx`, `StatsPeriodEditor.tsx`, `schemas.py`, `stats_ai_brief.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Обновить страницу `/stats`, проверить «Помощь ИИ» и «Все компании».
+
+---
+
+## 2026-08-11 — Аналитика: режим «Помощь ИИ»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Третий режим на `/stats`: плашка «Помощь ИИ» — свободный запрос → структурированный расклад (KPI, блоки, шаги).
+- API `POST /api/v1/stats/ai-brief`: контекст из dashboard (executive + attention), ответ через `chat_json`.
+- UI: `StatsAiBriefPanel` (поле, примеры, расклад в `rec-card` / KPI).
+
+**Файлы:** `stats_ai_brief.py`, `stats_history.py`, `schemas.py`, `StatsAiBriefPanel.tsx`, `stats/page.tsx`, `StatsPeriodEditor.tsx`, `globals.css`
+
+**Данные / конфиг:** без новых env-ключей (тот же RouterAI / AI, что и остальные JSON-задачи)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить на `/stats?mode=ai` с выбранной компанией: запрос → расклад.
+
+---
+
+## 2026-08-11 — Архив / Настройки / режим Анкеты
+
+**Тип:** `ui`
+
+**Сделано:**
+- Архив вакансий: сортировка по дате закрытия — новые сверху.
+- Все страницы `/settings/*` переведены на `RecruitingShell` (общий сайдбар); хаб настроек слегка в `rec-*`.
+- Вкладки «Материалы» и «Воронка» у кандидата: просмотр по умолчанию, «Редактировать» как в Анкете.
+
+**Файлы:** `vacancies/page.tsx`, `app/settings/**`, `CandidateEditor.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить `/settings`, архив вакансий, карточку кандидата (Материалы / Воронка).
+
+---
+
+
+**Тип:** `ui` + `feature`
+
+**Сделано:**
+- Режимы «Моя эффективность» / «Взгляд руководителя» — крупные плашки справа сверху.
+- Период под заголовком: даты с–по + пресеты; API `from`/`to` + `period=custom`.
+- Фильтр: Компания (плашки, по умолчанию ничего не выбрано) → Отдел → Вакансия → Область.
+- Бэкенд: компания раскрывается в id компании + всех отделов для статистики.
+
+**Файлы:** `stats/page.tsx`, `StatsPeriodEditor.tsx`, `stats_service.py`, `stats_history.py`, `globals.css`
+
+**Данные / конфиг:** query `company`, `dept`, `from`, `to`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Открыть `/stats`, выбрать компанию, проверить период и отделы.
+
+---
+
+
+**Тип:** `ui`
+
+**Сделано:**
+- `/vacancies`: KPI `rec-dash-kpi`, вкладки `cand-tabs`, список через `VacancyCompactRow` вместо таблицы.
+- `/stats`: KPI и секции в стиле рабочего стола; внимание/воронка/вакансии/возвраты — компактные `rec-row`; фильтры в `rec-card`.
+
+**Файлы:** `vacancies/page.tsx`, `stats/page.tsx`, `VacancyCompactRow.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить обе страницы в браузере.
+
+---
+
+
+**Тип:** `ui`
+
+**Сделано:**
+- Шапка вакансии в `rec-card`: название, мета, чипы, кнопка «Закрыть вакансию» с подтверждением.
+- Вкладки в стиле кандидата: Кандидаты / Документы / Поиск HH / Я.Диск / Настройки.
+- Список кандидатов — `CandidateCompactRow` вместо таблицы.
+- Настройки, сводка и удаление — во вкладке «Настройки»; закрытие/возврат — в шапке.
+
+**Файлы:** `v2/frontend/app/vacancies/[id]/page.tsx`, `VacancyCloseButton.tsx`, `VacancyLifecycle.tsx`, `VacancySettingsPanel.tsx`, `VacancyTitleEditor.tsx`, `VacancyDigestButton.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить карточку вакансии в браузере (закрытие, список, вкладки).
+
+---
+
+
+**Тип:** `fix`
+
+**Сделано:**
+- После миграции на `RecruitingShell` на `/vacancies` вернули выбор клиента — chip-фильтр как на странице аналитики (боковая `ClientSidebar` больше не используется).
+
+**Файлы:** `v2/frontend/app/vacancies/page.tsx`
+
+**Git:** незакоммичено
+
+---
+
+
+**Тип:** `ui`
+
+**Сделано:**
+- Заменён `AppShell` на `RecruitingShell` на страницах jobs, stats, vacancies, history.
+- Jobs: основной контент (stats, chip-row, panel, table) обёрнут в `rec-card`.
+- History: весь контент обёрнут в `rec-card`.
+- На `/vacancies` убран prop `sidebar` (RecruitingShell его не поддерживает); фильтр по клиенту через URL сохранён.
+
+**Файлы:** `v2/frontend/app/jobs/page.tsx`, `stats/page.tsx`, `vacancies/page.tsx`, `vacancies/[id]/page.tsx`, `history/page.tsx`, `history/[id]/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- При необходимости вернуть фильтр клиентов на `/vacancies` через toolbar или inline-блок.
+
+---
+
+## 2026-08-11 — CandidateEditor: rec-card на вкладках воронка/интервью/заказчик/ИИ
+
+**Тип:** `ui`
+
+**Сделано:**
+- Вкладки pipeline, interview, client, ai: внешние `CollapsibleCard` заменены на `div.rec-card` + `h3.rec-card-title`.
+- Текст из `hint` перенесён в `<span className="muted hh-micro">` рядом с заголовком.
+- Внутренний блок «История этапов» на вкладке воронки оставлен в `CollapsibleCard`.
+
+**Файлы:** `v2/frontend/components/CandidateEditor.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- При необходимости — «История этапов» тоже перевести на rec-card.
+
+---
+
+## 2026-08-11 — UI гибрид v3: рабочий стол + sidebar + compact avatars
+
+**Тип:** `ui`
+
+**Сделано:**
+- `/dashboard`: KPI (внимание, встречи сегодня, ждут заказчика) + очередь «Сегодня».
+- `RecruitingShell`: «Рабочий стол» первым, «Аналитика», «Импорт» в «Ещё»; лого → `/dashboard`.
+- Список кандидатов: строки ~56px, аватар 40px; `CandidateAvatar` — фото или силуэт M/F.
+- Карточка кандидата на `RecruitingShell`; gender в API + извлечение из резюме.
+- Backend: KPI `meetings_today`, `waiting_client`; `gender` в list/detail/attention.
+
+**Файлы:** `app/dashboard/page.tsx`, `RecruitingShell.tsx`, `CandidateAvatar.tsx`, `CandidateCompactRow.tsx`, `DashboardQueue.tsx`, `globals.css`, `stats_service.py`, `candidate_fields.py`, `schemas.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Перенести `/vacancies` и `/stats` на `RecruitingShell`.
+
+---
+
+## 2026-08-11 — Макет изначального плана UI (A+C)
+
+**Тип:** `ui`
+
+**Сделано:**
+- Canvas и страница `/design-preview/plan`: рабочий стол, вакансии, кандидаты, карточка с вкладками, аналитика.
+- Переключатель экранов; сравнение с компромиссом `/design-preview`.
+- Ссылка «изначальный план» на странице компромисса.
+
+**Файлы:** `canvases/ui-original-plan-pages.canvas.tsx`, `app/design-preview/plan/*`, `design-preview/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Выбор: план A+C vs компромисс sidebar.
+
+---
+
+## 2026-08-11 — Localhost: перезапуск API и frontend
+
+**Тип:** `fix` (ops)
+
+**Сделано:**
+- Причина: backend на `:8000` не был запущен → страницы с `apiGet` падали с `fetch failed`; на `:3000` висел старый процесс Next.js с 500.
+- Docker `db`/`redis` были живы; перезапущены `uvicorn` и `npm run dev`.
+- Проверка: `/api/v1/health`, `/`, `/candidates`, `/design-preview` → 200.
+
+**Git:** без коммита
+
+**Следующий шаг:**
+- При «не работает localhost» сначала проверить `:8000` и перезапустить оба dev-сервера.
+
+---
+
+## 2026-08-11 — Компромисс UI: sidebar + compact list
+
+**Тип:** `ui`
+
+**Сделано:**
+- `RecruitingShell`: боковое меню 260px, палитра макета, «Ещё» для шаблонов/задач.
+- Компактные строки с аватаром + группировка по этапам (сворачивание >6).
+- `/candidates` переведён на новый layout; `/design-preview` показывает v2 + сравнение с карточками.
+
+**Файлы:** `RecruitingShell.tsx`, `CandidateCompactRow.tsx`, `CandidatesGroupedList.tsx`, `groupCandidates.ts`, `globals.css`, `candidates/page.tsx`, `design-preview/*`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Утвердить; перенести shell на `/vacancies`, `/stats`.
+
+---
+
+## 2026-08-11 — Preview макета «Список кандидатов»
+
+**Тип:** `ui`
+
+**Сделано:**
+- Статичная страница `/design-preview` по текстовой спецификации.
+- CSS-модуль, lucide-react; `/design-preview` без auth.
+
+**Файлы:** `app/design-preview/*`, `AuthGate.tsx`, `package.json`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Утверждение макета, перенос на `/candidates`.
+
+---
+
+## 2026-08-10 — Выжимка: показ из payload + UX
+
+**Тип:** `fix`
+
+**Сделано:**
+- Выжимка в БД у Манаенковой уже была; UI мог не брать её с top-level поля.
+- QuestionnairePanel читает `interview_digest` и из `payload`; нормализует q/a.
+- После задачи собеседования открывается блок опросника и скролл к `#interview-digest`.
+- Hint заголовка: «N вопросов · есть выжимка».
+
+**Файлы:** `QuestionnairePanel.tsx`, `CandidateEditor.tsx`
+
+**Следующий шаг:**
+- Обновить карточку Манаенковой (жёсткое обновление страницы).
+
+---
+
+## 2026-08-11 — UI вкладки карточки + фото из PDF
+
+**Тип:** `feature`
+
+**Сделано:**
+- Карточка кандидата: workspace-шапка (аватар, бейджи), вкладки Обзор/Анкета/Воронка/Интервью/Заказчик/ИИ вместо длинной простыни.
+- Фото кандидата: `photo_extract.py` (PyMuPDF + OpenCV Haar), загрузка в S3 `photos/{id}.jpg`, `payload.photo_url`.
+- Интеграция фото: inbox PDF, upload/bulk links, evaluate-resume; HH — URL из snapshot/API.
+- UI: `CandidateAvatar` в шапке и списке кандидатов.
+
+**Файлы:** `photo_extract.py`, `candidate_photo.py`, `CandidateEditor.tsx`, `CandidateAvatar.tsx`, `CollapsibleCard.tsx`, `globals.css`, `candidate_resume_eval.py`, `disk_inbox_router.py`, `hh_to_candidate.py`, `requirements.txt`
+
+**Данные / конфиг:** `payload.photo_url`; нужны Yandex S3 ключи для PDF-фото
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Рабочий стол `/dashboard` и перегруппировка top-nav (этап 2 UI).
+
+---
+
+## 2026-08-11 — ARCHITECTURE.md: актуализация + каталог функций
+
+**Тип:** `docs`
+
+**Сделано:**
+- Обновлён `ARCHITECTURE.md`: стек (auth, Bitrix, client zone, interview digest), схема, ARQ jobs, навигация UI.
+- Добавлен **каталог функций** (~70 пунктов) с ID, ролью, местом в UI и зрелостью — для перераспределения UI.
+- Заметки: перегруз карточки кандидата, смешение операционки и настроек в «Поиск сотрудников».
+
+**Файлы:** `ARCHITECTURE.md`
+
+**Следующий шаг:**
+- На основе каталога набросать группы UI (операции / sourcing / аналитика / админ).
+
+---
+
+## 2026-08-10 — UI /stats: аудит high-фиксы
+
+**Тип:** `fix`
+
+**Сделано:**
+- Иерархия: режим — крупные tabs; область — chips + hint про «Закрыто» при «Только в работе».
+- Полка фильтров, 8px rhythm, KPI без тени, скролл длинных chip-рядов.
+- Empty states: attention / воронка / вакансии; даты периода; «Отчёт»; таблицы в overflow-wrap.
+- Подписи графика DD.MM; select периода «Ещё».
+
+**Файлы:** `v2/frontend/app/stats/page.tsx`, `StatsPeriodControls.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Глянуть `/stats` в браузере (оба режима + «Только в работе»).
+
+---
+
+## 2026-08-10 — Выжимка собеседования (вопрос–ответ)
+
+**Тип:** `feature`
+
+**Сделано:**
+- После «Расшифровать и оценить» ИИ строит `interview_digest`: summary + пары вопрос→ответ + характеристика стиля речи (только для HR).
+- В карточке кандидата выжимка сверху, полная расшифровка как раньше свёрнута.
+- Публичная страница `/i/{token}` без логина; в Telegram/Bitrix — ссылка «Выжимка собеседования» (если задан `PUBLIC_APP_URL` или Bitrix `public_api_base`).
+- Характеристика коммуникации на публичную страницу не попадает.
+
+**Файлы:** `interview_digest.py`, `tasks.py`, `candidate_fields.py`, `card_html.py`, `gateway.py`, `inbound.py`, `bitrix/outbound.py`, `routes/interview_digest.py`, `QuestionnairePanel.tsx`, `app/i/[token]/page.tsx`, `AuthGate.tsx`, `JobsLive.tsx`, `globals.css`, `.env.example`
+
+**Данные / конфиг:** payload `interview_digest` + `interview_digest_token`; опционально `PUBLIC_APP_URL`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- На сервере задать `PUBLIC_APP_URL` (или уже есть `public_api_base`) и прогнать расшифровку на кандидате с записью.
+
+---
+
+## 2026-08-10 — Inbox: видео по ФИО → «Записи»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Inbox различает PDF и видео/аудио.
+- PDF — как раньше: ИИ → папка «Резюме».
+- Видео/аудио — **без скачивания**: матч кандидата по ФИО в имени файла → папка вакансии «Записи» + `video_link` (`yadisk-app:`).
+- Нет матча → `_unsorted` с понятной причиной.
+- Ручная привязка unsorted: видео → «Записи» (+ video_link при матче ФИО).
+
+**Файлы:** `v2/backend/app/services/disk_inbox_router.py`
+
+**Следующий шаг:**
+- Положить в `_inbox` файл вида `Манаенкова Ирина.mp4` и запустить роутинг.
+
+---
+
+## 2026-08-10 — UX: отправка заказчику + перезапуск API
+
+**Тип:** `fix`
+
+**Сделано:**
+- API завис на reload («Waiting for connections to close») — после клика «Отправить» казалось, что ничего не происходит.
+- Принудительный перезапуск API + worker.
+- Баннер результата отправки всегда сверху карточки; блок «Заказчик» раскрывается и прокручивается к нему.
+
+**Файлы:** `CandidateEditor.tsx`
+
+**Следующий шаг:**
+- Обновить страницу и снова нажать «Отправить заказчику» у Манаенковой.
+
+---
+
+## 2026-08-10 — Fix: ссылка на резюме yadisk-app в Telegram/Bitrix
+
+**Тип:** `fix`
+
+**Сделано:**
+- Резюме из inbox хранится как `yadisk-app:/…` — не открывается в Telegram (ссылка пропадала).
+- При отправке заказчику путь конвертируется в публичный `https` (publish через OAuth при необходимости).
+- В карточке Telegram/Bitrix в ссылку попадает только http(s); иначе fallback на HH.
+
+**Файлы:** `yandex_disk_oauth.py`, `yandex_public.py`, `card_html.py`, `bitrix/outbound.py`
+
+**Следующий шаг:**
+- Переотправить карточку Манаенковой заказчику.
+
+---
+
+## 2026-08-10 — Async: оценка резюме + опросник (фоновая задача)
+
+**Тип:** `feature`
+
+**Сделано:**
+- `POST …/evaluate-resume` → **202 + job** `candidate_evaluate_resume` (ARQ), как у расшифровки собеседования.
+- Воркер: скачивание PDF → ИИ-оценка → опросник; прогресс в job.
+- UI: кнопка «Оценить…», строка статуса, задача в «Задачи»; при возврате на карточку — восстановление активного job.
+- Защита от двойного запуска (`reused`).
+- API и ARQ worker перезапущены локально.
+
+**Файлы:** `tasks.py`, `settings.py`, `common.py`, `candidates.py`, `CandidateEditor.tsx`, `QuestionnairePanel.tsx`, `JobsLive.tsx`, `jobs/page.tsx`
+
+**Следующий шаг:**
+- Проверить на Манаенковой: запуск → уйти в другой раздел → вернуться / «Задачи».
+
+---
+
+## 2026-08-10 — Fix: «Открыть» на «Оценить резюме ИИ»
+
+**Тип:** `fix`
+
+**Сделано:**
+- Кнопка «Следующий шаг → Открыть» для «Оценить резюме ИИ» вела в `#ai-comment-block`, который не рендерится до первой оценки (`ai_score == null`) — клик ничего не делал.
+- Следующий шаг теперь открывает блок «Опросник и собеседование» (`section: quest`), где кнопка «Оценить и сформировать опросник».
+
+**Файлы:** `v2/frontend/lib/nextAction.ts`
+
+**Риски:** нет
+
+**Следующий шаг:**
+- Проверить на карточке Манаенковой: «Открыть» прокручивает к опроснику.
+
+---
+
 ## 2026-08-09 — Push: async generate + no_response_3d
 
 **Тип:** `ops`

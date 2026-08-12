@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { apiFetch } from "@/lib/api";
 
 type Job = {
@@ -31,6 +31,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   disk_inbox_router: "Inbox Я.Диска (маршрутизация)",
   vacancy_docs_from_materials: "Документы из материалов",
   candidate_interview_process: "Обработка собеседования",
+  candidate_evaluate_resume: "Оценка резюме и опросник",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -148,7 +149,7 @@ export default function JobsPage() {
   };
 
   return (
-    <AppShell activePath="/jobs">
+    <RecruitingShell activePath="/jobs">
       <h1 className="page-title">Задачи</h1>
       <p className="muted">
         Фоновые jobs через Redis + ARQ. Расшифровка: ffmpeg → Yandex Object Storage → SpeechKit.
@@ -156,7 +157,8 @@ export default function JobsPage() {
 
       {error ? <p className="warn">{error}</p> : null}
 
-      <div className="stats">
+      <div className="rec-card">
+        <div className="stats">
         <div className="stat">
           <strong>{data?.active_count ?? "—"}</strong>
           <span>активных</span>
@@ -330,6 +332,7 @@ export default function JobsPage() {
           ) : null}
         </tbody>
       </table>
-    </AppShell>
+      </div>
+    </RecruitingShell>
   );
 }

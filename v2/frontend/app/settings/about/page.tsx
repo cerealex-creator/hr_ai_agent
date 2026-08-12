@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 
 const SECTIONS: { title: string; items: string[] }[] = [
   {
@@ -40,7 +40,7 @@ const SECTIONS: { title: string; items: string[] }[] = [
 
 export default function AboutSettingsPage() {
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Link className="back" href="/settings">
         ← К настройкам
       </Link>
@@ -59,6 +59,6 @@ export default function AboutSettingsPage() {
           </ul>
         </section>
       ))}
-    </AppShell>
+    </RecruitingShell>
   );
 }

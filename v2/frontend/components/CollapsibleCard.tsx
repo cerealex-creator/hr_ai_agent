@@ -9,6 +9,8 @@ type Props = {
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Always expanded, no collapse toggle (for tab panels). */
+  static?: boolean;
   children: ReactNode;
 };
 
@@ -20,20 +22,34 @@ export function CollapsibleCard({
   defaultOpen = false,
   open: openProp,
   onOpenChange,
+  static: staticPanel = false,
   children,
 }: Props) {
   const controlled = openProp !== undefined;
-  const [inner, setInner] = useState(defaultOpen);
-  const open = controlled ? openProp : inner;
+  const [inner, setInner] = useState(defaultOpen || staticPanel);
+  const open = staticPanel ? true : controlled ? openProp : inner;
 
   useEffect(() => {
-    if (!controlled) setInner(defaultOpen);
-  }, [controlled, defaultOpen]);
+    if (!controlled && !staticPanel) setInner(defaultOpen);
+  }, [controlled, defaultOpen, staticPanel]);
 
   const setOpen = (next: boolean) => {
+    if (staticPanel) return;
     if (!controlled) setInner(next);
     onOpenChange?.(next);
   };
+
+  if (staticPanel) {
+    return (
+      <section className="card-edit card-tab-panel" id={id}>
+        <div className="card-tab-panel-head">
+          <h2 className="card-tab-panel-title">{title}</h2>
+          {hint ? <span className="card-tab-panel-hint">{hint}</span> : null}
+        </div>
+        <div className="card-collapse-body">{children}</div>
+      </section>
+    );
+  }
 
   return (
     <section className={`card-edit card-collapse${open ? " is-open" : ""}`} id={id}>

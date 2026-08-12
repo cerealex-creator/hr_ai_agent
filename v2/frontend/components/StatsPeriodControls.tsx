@@ -39,9 +39,10 @@ export function StatsPeriodControls({ chips, period, hrefByPeriod }: Props) {
         ))}
       </div>
       <label className="stats-months-select">
-        <span className="muted">За период</span>
+        <span className="muted">Ещё</span>
         <select
           value={monthsSelected ? period : ""}
+          aria-label="Период в месяцах"
           onChange={(e) => {
             const v = e.target.value;
             if (!v) return;

@@ -199,6 +199,7 @@ def create_candidate(
         "office_interview_date": "",
         "office_interview_time": "",
         "client_comment": "",
+        "photo_url": "",
         "ai_score": None,
         "ai_comment": "",
         "ai_comment_sections": {},

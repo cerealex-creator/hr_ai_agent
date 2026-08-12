@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     health_meta,
     hh,
     integrations,
+    interview_digest,
     jobs,
     messaging,
     settings,
@@ -25,6 +26,7 @@ router.include_router(auth.router)
 router.include_router(health_meta.public_router)
 router.include_router(integrations.public_router)
 router.include_router(client_zone.router)
+router.include_router(interview_digest.router)
 
 # Protected
 protected = APIRouter(dependencies=[Depends(require_auth)])

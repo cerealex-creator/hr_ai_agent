@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { apiFetch } from "@/lib/api";
 
 type Comms = {
@@ -24,11 +24,11 @@ function detailMessage(data: unknown, fallback: string): string {
 
 export default function CandidateCommsSettingsPage() {
   return (
-    <AppShell variant="settings" activePath="/settings">
+    <RecruitingShell activePath="/settings" title="Настройки">
       <Suspense fallback={<p className="muted">Загрузка…</p>}>
         <CandidateCommsInner />
       </Suspense>
-    </AppShell>
+    </RecruitingShell>
   );
 }
 

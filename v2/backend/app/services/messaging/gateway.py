@@ -66,6 +66,8 @@ def send_candidate_card(
         raise MessagingError("Не удалось создать messaging channel", 500)
 
     callback_id = ensure_tg_callback_id(candidate)
+    from app.services.interview_digest import interview_digest_public_url
+
     text = build_candidate_card_html(
         name=candidate.name,
         vacancy_title=vacancy.title,
@@ -75,6 +77,7 @@ def send_candidate_card(
         portfolio_link=fields.get("portfolio_link"),
         task_link=fields.get("task_link"),
         hr_comment=(candidate.payload or {}).get("hr_comment"),
+        interview_digest_url=interview_digest_public_url(candidate.payload),
         locked=False,
     )
     reply_markup = build_initial_status_keyboard(callback_id, candidate.client_status or "wait")

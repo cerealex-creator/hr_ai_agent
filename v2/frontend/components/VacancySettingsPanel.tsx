@@ -4,8 +4,13 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { type VacancyDetail, apiFetch } from "@/lib/api";
 import { ChatSelect } from "@/components/ChatSelect";
-import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { VacancyStageSchemaPanel } from "@/components/VacancyStageSchemaPanel";
+import {
+  VACANCY_AVATAR_KEYS,
+  VACANCY_AVATAR_LABELS,
+  VacancyAvatar,
+  type VacancyAvatarKey,
+} from "@/components/VacancyAvatar";
 
 type Props = { vacancy: VacancyDetail };
 
@@ -17,6 +22,9 @@ export function VacancySettingsPanel({ vacancy }: Props) {
   const [cwEnabled, setCwEnabled] = useState(Boolean(payload.control_word_enabled));
   const [controlWord, setControlWord] = useState(String(payload.control_word || ""));
   const [chatId, setChatId] = useState(vacancy.chat_id || "");
+  const [avatarKey, setAvatarKey] = useState(
+    String((payload.avatar_key as string) || vacancy.avatar_key || "general"),
+  );
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -35,6 +43,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           control_word_enabled: cwEnabled,
           control_word: controlWord,
           chat_id: chatId,
+          avatar_key: avatarKey,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -100,13 +109,37 @@ export function VacancySettingsPanel({ vacancy }: Props) {
 
   return (
     <>
-    <CollapsibleCard
-      title="Параметры вакансии"
-      hint={hintBits.length ? hintBits.join(" · ") : undefined}
-      defaultOpen={false}
-    >
+    <div className="rec-card">
+      <h3 className="rec-card-title">
+        Параметры вакансии
+        {hintBits.length ? (
+          <span className="muted hh-micro" style={{ marginLeft: "0.5rem" }}>
+            {hintBits.join(" · ")}
+          </span>
+        ) : null}
+      </h3>
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
+      <div className="hh-field" style={{ marginBottom: "0.85rem" }}>
+        <span className="hh-label">Аватарка</span>
+        <div className="vac-avatar-picker">
+          {VACANCY_AVATAR_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={`vac-avatar-pick${avatarKey === key ? " is-active" : ""}`}
+              disabled={busy}
+              onClick={() => setAvatarKey(key)}
+              title={VACANCY_AVATAR_LABELS[key as VacancyAvatarKey]}
+            >
+              <VacancyAvatar avatarKey={key} size={36} />
+            </button>
+          ))}
+        </div>
+        <p className="muted hh-micro" style={{ marginTop: "0.35rem" }}>
+          Подбирается по названию при создании; здесь можно сменить вручную.
+        </p>
+      </div>
       {searchMode === "warranty" ? <p className="ok">Гарантийный поиск</p> : null}
       {warranty.active ? (
         <p className="muted">
@@ -162,11 +195,12 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           Открыть гарантийный поиск
         </button>
       </div>
-    </CollapsibleCard>
+    </div>
 
-    <CollapsibleCard title="Этапы и статусы вакансии" defaultOpen={false}>
+    <div className="rec-card">
+      <h3 className="rec-card-title">Этапы и статусы вакансии</h3>
       <VacancyStageSchemaPanel vacancyId={vacancy.id} />
-    </CollapsibleCard>
+    </div>
     </>
   );
 }

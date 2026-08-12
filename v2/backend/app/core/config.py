@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://hr_v2:hr_v2_dev@localhost:5433/hr_v2"
     legacy_data_dir: str = "../data"
     cors_origins: str = "http://localhost:3000"
+    # Public UI origin for customer links (e.g. https://hr-toolbox.ru). Empty = no share links.
+    public_app_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     default_org_name: str = "Default Organization"
     default_org_slug: str = "default"
@@ -67,6 +69,9 @@ class Settings(BaseSettings):
     zoom_redirect_uri: str = "http://localhost:8765/"
     zoom_token_path: str = ""
     zoom_oauth_scopes: str = "meeting:write user:read offline_access"
+
+    # Offer Word template (empty = app/assets/offer_template.docx)
+    offer_template_path: str = ""
 
     model_config = SettingsConfigDict(
         env_file=("../../.env", "../.env", ".env"),

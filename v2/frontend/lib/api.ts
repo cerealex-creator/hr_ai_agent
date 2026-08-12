@@ -229,6 +229,7 @@ export type VacancyListItem = {
   close_reason: string | null;
   has_hire: boolean;
   outcome: VacancyOutcome;
+  avatar_key?: string | null;
 };
 
 export type VacancyDetail = VacancyListItem & {
@@ -249,6 +250,8 @@ export type CandidateListItem = {
   city: string | null;
   vacancy_title?: string | null;
   client_name?: string | null;
+  photo_url?: string | null;
+  gender?: string | null;
   last_contact_at?: string | null;
   attention_reason?: string | null;
 };
@@ -269,6 +272,13 @@ export type CandidateDetail = CandidateListItem & {
   task_link?: string | null;
   hr_comment: string | null;
   transcript?: string | null;
+  interview_digest?: {
+    summary?: string;
+    qa?: { q: string; a: string }[];
+    communication?: string;
+    created_at?: string | null;
+    public_url?: string | null;
+  } | null;
   interview_eval_notes?: string | null;
   questionnaire_recruiter_notes?: string | null;
   client_comment: string | null;
@@ -282,6 +292,8 @@ export type CandidateDetail = CandidateListItem & {
   control_word_note?: string | null;
   office_interview_date: string | null;
   office_interview_time: string | null;
+  photo_url: string | null;
+  gender?: string | null;
   hh_resume_id?: string | null;
   payload: Record<string, unknown>;
 };

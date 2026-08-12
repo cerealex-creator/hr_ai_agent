@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
 import { BrandLogo } from "@/components/BrandLogo";
 
 type HubCard = {
@@ -13,23 +12,21 @@ type HubCard = {
 
 const HUB: HubCard[] = [
   {
-    href: "/vacancies",
+    href: "/dashboard",
     title: "Поиск сотрудников",
-    text: "Генерация документов по вакансии (Профиль, опросник и др), управление воронкой поиска с ИИ-поддержкой, статистика, умный поиск на HH.",
+    text: "Рабочий стол, воронка, ИИ-оценка резюме, статистика, поиск на HH.",
     tone: "search",
     featured: true,
   },
   {
     title: "Настройки управления персоналом",
-    text:
-      "Цели, задачи, показатели, процессы, оргсхема и руководящие документы (должностные инструкции, регламенты, KPI, чек-листы).",
+    text: "Цели, задачи, показатели, процессы, оргсхема и руководящие документы (должностные инструкции, регламенты, KPI, чек-листы).",
     tone: "mgmt",
     soon: true,
   },
   {
     title: "Кадровое делопроизводство",
-    text:
-      "Приём, кадровые документы, увольнение, чек-листы обязательных документов и локальные акты.",
+    text: "Приём, кадровые документы, увольнение, чек-листы обязательных документов и локальные акты.",
     tone: "kdp",
     soon: true,
   },
@@ -41,8 +38,7 @@ const HUB: HubCard[] = [
   },
   {
     title: "Корректировка и развитие",
-    text:
-      "Обучение, кадровый резерв, индивидуальные планы развития (ИПР), аттестации, грейды, мониторинг.",
+    text: "Обучение, кадровый резерв, индивидуальные планы развития (ИПР), аттестации, грейды, мониторинг.",
     tone: "dev",
     soon: true,
   },
@@ -53,60 +49,45 @@ export default function HomePage() {
   const modules = HUB.filter((c) => !c.featured);
 
   return (
-    <AppShell variant="home" activePath="/">
-      <div className="home-hero">
-        <h1 className="home-title">
-          <BrandLogo size={96} />
-          HR-помогатор
-        </h1>
-        <p className="home-lead">
+    <div className="home-v3">
+      <header className="home-v3-hero">
+        <BrandLogo size={80} className="home-v3-logo" />
+        <h1 className="home-v3-title">HR-помогатор</h1>
+        <p className="home-v3-lead">
           Рабочее пространство рекрутера и HR-команды. Сейчас доступен поиск сотрудников —
           остальные модули портала появятся по мере развития.
         </p>
-      </div>
+      </header>
 
-      <div className="home-portal">
+      <div className="home-v3-cards">
         {featured.map((item) => (
           <Link
             key={item.title}
             href={item.href || "/"}
-            className={`hub-card hub-card-tone-${item.tone} hub-card-featured`}
+            className={`home-v3-card home-v3-card-featured home-v3-tone-${item.tone}`}
           >
-            <span className="hub-card-index" aria-hidden />
             <h2>{item.title}</h2>
             <p>{item.text}</p>
-            <span className="hub-card-go">Открыть →</span>
+            <span className="home-v3-card-go">Открыть →</span>
           </Link>
         ))}
 
-        <div className="home-modules">
-          {modules.map((item) =>
-            item.soon || !item.href ? (
-              <div
-                key={item.title}
-                className={`hub-card hub-card-tone-${item.tone} hub-card-soon`}
-                aria-disabled
-              >
-                <span className="hub-card-index" aria-hidden />
+        <div className="home-v3-grid">
+          {modules.map((item) => (
+            <div
+              key={item.title}
+              className={`home-v3-card home-v3-card-soon home-v3-tone-${item.tone}`}
+              aria-disabled
+            >
+              <div className="home-v3-card-head">
                 <h2>{item.title}</h2>
-                <p>{item.text}</p>
-                <span className="soon">скоро</span>
+                <span className="home-v3-soon">скоро</span>
               </div>
-            ) : (
-              <Link
-                key={item.title}
-                href={item.href}
-                className={`hub-card hub-card-tone-${item.tone}`}
-              >
-                <span className="hub-card-index" aria-hidden />
-                <h2>{item.title}</h2>
-                <p>{item.text}</p>
-                <span className="hub-card-go">Открыть →</span>
-              </Link>
-            ),
-          )}
+              <p>{item.text}</p>
+            </div>
+          ))}
         </div>
       </div>
-    </AppShell>
+    </div>
   );
 }

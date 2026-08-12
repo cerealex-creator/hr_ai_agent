@@ -118,6 +118,7 @@ class VacancyListItem(BaseModel):
     has_hire: bool = False
     # Soft archive outcome for UI only (not final domain truth)
     outcome: str | None = None  # success | client_cancelled | no_result | None if active
+    avatar_key: str | None = None
 
 
 class VacancyDetail(BaseModel):
@@ -138,6 +139,7 @@ class VacancyDetail(BaseModel):
     payload: dict
     candidates_count: int = 0
     document_keys: list[str] = Field(default_factory=list)
+    avatar_key: str | None = None
 
 
 class VacancyCreateIn(BaseModel):
@@ -211,6 +213,8 @@ class CandidateListItem(BaseModel):
     client_name: str | None = None
     last_contact_at: str | None = None
     attention_reason: str | None = None
+    photo_url: str | None = None
+    gender: str | None = None
 
 
 class CandidateDetail(BaseModel):
@@ -239,6 +243,7 @@ class CandidateDetail(BaseModel):
     task_link: str | None = None
     hr_comment: str | None = None
     transcript: str | None = None
+    interview_digest: dict | None = None
     interview_eval_notes: str | None = None
     questionnaire_recruiter_notes: str | None = None
     client_comment: str | None = None
@@ -252,6 +257,8 @@ class CandidateDetail(BaseModel):
     control_word_note: str | None = None
     office_interview_date: str | None = None
     office_interview_time: str | None = None
+    photo_url: str | None = None
+    gender: str | None = None
     hh_resume_id: str | None = None
     payload: dict = Field(default_factory=dict)
 
@@ -287,6 +294,63 @@ class CandidateStageIn(BaseModel):
     keep_calendar_event: bool = True
     warranty_start_date: str | None = None
     warranty_months: int | None = None
+
+
+class CandidateOfferDraftOut(BaseModel):
+    greeting: str = ""
+    name_patronymic: str = ""
+    full_name: str = ""
+    company: str = ""
+    position: str = ""
+    office_address: str = ""
+    work_schedule: str = ""
+    start_date: str = ""
+    probation_months: str = ""
+    salary_probation_base: str = ""
+    salary_probation_bonus: str = ""
+    salary_probation_line: str = ""
+    salary_after_base: str = ""
+    salary_after_bonus: str = ""
+    salary_after_line: str = ""
+    duties: str = ""
+    manager_name: str = ""
+    logo_data_url: str | None = None
+    company_client_id: int | None = None
+
+
+class CandidateOfferDraftIn(BaseModel):
+    greeting: str | None = None
+    name_patronymic: str | None = None
+    full_name: str | None = None
+    company: str | None = None
+    position: str | None = None
+    office_address: str | None = None
+    work_schedule: str | None = None
+    start_date: str | None = None
+    probation_months: str | None = None
+    salary_probation_base: str | None = None
+    salary_probation_bonus: str | None = None
+    salary_probation_line: str | None = None
+    salary_after_base: str | None = None
+    salary_after_bonus: str | None = None
+    salary_after_line: str | None = None
+    duties: str | None = None
+    manager_name: str | None = None
+
+
+class CompanyOfferLogoIn(BaseModel):
+    logo_data_url: str | None = None
+    office_address: str | None = None
+    offer_manager_name: str | None = None
+    default_work_schedule: str | None = None
+
+
+class OfferTemplateInfoOut(BaseModel):
+    source: str
+    filename: str | None = None
+    has_custom: bool = False
+    can_upload: bool = True
+    path: str | None = None
 
 
 class CandidateCreateIn(BaseModel):
@@ -370,6 +434,8 @@ class DashboardAttentionItem(BaseModel):
     vacancy_id: int
     vacancy_title: str | None = None
     reason: str | None = None
+    photo_url: str | None = None
+    gender: str | None = None
 
 
 class DashboardVacancyRow(BaseModel):
@@ -412,6 +478,43 @@ class DashboardStatsOut(BaseModel):
     vacancies_table: list[DashboardVacancyRow] = Field(default_factory=list)
     hh: HhEfficiencyStatsOut | None = None
     warranty_risks: DashboardWarrantyRisks | None = None
+
+
+class StatsAiBriefIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+    client_id: int | None = None
+    vacancy_id: int | None = None
+    period: str = "day"
+    date_from: str | None = Field(default=None, alias="from")
+    date_to: str | None = Field(default=None, alias="to")
+    active_vacancies_only: bool = True
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class StatsAiBriefKpi(BaseModel):
+    label: str
+    value: str
+    tone: str = "neutral"
+
+
+class StatsAiBriefItem(BaseModel):
+    text: str
+    tone: str = "neutral"
+
+
+class StatsAiBriefSection(BaseModel):
+    title: str
+    body: str | None = None
+    items: list[StatsAiBriefItem] = Field(default_factory=list)
+
+
+class StatsAiBriefOut(BaseModel):
+    title: str
+    summary: str = ""
+    kpis: list[StatsAiBriefKpi] = Field(default_factory=list)
+    sections: list[StatsAiBriefSection] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
 
 
 class DocumentGenerationOut(BaseModel):
@@ -712,6 +815,7 @@ class VacancySettingsPatchIn(BaseModel):
     control_word_enabled: bool | None = None
     control_word: str | None = None
     chat_id: str | None = None
+    avatar_key: str | None = None
 
 
 class WarrantyApplyIn(BaseModel):
