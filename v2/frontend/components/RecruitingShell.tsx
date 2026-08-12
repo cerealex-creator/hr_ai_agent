@@ -47,7 +47,7 @@ export function RecruitingShell({ children, activePath = "/dashboard", toolbar, 
   return (
     <div className="rec-app">
       <aside className="rec-nav" aria-label="Главное меню">
-        <Link href="/dashboard" className="rec-logo" aria-label="HR-помогатор — рабочий стол">
+        <Link href="/" className="rec-logo" aria-label="HR-помогатор — главная">
           <img src="/logo.png" alt="" width={40} height={40} className="rec-logo-img" />
           <span className="rec-logo-text">HR-помогатор</span>
         </Link>

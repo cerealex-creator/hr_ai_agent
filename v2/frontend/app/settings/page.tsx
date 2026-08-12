@@ -178,6 +178,8 @@ export default function SettingsHubPage() {
             ? "оранжево-белая"
             : theme === "sky"
               ? "бело-синяя"
+              : theme === "oak"
+                ? "светлый дуб"
               : "светлая";
 
   const cards: HubCard[] = useMemo(

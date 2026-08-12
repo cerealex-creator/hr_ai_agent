@@ -67,10 +67,11 @@ function redirectToLoginClient(): void {
   window.location.href = `/login?next=${encodeURIComponent(next)}`;
 }
 
-async function redirectToLoginServer(nextPath?: string): Promise<void> {
-  const { redirect } = await import("next/navigation");
-  const q = nextPath ? `?next=${encodeURIComponent(nextPath)}` : "";
-  redirect(`/login${q}`);
+export class AuthRequiredError extends Error {
+  constructor() {
+    super("Требуется вход");
+    this.name = "AuthRequiredError";
+  }
 }
 
 /** API fetch with credentials (httpOnly cookies) and refresh-on-401 (browser). */
@@ -98,7 +99,9 @@ export async function apiFetch(path: string, init: ApiFetchOptions = {}): Promis
   }
 
   if (typeof window === "undefined") {
-    await redirectToLoginServer();
+    // Тело ответа надо дочитать: незакрытый поток подвешивает серверный рендер страницы.
+    await res.text().catch(() => undefined);
+    throw new AuthRequiredError();
   }
 
   const ok = await tryRefresh();

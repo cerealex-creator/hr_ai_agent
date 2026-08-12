@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru" data-theme="light" suppressHydrationWarning>
+    <html lang="ru" data-theme="oak" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: UI_PREFS_BOOT_SCRIPT }} />
       </head>

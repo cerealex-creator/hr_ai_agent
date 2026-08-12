@@ -1,13 +1,12 @@
 "use client";
 
 import { FormEvent, Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { authLogin } from "@/lib/api";
 
 function LoginForm() {
   const router = useRouter();
-  const params = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,8 +18,8 @@ function LoginForm() {
     setError(null);
     try {
       await authLogin(email.trim(), password);
-      const next = params.get("next") || "/";
-      router.replace(next.startsWith("/") ? next : "/");
+      // После входа всегда главная страница (хаб модулей), а не последний открытый раздел.
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка входа");
     } finally {

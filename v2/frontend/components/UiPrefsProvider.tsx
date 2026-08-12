@@ -16,7 +16,8 @@ export type ThemeId =
   | "contrast"
   | "earth"
   | "citrus"
-  | "sky";
+  | "sky"
+  | "oak";
 
 export const THEME_IDS: ThemeId[] = [
   "light",
@@ -25,6 +26,7 @@ export const THEME_IDS: ThemeId[] = [
   "earth",
   "citrus",
   "sky",
+  "oak",
 ];
 
 function isThemeId(v: unknown): v is ThemeId {
@@ -43,7 +45,7 @@ type UiPrefsContextValue = UiPrefs & {
 };
 
 const STORAGE_KEY = "hr_v2_ui_prefs";
-const DEFAULTS: UiPrefs = { theme: "light", fontScale: 1.05 };
+const DEFAULTS: UiPrefs = { theme: "oak", fontScale: 1.05 };
 
 /** Inline in layout <head> so theme/font apply before paint. Keep in sync with STORAGE_KEY / DEFAULTS / THEME_IDS. */
 export const UI_PREFS_BOOT_SCRIPT = `(function(){try{var k=${JSON.stringify(STORAGE_KEY)};var ok=${JSON.stringify(THEME_IDS)};var raw=localStorage.getItem(k);if(!raw)return;var p=JSON.parse(raw);var r=document.documentElement;if(ok.indexOf(p.theme)>=0)r.dataset.theme=p.theme;var n=Number(p.fontScale);if(!Number.isNaN(n)&&n>=0.9&&n<=1.3){r.style.setProperty("--font-scale",String(Math.round(n*100)/100));r.style.fontSize=(16*(Math.round(n*100)/100))+"px";}}catch(e){}})();`;

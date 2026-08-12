@@ -9,6 +9,7 @@ const THEMES: { id: ThemeId; label: string; hint: string }[] = [
   { id: "earth", label: "Коричнево-зелёная", hint: "земляные тона и зелёный акцент" },
   { id: "citrus", label: "Оранжево-белая", hint: "белый фон, оранжевый акцент" },
   { id: "sky", label: "Бело-синяя", hint: "белый фон, синий акцент" },
+  { id: "oak", label: "Светлый дуб", hint: "тёплый древесный фон и бежевые тона" },
 ];
 
 export function AppearanceSettings() {
