@@ -3735,8 +3735,19 @@ details[open] > .doc-summary .doc-summary-main::before {
 }
 
 .rec-logo {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 40px;
+  text-decoration: none;
+  color: #16283c;
+}
+
+.rec-logo-text {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 
 .rec-logo-img {
@@ -4210,17 +4221,50 @@ details[open] > .doc-summary .doc-summary-main::before {
   background: transparent;
 }
 
-/* Analytics top: period + mode plaques */
-.stats-top {
+/* Analytics top: title + period + mode plaques in one band */
+.stats-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
-  gap: 1rem;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 0.4rem 1rem;
   margin-bottom: 1rem;
+  align-items: center;
+}
+.stats-head-title {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: #16283c;
+  line-height: 1.15;
+}
+.stats-head-period {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+}
+.stats-head .stats-mode-plaques-row {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
 }
 @media (max-width: 900px) {
-  .stats-top {
+  .stats-head {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  .stats-head-title {
+    grid-row: 1;
+  }
+  .stats-head .stats-mode-plaques-row {
+    grid-column: 1;
+    grid-row: 2;
+    max-width: 100%;
+    align-self: stretch;
+  }
+  .stats-head-period {
+    grid-row: 3;
   }
 }
 .stats-period-editor {
@@ -4256,6 +4300,22 @@ details[open] > .doc-summary .doc-summary-main::before {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+}
+.stats-mode-plaques-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: stretch;
+  flex: 0 1 auto;
+  max-width: min(100%, 34rem);
+  align-self: flex-start;
+}
+.stats-mode-plaques-row .stats-mode-plaque {
+  flex: 1 1 7.5rem;
+  min-width: 0;
+  max-width: 11rem;
+  padding: 0.42rem 0.6rem;
+  border-radius: 10px;
 }
 .stats-mode-plaque {
   display: block;
@@ -4409,6 +4469,15 @@ details[open] > .doc-summary .doc-summary-main::before {
   gap: 0.45rem;
   color: #1b2a4a;
   line-height: 1.45;
+}
+.stats-mode-plaques-row .stats-mode-plaque-title {
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+.stats-mode-plaques-row .stats-mode-plaque-sub {
+  margin-top: 0.1rem;
+  font-size: 0.65rem;
+  line-height: 1.15;
 }
 .stats-mode-plaque-title {
   display: block;

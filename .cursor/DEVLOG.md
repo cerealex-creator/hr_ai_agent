@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-08-12 — Брендинг сайдбара + компактная шапка аналитики
+
+**Тип:** `ui`
+
+**Сделано:**
+- В сайдбаре рядом с логотипом текст «HR-помогатор» (`RecruitingShell`, `.rec-logo`).
+- Шапка «Аналитика»: заголовок и период слева, три режима — компактная горизонтальная строка справа (grid, без высокой колонки).
+- Уменьшены отступы и шрифты mode-plaques в row-режиме.
+
+**Файлы:** `RecruitingShell.tsx`, `stats/page.tsx`, `globals.css`
+
+**Git:** (commit после push)
+
+**Следующий шаг:**
+- Деплой sidecar на hr-toolbox.ru.
+
+---
+
+## 2026-08-12 — Аналитика: закрытые вакансии по причинам + деплой sidecar
+
+**Тип:** `feature` + `deploy`
+
+**Сделано:**
+- Режим «Взгляд руководителя»: блок «Закрытые вакансии по причинам» (успех / заказчик / без результата) + список вакансий.
+- API `closed_breakdown` в `/stats/dashboard` (executive).
+- Деплой на Timeweb: `feature/v2` → `/opt/hr_ai_agent/v2`, sidecar пересобран; health OK.
+
+**Файлы:** `stats_service.py`, `schemas.py`, `stats/page.tsx`, `settings.py`, `offer_docx.py`, `CandidateOfferPanel.tsx`
+
+**Git:** `e036bca` push `feature/v2`
+
+**Следующий шаг:**
+- Проверить `/stats` режим руководителя на hr-toolbox.ru.
+
+---
+
 ## 2026-08-12 — Оффер: загрузка шаблона + история этапов rec-card
 
 **Тип:** `feature` + `ui`

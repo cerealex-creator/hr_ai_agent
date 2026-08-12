@@ -352,25 +352,10 @@ export default async function StatsPage({ searchParams }: Props) {
   const inputTo = dateTo || toInputDate(dash?.period_to);
 
   return (
-    <RecruitingShell activePath="/stats" title="Аналитика">
-      <div className="stats-top">
-        <div className="stats-top-left">
-          <StatsPeriodEditor
-            linkBase={{
-              mode,
-              companyId,
-              allCompanies,
-              deptId: allCompanies ? null : deptId,
-              vacancyId,
-              scope: activeOnly ? "active" : "all",
-            }}
-            dateFrom={inputFrom}
-            dateTo={inputTo}
-            period={period}
-            presets={periodChips}
-          />
-        </div>
-        <div className="stats-mode-plaques" role="tablist" aria-label="Режим статистики">
+    <RecruitingShell activePath="/stats">
+      <div className="stats-head">
+        <h1 className="stats-head-title">Аналитика</h1>
+        <div className="stats-mode-plaques stats-mode-plaques-row" role="tablist" aria-label="Режим статистики">
           <Link
             href={hrefFor({ ...linkBase, mode: "operational" })}
             className={`stats-mode-plaque${mode === "operational" ? " is-active" : ""}`}
@@ -392,6 +377,22 @@ export default async function StatsPage({ searchParams }: Props) {
             <span className="stats-mode-plaque-title">Помощь ИИ</span>
             <span className="stats-mode-plaque-sub">Свой запрос → расклад</span>
           </Link>
+        </div>
+        <div className="stats-head-period">
+          <StatsPeriodEditor
+            linkBase={{
+              mode,
+              companyId,
+              allCompanies,
+              deptId: allCompanies ? null : deptId,
+              vacancyId,
+              scope: activeOnly ? "active" : "all",
+            }}
+            dateFrom={inputFrom}
+            dateTo={inputTo}
+            period={period}
+            presets={periodChips}
+          />
         </div>
       </div>
 
