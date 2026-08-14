@@ -199,13 +199,12 @@ def messaging_status() -> dict:
 
 @router.post("/messaging/test-message")
 def messaging_test_message(body: MessagingTestMessageIn, db: Session = Depends(get_db)) -> dict:
-    from app.services.messaging.telegram_provider import send_html_message
+    from app.services.messaging.ops import send_test_telegram_message
 
     chat_id = str(body.chat_id or "").strip()
     if not chat_id:
         raise HTTPException(status_code=400, detail="chat_id required")
-    text = str(body.text or "Тестовое сообщение от HR AI Agent v2").strip()
-    ok, msg, mid = send_html_message(chat_id, text)
+    ok, msg, mid = send_test_telegram_message(db, chat_id)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg, "message_id": mid}

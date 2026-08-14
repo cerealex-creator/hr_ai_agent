@@ -518,3 +518,70 @@ def add_candidate_from_resume_file(
         "errors": errors[:10],
         "evaluate_candidate_ids": evaluate_ids,
     }
+
+
+def attach_resume_to_candidate(
+    db: Session,
+    candidate: models.Candidate,
+    *,
+    filename: str | None = None,
+    content: bytes | None = None,
+    resume_link: str | None = None,
+) -> models.Candidate:
+    """Attach PDF/file or URL to an existing card (does not create a new candidate)."""
+    from app.services.source_extract import DOC_EXT, extract_text_from_bytes
+
+    link = (resume_link or "").strip()
+    raw = content or b""
+    name_hint = (filename or "").strip()
+
+    if not raw and not link:
+        raise ValueError("Добавьте файл резюме или ссылку на PDF")
+
+    payload = dict(candidate.payload or {})
+    if raw:
+        ext = ("." + name_hint.rsplit(".", 1)[-1].lower()) if "." in name_hint else ""
+        if ext and ext not in DOC_EXT:
+            raise ValueError(f"Формат не поддерживается ({ext}). Используйте PDF, Word, TXT.")
+        if len(raw) > 15 * 1024 * 1024:
+            raise ValueError("Файл больше 15 МБ")
+        text = extract_text_from_bytes(name_hint or "resume.pdf", raw)
+        if not text.strip():
+            raise ValueError("Не удалось извлечь текст из файла")
+        payload["resume_text"] = text
+        payload["resume_filename"] = name_hint or "resume.pdf"
+        if ext.lower() == ".pdf":
+            from app.services.candidate_photo import try_attach_candidate_photo
+
+            try_attach_candidate_photo(db, candidate, pdf_bytes=raw)
+            payload = dict(candidate.payload or {})
+            payload["resume_text"] = text
+            payload["resume_filename"] = name_hint or "resume.pdf"
+    else:
+        text, err = fetch_resume_text_from_url(link)
+        payload["resume_link"] = link
+        if text.strip():
+            payload["resume_text"] = text
+        elif err:
+            raise ValueError(err or "Не удалось скачать резюме по ссылке")
+        if not str(payload.get("photo_url") or "").strip() and link:
+            from app.services.pdf_extract import download_url_bytes
+            from app.services.candidate_photo import try_attach_candidate_photo
+
+            try:
+                blob = download_url_bytes(link)
+                if blob.lstrip().startswith(b"%PDF"):
+                    try_attach_candidate_photo(db, candidate, pdf_bytes=blob)
+                    payload = dict(candidate.payload or {})
+                    payload["resume_link"] = link
+                    if text.strip():
+                        payload["resume_text"] = text
+            except Exception:  # noqa: BLE001
+                pass
+
+    candidate.payload = payload
+    flag_modified(candidate, "payload")
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    return candidate

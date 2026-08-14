@@ -45,6 +45,14 @@ def has_meeting_schedule(date_str: str | None, time_str: str | None) -> bool:
     return bool((date_str or "").strip() and (time_str or "").strip())
 
 
+def build_view_candidate_keyboard(url: str) -> dict[str, Any]:
+    """Telegram URL button to the candidate page in client zone (no status callbacks)."""
+    href = (url or "").strip()
+    if not href.startswith(("http://", "https://")):
+        return {"inline_keyboard": []}
+    return {"inline_keyboard": [[{"text": "Смотреть кандидата", "url": href}]]}
+
+
 def build_initial_status_keyboard(callback_id: str, current: str = "wait") -> dict[str, Any]:
     rows: list[list[dict[str, str]]] = []
     row: list[dict[str, str]] = []

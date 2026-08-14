@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { AuthGate } from "@/components/AuthGate";
 import { JobsLiveProvider } from "@/components/JobsLive";
 import { UI_PREFS_BOOT_SCRIPT, UiPrefsProvider } from "@/components/UiPrefsProvider";
@@ -16,6 +16,12 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

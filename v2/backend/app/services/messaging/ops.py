@@ -172,6 +172,78 @@ def send_vacancy_digest(db: Session, vacancy: models.Vacancy) -> tuple[bool, str
     return ok, msg
 
 
+def send_test_telegram_message(db: Session, chat_id: str) -> tuple[bool, str, str | None]:
+    """Test send: minimal candidate card + client-zone button when TELEGRAM_CARD_MINIMAL=true."""
+    from sqlalchemy import select
+
+    from app.core.config import get_settings
+    from app.services.interview_digest import public_app_base
+    from app.services.messaging.card_html import build_candidate_card_html_minimal
+    from app.services.messaging.channels import normalize_external_id
+    from app.services.messaging.keyboards import build_view_candidate_keyboard
+    from app.services.tenancy import generate_client_zone_token
+
+    settings = get_settings()
+    external_id = normalize_external_id(chat_id)
+    if not external_id:
+        return False, "Некорректный chat_id", None
+
+    if not settings.telegram_card_minimal:
+        text = "Тестовое сообщение от HR AI Agent v2"
+        ok, msg, mid = send_html_message(external_id, text)
+        return ok, msg, mid
+
+    base = public_app_base(settings)
+    if not base:
+        return False, "Задайте PUBLIC_APP_URL (например https://hr-toolbox.ru)", None
+
+    channel = db.scalar(
+        select(models.MessagingChannel).where(
+            models.MessagingChannel.provider == "telegram",
+            models.MessagingChannel.external_id == str(external_id),
+        )
+    )
+    client = db.get(models.Client, int(channel.client_id)) if channel and channel.client_id else None
+    if client is None:
+        from app.services import clients_write as cw
+
+        cw.ensure_client_schema(db)
+        client = cw.get_test_client(db)
+
+    if client is None:
+        return False, "Чат не привязан к клиенту — укажите Chat ID в тестовом чате или канале", None
+
+    if not (client.client_zone_token or "").strip():
+        client.client_zone_token = generate_client_zone_token(db)
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+
+    zone_url = f"{base.rstrip('/')}/c/{client.client_zone_token}"
+    vacancy_title = "Тестовая вакансия"
+    if channel and channel.client_id:
+        vac = db.scalar(
+            select(models.Vacancy)
+            .where(models.Vacancy.client_id == int(channel.client_id), models.Vacancy.active.is_(True))
+            .order_by(models.Vacancy.id.desc())
+            .limit(1)
+        )
+        if vac and (vac.title or "").strip():
+            vacancy_title = str(vac.title).strip()
+
+    text = build_candidate_card_html_minimal(
+        name="Тестовый кандидат",
+        vacancy_title=vacancy_title,
+    )
+    text += "\n\n<i>Пример формата карточки (тест)</i>"
+    ok, msg, mid = send_html_message(
+        external_id,
+        text,
+        reply_markup=build_view_candidate_keyboard(zone_url),
+    )
+    return ok, msg, mid
+
+
 def send_client_instruction(db: Session, chat_id: str, text: str | None = None) -> tuple[bool, str]:
     body = (text or "").strip() or (
         "<b>Инструкция для заказчика</b>\n\n"

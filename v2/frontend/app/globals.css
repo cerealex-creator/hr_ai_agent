@@ -3410,13 +3410,145 @@ details[open] > .doc-summary .doc-summary-main::before {
   background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
 }
 
-/* Client zone (public /c/[token]) */
+/* Client zone (public /c/[token]) — mobile-first */
 .cz-page {
   max-width: 44rem;
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(2.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   min-height: 100vh;
+  min-height: 100dvh;
   background: linear-gradient(180deg, var(--bg-gradient-top), var(--bg-gradient-bottom));
+  -webkit-text-size-adjust: 100%;
+}
+
+.cz-page-detail {
+  padding-bottom: max(3rem, env(safe-area-inset-bottom));
+}
+
+.cz-tap {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.cz-tap-primary {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent-deep);
+}
+
+.cz-tap-ghost {
+  margin-top: 0.75rem;
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--card));
+}
+
+.cz-tap.is-active,
+.cz-tap:active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+}
+
+.cz-link-stack,
+.cz-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.cz-status-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+@media (min-width: 420px) {
+  .cz-status-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.cz-section {
+  margin: 0 0 1.15rem;
+}
+
+.cz-section-title {
+  margin: 0 0 0.55rem;
+  font-size: 1.05rem;
+}
+
+.cz-back {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+  color: var(--accent-deep);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cz-card-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.cz-card-meta {
+  margin: 0.35rem 0 0;
+}
+
+.cz-decide {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cz-decide-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.cz-field,
+.cz-meeting label,
+.cz-decide textarea {
+  font-size: 1rem;
+}
+
+.cz-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cz-field textarea,
+.cz-meeting input,
+.cz-meeting select {
+  min-height: 2.75rem;
+  font-size: 16px;
+}
+
+.cz-digest {
+  margin-top: 0.75rem;
 }
 
 .cz-hub-steps {

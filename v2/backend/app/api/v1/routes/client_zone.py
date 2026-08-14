@@ -24,6 +24,11 @@ def client_zone_home(token: str, db: Session = Depends(get_db)) -> dict:
     return cz.list_zone_candidates(db, token)
 
 
+@router.get("/{token}/candidates/{candidate_id}")
+def client_zone_candidate(token: str, candidate_id: str, db: Session = Depends(get_db)) -> dict:
+    return cz.get_zone_candidate(db, token, candidate_id)
+
+
 @router.post("/{token}/candidates/{candidate_id}/decide")
 def client_zone_decide(
     token: str,

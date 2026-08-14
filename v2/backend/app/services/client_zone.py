@@ -14,10 +14,52 @@ from app.services.messaging.client_apply import apply_client_update
 from app.services.messaging.keyboards import interview_format_flags
 from app.services.stats_service import CLIENT_ZONE_STAGES
 from app.services.tenancy import resolve_client_zone_root, zone_owner_scope_ids
+from app.services.yandex_public import yandex_link_for_display
 
 # Approve / think / reject (+ meeting on ready)
 ZONE_ACTIONS = frozenset({"ready", "think", "reject"})
 ACTIONABLE_STATUSES = frozenset({"wait", "think"})
+
+
+def _https_url(raw: Any) -> str | None:
+    display = (yandex_link_for_display(str(raw or "")) or "").strip()
+    if display.startswith(("http://", "https://")):
+        return display
+    return None
+
+
+def client_zone_candidate_path(token: str, candidate_id: str | UUID) -> str:
+    return f"/c/{token}/{candidate_id}"
+
+
+def client_zone_candidate_public_url(
+    token: str,
+    candidate_id: str | UUID,
+    *,
+    settings: Any = None,
+) -> str:
+    from app.services.interview_digest import public_app_base
+
+    base = public_app_base(settings)
+    if not base:
+        return ""
+    return f"{base}{client_zone_candidate_path(token, candidate_id)}"
+
+
+def ensure_zone_token_for_vacancy(db: Session, vacancy: models.Vacancy) -> str:
+    from app.services.tenancy import generate_client_zone_token
+
+    if vacancy.client_id is None:
+        return ""
+    client = db.get(models.Client, vacancy.client_id)
+    if not client:
+        return ""
+    if not (client.client_zone_token or "").strip():
+        client.client_zone_token = generate_client_zone_token(db)
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+    return str(client.client_zone_token or "").strip()
 
 
 def _parse_meeting(
@@ -58,6 +100,76 @@ def zone_context(db: Session, token: str) -> tuple[models.Client, set[int]]:
     return owner, zone_owner_scope_ids(owner)
 
 
+def _zone_candidate_links(payload: dict[str, Any]) -> dict[str, Any]:
+    extra: list[dict[str, str]] = []
+    for raw in payload.get("extra_materials") or []:
+        if not isinstance(raw, dict):
+            continue
+        url = _https_url(raw.get("url"))
+        if not url:
+            continue
+        extra.append(
+            {
+                "title": str(raw.get("title") or "Материал").strip() or "Материал",
+                "url": url,
+            }
+        )
+    digest_raw = payload.get("interview_digest")
+    digest: dict[str, Any] | None = None
+    if isinstance(digest_raw, dict):
+        qa: list[dict[str, str]] = []
+        for row in digest_raw.get("qa") or []:
+            if not isinstance(row, dict):
+                continue
+            q = str(row.get("q") or row.get("вопрос") or "").strip()
+            a = str(row.get("a") or row.get("ответ") or "").strip()
+            if q or a:
+                qa.append({"q": q, "a": a})
+        summary = str(digest_raw.get("summary") or "").strip()
+        if summary or qa:
+            digest = {"summary": summary, "qa": qa}
+    return {
+        "resume_url": _https_url(payload.get("resume_link"))
+        or _https_url(payload.get("hh_resume_link")),
+        "video_url": _https_url(payload.get("video_link")),
+        "portfolio_url": _https_url(payload.get("portfolio_link")),
+        "task_url": _https_url(payload.get("task_link")),
+        "extra_materials": extra,
+        "interview_digest": digest,
+        "hr_comment": (str(payload.get("hr_comment") or "").strip() or None),
+    }
+
+
+def _zone_list_item(
+    c: models.Candidate,
+    vac: models.Vacancy,
+    *,
+    display: str,
+    clients: dict[int, str],
+) -> dict[str, Any]:
+    payload = c.payload or {}
+    links = _zone_candidate_links(payload)
+    return {
+        "id": str(c.id),
+        "name": c.name or "Без имени",
+        "vacancy_id": c.vacancy_id,
+        "vacancy_title": vac.title,
+        "client_id": vac.client_id,
+        "client_name": clients.get(vac.client_id) if vac.client_id else display,
+        "hr_stage": c.hr_stage,
+        "client_status": c.client_status or "wait",
+        "ai_score": payload.get("ai_score"),
+        "ai_comment": (str(payload.get("ai_comment") or "")[:800] or None),
+        "client_comment": (str(payload.get("client_comment") or "")[:500] or None),
+        "office_interview_date": str(payload.get("office_interview_date") or "") or None,
+        "office_interview_time": str(payload.get("office_interview_time") or "") or None,
+        "actionable": (c.client_status or "wait") in ACTIONABLE_STATUSES,
+        "has_resume": bool(links.get("resume_url")),
+        "has_video": bool(links.get("video_url")),
+        "has_digest": bool(links.get("interview_digest")),
+    }
+
+
 def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
     root, scope = zone_context(db, token)
     vacancies = list(
@@ -95,23 +207,7 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
         vac = vac_map.get(c.vacancy_id)
         if not vac:
             continue
-        payload = c.payload or {}
-        item = {
-            "id": str(c.id),
-            "name": c.name or "Без имени",
-            "vacancy_id": c.vacancy_id,
-            "vacancy_title": vac.title,
-            "client_id": vac.client_id,
-            "client_name": clients.get(vac.client_id) if vac.client_id else display,
-            "hr_stage": c.hr_stage,
-            "client_status": c.client_status or "wait",
-            "ai_score": payload.get("ai_score"),
-            "ai_comment": (str(payload.get("ai_comment") or "")[:800] or None),
-            "client_comment": (str(payload.get("client_comment") or "")[:500] or None),
-            "office_interview_date": str(payload.get("office_interview_date") or "") or None,
-            "office_interview_time": str(payload.get("office_interview_time") or "") or None,
-            "actionable": (c.client_status or "wait") in ACTIONABLE_STATUSES,
-        }
+        item = _zone_list_item(c, vac, display=display, clients=clients)
         if item["actionable"]:
             actionable.append(item)
         else:
@@ -121,6 +217,34 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
     return {
         "company": {"id": root.id, "name": display},
         "candidates": actionable + others[:30],
+    }
+
+
+def get_zone_candidate(db: Session, token: str, candidate_id: str | UUID) -> dict[str, Any]:
+    root, scope = zone_context(db, token)
+    try:
+        cid = candidate_id if isinstance(candidate_id, UUID) else UUID(str(candidate_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Candidate not found") from exc
+    candidate = db.get(models.Candidate, cid)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    vacancy = db.get(models.Vacancy, candidate.vacancy_id)
+    if not vacancy or vacancy.client_id not in scope or candidate.hr_stage not in CLIENT_ZONE_STAGES:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    display = _zone_display_name(db, root)
+    clients = {
+        c.id: c.name
+        for c in db.scalars(select(models.Client).where(models.Client.id.in_(scope))).all()
+    }
+    item = _zone_list_item(candidate, vacancy, display=display, clients=clients)
+    payload = candidate.payload or {}
+    links = _zone_candidate_links(payload)
+    item.update(links)
+    item["ai_comment"] = str(payload.get("ai_comment") or "").strip() or item.get("ai_comment")
+    return {
+        "company": {"id": root.id, "name": display},
+        "candidate": item,
     }
 
 

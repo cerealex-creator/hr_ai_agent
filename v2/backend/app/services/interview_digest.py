@@ -111,6 +111,10 @@ def public_app_base(settings: Settings | None = None) -> str:
     raw = (getattr(settings, "public_app_url", None) or "").strip().rstrip("/")
     if raw:
         return raw
+    for origin in getattr(settings, "cors_origin_list", None) or []:
+        o = str(origin or "").strip().rstrip("/")
+        if o.startswith("https://"):
+            return o
     try:
         from app.services.bitrix.tokens import public_api_base
 

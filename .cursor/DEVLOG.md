@@ -5,6 +5,86 @@
 
 ---
 
+## 2026-08-14 — Telegram minimal: тест + деплой на hr-toolbox.ru
+
+**Тип:** `fix` / `deploy`
+
+**Сделано:**
+- «Отправить тест в чат» → короткая карточка + кнопка «Смотреть кандидата» (ссылка `/c/{token}`), не plain text.
+- На сервер задеплоены minimal card, client zone UI; `TELEGRAM_CARD_MINIMAL=true`, `PUBLIC_APP_URL=https://hr-toolbox.ru`.
+
+**Файлы:** `messaging/ops.py`, `routes/messaging.py`, `gateway.py`, `card_html.py`, `frontend/app/c/…`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Повторить тест и отправку кандидата в Telegram с hr-toolbox.ru.
+
+---
+
+## 2026-08-14 — Перенос локальной БД на сервер (основная база)
+
+**Тип:** `deploy`
+
+**Сделано:**
+- Скрипты `deploy/push-db-to-server.sh` и `deploy/pull-db-from-server.sh` (+ `db-sync-common.sh`): dump/restore Postgres, rsync `data/`, бэкап цели перед перезаписью.
+- Push: локаль → `201.34.137.208` (102 кандидата, 13 вакансий, 10 клиентов); серверные тестовые данные перезаписаны.
+- На сервере: `PUBLIC_APP_URL=https://hr-toolbox.ru`, messaging-флаги из локального `.env`; после restore — `alembic stamp head` (схема новее version_num).
+- Health OK: `https://hr-toolbox.ru/api/v1/health`.
+
+**Файлы:** `deploy/push-db-to-server.sh`, `deploy/pull-db-from-server.sh`, `deploy/db-sync-common.sh`
+
+**Данные / конфиг:** бэкап сервера `backups/db/hr_v2_server_backup_*.dump`; `data/` синхронизирован
+
+**Git:** незакоммичено
+
+**Риски:** двусторонней авто-sync нет — только ручной push/pull; локально лучше `MESSAGING_OUTBOUND_ENABLED=false`, чтобы не дублировать Telegram.
+
+**Следующий шаг:**
+- Работать на https://hr-toolbox.ru; для подтягивания с сервера: `CONFIRM=yes ./deploy/pull-db-from-server.sh`
+
+---
+
+## 2026-08-14 — Эксперимент: короткое сообщение Telegram + карточка в клиентской зоне
+
+**Тип:** `feature`
+
+**Сделано:**
+- Новые Telegram-сообщения: ФИО со ссылкой на резюме + кнопка «Смотреть кандидата» (без статусов и лишних ссылок).
+- Старые сообщения в чате не переписываются; Битрикс не трогали.
+- Клиентская зона: список + страница кандидата `/c/{token}/{id}` (резюме, запись, материалы, выжимка, решение). Вёрстка под телефон.
+- Откат: `TELEGRAM_CARD_MINIMAL=false` (и перезапуск API).
+
+**Файлы:** `gateway.py`, `card_html.py`, `keyboards.py`, `inbound.py`, `client_zone.py`, `app/c/[token]/…`, `ClientZoneDecideForm.tsx`, `globals.css`, `config.py`
+
+**Данные / конфиг:** `TELEGRAM_CARD_MINIMAL` (default true), желательно `PUBLIC_APP_URL=https://hr-toolbox.ru`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Локально открыть `/c/…/uuid` с телефона; на сервере проверить новую отправку в Telegram.
+
+---
+
+## 2026-08-14 — Вкладка ИИ: пустое состояние и загрузка резюме
+
+**Тип:** `fix`
+
+**Сделано:**
+- Пустая вкладка «ИИ» больше не гоняет в «Интервью».
+- Если резюме уже есть — кнопка «Оценить по резюме» здесь же.
+- Если карточка без резюме (часто вручную) — текст про это + ссылка/файл прямо в ИИ, затем оценка.
+- `POST /candidates/{id}/attach-resume` — прикрепить файл или PDF-ссылку к существующей карточке.
+
+**Файлы:** `CandidateEditor.tsx`, `candidates.py`, `candidate_resume_eval.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Проверить на карточке вроде Авраменко: либо кнопка оценки, либо форма загрузки.
+
+---
+
 ## 2026-08-14 — Q-02–04 + UI карточки кандидата
 
 **Тип:** `feature` + `fix`
@@ -22,6 +102,22 @@
 
 **Следующий шаг:**
 - Локальный smoke: закрыть тест-вакансию, проверить вкладки и полоску этапов.
+
+---
+
+## 2026-08-14 — Деплой Q-01–Q-04 на hr-toolbox.ru
+
+**Тип:** `deploy`
+
+**Сделано:**
+- Коммит `d507262` → push `feature/v2`.
+- Rsync на VPS, пересборка sidecar (`api`, `worker`, `web`); `.env.sidecar` на месте (41 строка).
+- Health OK: `https://hr-toolbox.ru/api/v1/health`.
+
+**Git:** `d507262` → `origin/feature/v2`
+
+**Следующий шаг:**
+- Smoke на проде: карточка кандидата, закрытие вакансии.
 
 ---
 

@@ -144,6 +144,32 @@ def build_candidate_card_html(
     return "\n".join(lines)
 
 
+def build_candidate_card_html_minimal(
+    *,
+    name: str,
+    vacancy_title: str,
+    resume_link: str | None = None,
+    hh_resume_link: str | None = None,
+) -> str:
+    """Short Telegram card: clickable FIO (resume) + vacancy. Status lives in client zone."""
+    display_name = _esc(name) or "Кандидат"
+    resume = _client_https_url(resume_link or "")
+    if not resume:
+        resume = _client_https_url(hh_resume_link or "")
+    if resume:
+        name_html = f'<a href="{_esc(resume)}"><b>{display_name}</b></a>'
+    else:
+        name_html = f"<b>{display_name}</b>"
+    lines = [
+        "<b>🆕 Новый кандидат</b>",
+        "",
+        f"👤 {name_html}",
+        "",
+        f"<b>Вакансия:</b> {_esc(vacancy_title)}",
+    ]
+    return "\n".join(lines)
+
+
 def validate_send_fields(*, name: str, resume_link: str | None, hh_resume_link: str | None) -> list[str]:
     missing: list[str] = []
     if not (name or "").strip():

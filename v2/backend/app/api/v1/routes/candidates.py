@@ -515,6 +515,38 @@ def delete_candidate_endpoint(candidate_id: str, db: Session = Depends(get_db)) 
     delete_candidate(db, candidate)
     return None
 
+@router.post("/candidates/{candidate_id}/attach-resume", response_model=CandidateDetail)
+async def attach_resume_to_candidate_endpoint(
+    candidate_id: str,
+    file: UploadFile | None = File(default=None),
+    resume_link: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> CandidateDetail:
+    """Attach a resume file or PDF URL to an existing candidate (no new card)."""
+    from app.services.candidate_resume_eval import attach_resume_to_candidate
+
+    try:
+        from uuid import UUID
+
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    raw = await file.read() if file and file.filename else b""
+    filename = (file.filename or "").strip() if file else ""
+    try:
+        cand = attach_resume_to_candidate(
+            db,
+            candidate,
+            filename=filename or None,
+            content=raw or None,
+            resume_link=resume_link,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _candidate_detail(db, cand)
+
+
 @router.post(
     "/candidates/{candidate_id}/evaluate-resume",
     response_model=JobCreateOut,

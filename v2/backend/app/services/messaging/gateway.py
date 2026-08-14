@@ -14,10 +14,14 @@ from app.db import models
 from app.services.app_settings import client_notify_has, get_bitrix, get_client_notify
 from app.services.candidate_fields import candidate_public_fields
 from app.services.candidate_write import CLIENT_ZONE_ENTRY_STAGE, apply_hr_stage
-from app.services.messaging.card_html import build_candidate_card_html, validate_send_fields
+from app.services.messaging.card_html import (
+    build_candidate_card_html,
+    build_candidate_card_html_minimal,
+    validate_send_fields,
+)
 from app.services.messaging.channels import ensure_channel_for_vacancy
 from app.services.messaging.client_apply import ensure_tg_callback_id
-from app.services.messaging.keyboards import build_initial_status_keyboard
+from app.services.messaging.keyboards import build_initial_status_keyboard, build_view_candidate_keyboard
 from app.services.messaging.telegram_provider import send_html_message
 
 
@@ -68,19 +72,47 @@ def send_candidate_card(
     callback_id = ensure_tg_callback_id(candidate)
     from app.services.interview_digest import interview_digest_public_url
 
-    text = build_candidate_card_html(
-        name=candidate.name,
-        vacancy_title=vacancy.title,
-        resume_link=fields.get("resume_link"),
-        hh_resume_link=fields.get("hh_resume_link"),
-        video_link=fields.get("video_link"),
-        portfolio_link=fields.get("portfolio_link"),
-        task_link=fields.get("task_link"),
-        hr_comment=(candidate.payload or {}).get("hr_comment"),
-        interview_digest_url=interview_digest_public_url(candidate.payload),
-        locked=False,
-    )
-    reply_markup = build_initial_status_keyboard(callback_id, candidate.client_status or "wait")
+    minimal = bool(settings.telegram_card_minimal)
+    card_layout = "minimal" if minimal else "full"
+    if minimal:
+        from app.services.client_zone import (
+            client_zone_candidate_public_url,
+            ensure_zone_token_for_vacancy,
+        )
+
+        zone_token = ensure_zone_token_for_vacancy(db, vacancy)
+        zone_url = (
+            client_zone_candidate_public_url(zone_token, candidate.id)
+            if zone_token
+            else ""
+        )
+        if not zone_url:
+            raise MessagingError(
+                "Нет публичного адреса сайта для кнопки в Telegram "
+                "(задайте PUBLIC_APP_URL, например https://hr-toolbox.ru)",
+                400,
+            )
+        text = build_candidate_card_html_minimal(
+            name=candidate.name,
+            vacancy_title=vacancy.title,
+            resume_link=fields.get("resume_link"),
+            hh_resume_link=fields.get("hh_resume_link"),
+        )
+        reply_markup = build_view_candidate_keyboard(zone_url)
+    else:
+        text = build_candidate_card_html(
+            name=candidate.name,
+            vacancy_title=vacancy.title,
+            resume_link=fields.get("resume_link"),
+            hh_resume_link=fields.get("hh_resume_link"),
+            video_link=fields.get("video_link"),
+            portfolio_link=fields.get("portfolio_link"),
+            task_link=fields.get("task_link"),
+            hr_comment=(candidate.payload or {}).get("hr_comment"),
+            interview_digest_url=interview_digest_public_url(candidate.payload),
+            locked=False,
+        )
+        reply_markup = build_initial_status_keyboard(callback_id, candidate.client_status or "wait")
 
     ok, msg, message_id = send_html_message(channel.external_id, text, reply_markup=reply_markup)
     if not ok or not message_id:
@@ -98,6 +130,7 @@ def send_candidate_card(
             "chat_id": channel.external_id,
             "tg_callback_id": callback_id,
             "has_buttons": True,
+            "card_layout": card_layout,
         },
     )
     db.add(post)

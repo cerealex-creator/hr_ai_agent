@@ -79,6 +79,18 @@ function field(v: string | null | undefined): string {
   return v ?? "";
 }
 
+function candidateHasResumeForEval(c: CandidateDetail): boolean {
+  const p = c.payload || {};
+  const text = typeof p.resume_text === "string" && p.resume_text.trim();
+  const link = (c.resume_link || "").trim();
+  return Boolean(text || link);
+}
+
+function candidateCreatedManually(c: CandidateDetail): boolean {
+  const source = String((c.payload || {}).source || "").trim();
+  return source === "manual" || source === "";
+}
+
 function aiScoreSourceLabel(source: string | null | undefined): string {
   const s = (source || "").trim().toLowerCase();
   if (s === "resume") return "по резюме";
@@ -255,6 +267,9 @@ export function CandidateEditor({ initial }: Props) {
   const [editingMaterials, setEditingMaterials] = useState(false);
   const [editingPipeline, setEditingPipeline] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
+  const [attachResumeLink, setAttachResumeLink] = useState("");
+  const [attachResumeFile, setAttachResumeFile] = useState<File | null>(null);
+  const [attachBusy, setAttachBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [aiCommentOpen, setAiCommentOpen] = useState(false);
@@ -937,6 +952,38 @@ export function CandidateEditor({ initial }: Props) {
           ? "Запущена оценка резюме (без опросника)"
           : "Запущена оценка резюме и формирование опросника",
     );
+  };
+
+  const attachResumeThenEvaluate = async () => {
+    setAttachBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const body = new FormData();
+      if (attachResumeFile) {
+        body.append("file", attachResumeFile);
+      } else if (attachResumeLink.trim()) {
+        body.append("resume_link", attachResumeLink.trim());
+      } else {
+        throw new Error("Добавьте файл или ссылку на PDF");
+      }
+      const res = await apiFetch(`/api/v1/candidates/${c.id}/attach-resume`, {
+        method: "POST",
+        body,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      applyCandidate(data as CandidateDetail);
+      setAttachResumeFile(null);
+      setAttachResumeLink("");
+      await evaluateResume();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Не удалось прикрепить резюме");
+    } finally {
+      setAttachBusy(false);
+    }
   };
 
   const transcribeAndEvaluate = async () => {
@@ -2005,7 +2052,84 @@ export function CandidateEditor({ initial }: Props) {
       ) : null}
 
       {activeTab === "ai" && !(c.client_comment || hasAiComment || c.ai_score != null) ? (
-        <p className="muted">Оценка ИИ ещё не проводилась. Загрузите резюме и нажмите «Оценить по резюме» во вкладке «Интервью».</p>
+        <div className="rec-card">
+          <h3 className="rec-card-title">Комментарий ИИ</h3>
+          {resumeEvalBusy ? (
+            <p className="muted hh-micro">
+              {job?.progress_label || "Оценка резюме в очереди…"}
+            </p>
+          ) : null}
+          {candidateHasResumeForEval(c) ? (
+            <>
+              <p className="muted">
+                Резюме уже есть в карточке, но оценка ИИ ещё не запускалась или не завершилась.
+              </p>
+              <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+                <button
+                  type="button"
+                  className="chip chip-active"
+                  disabled={resumeEvalBusy || attachBusy}
+                  onClick={() => {
+                    void evaluateResume().catch((e) => {
+                      setErr(e instanceof Error ? e.message : "Ошибка оценки");
+                    });
+                  }}
+                >
+                  {resumeEvalBusy ? "Оценка…" : "Оценить по резюме"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="muted">
+                {candidateCreatedManually(c)
+                  ? "Кандидат создан вручную, резюме не подгружалось — поэтому оценки ИИ нет."
+                  : "Текста резюме в карточке нет — оценку ИИ запустить нельзя."}
+              </p>
+              <p className="muted hh-micro">
+                Добавьте PDF по ссылке или файлом прямо здесь, затем запустится оценка.
+              </p>
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="ai-resume-link">
+                  Ссылка на PDF резюме
+                </label>
+                <input
+                  id="ai-resume-link"
+                  value={attachResumeLink}
+                  onChange={(e) => setAttachResumeLink(e.target.value)}
+                  disabled={attachBusy || resumeEvalBusy}
+                  placeholder="https://disk.yandex.ru/…"
+                />
+              </div>
+              <div className="hh-field">
+                <label className="hh-label" htmlFor="ai-resume-file">
+                  Или файл (PDF, Word)
+                </label>
+                <input
+                  id="ai-resume-file"
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt"
+                  disabled={attachBusy || resumeEvalBusy}
+                  onChange={(e) => setAttachResumeFile(e.target.files?.[0] || null)}
+                />
+              </div>
+              <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.5rem" }}>
+                <button
+                  type="button"
+                  className="chip chip-active"
+                  disabled={
+                    attachBusy ||
+                    resumeEvalBusy ||
+                    (!attachResumeFile && !attachResumeLink.trim())
+                  }
+                  onClick={() => void attachResumeThenEvaluate()}
+                >
+                  {attachBusy ? "Загрузка…" : "Загрузить и оценить"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       ) : null}
 
       {scheduleModalOpen ? (

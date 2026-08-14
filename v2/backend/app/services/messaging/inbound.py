@@ -377,6 +377,10 @@ def refresh_card_message(
     ch = db.get(models.MessagingChannel, post.channel_id)
     if not ch:
         return False, "channel missing"
+    layout = str((post.payload or {}).get("card_layout") or "").strip()
+    if layout == "minimal":
+        # Experiment: do not rewrite short Telegram cards (status lives in client zone).
+        return True, "minimal"
     locked = mode not in ("initial", "change") and (candidate.client_status or "wait") not in (
         "",
         "wait",
