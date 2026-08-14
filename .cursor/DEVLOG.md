@@ -5,6 +5,46 @@
 
 ---
 
+## 2026-08-14 — Деплой smoke-test правок на hr-toolbox.ru
+
+**Тип:** `deploy`
+
+**Сделано:**
+- Коммит `b44cd3a` (FIX_QUEUE P1–P2, клиентская зона, UI shell) → push `feature/v2`.
+- Rsync на VPS `201.34.137.208:/opt/hr_ai_agent`, пересборка `docker compose -f docker-compose.sidecar.yml up -d --build`.
+- После rsync восстановлен `v2/.env.sidecar` из env контейнера (41 переменная); health OK.
+- Коммит `5fc08fb`: `sync-to-server.sh` исключает `.env*` при `--delete`.
+
+**Файлы:** `deploy/sync-to-server.sh`, сервер `/opt/hr_ai_agent/v2/.env.sidecar`
+
+**Git:** `b44cd3a`, `5fc08fb` → `origin/feature/v2`
+
+**Риски/регрессии:**
+- Первый rsync без exclude удалил `.env.sidecar` на сервере — при следующем деплое exclude уже защищает.
+
+**Следующий шаг:**
+- Прогнать SMOKE_TEST на https://hr-toolbox.ru
+
+---
+
+## 2026-08-14 — Журналы QUEUE + BACKLOG, первые задачи в очереди
+
+**Тип:** `decision`
+
+**Сделано:**
+- `v2/docs/QUEUE.md` — ближайшая очередь, кодовое слово **`ОЧЕРЕДЬ`**
+- `v2/docs/BACKLOG.md` — крупные задачи, кодовое слово **`БЭКЛОГ`**; ЯКОРЬ → B-YAKOR-001
+- В QUEUE (ready): авто interview_scheduled→done (+30м), закрытие вакансии→статус кандидатам, порядок оффера, UI кнопок карточки
+
+**Файлы:** `v2/docs/QUEUE.md`, `v2/docs/BACKLOG.md`, `IMPLEMENTATION_PLAN_YAKOR.md` (ссылка на BACKLOG)
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Triage по команде **`ОЧЕРЕДЬ`** или **`БЭКЛОГ`**
+
+---
+
 ## 2026-08-14 — ЯКОРЬ: план реализации persons/dedup/analytics/tags/talent-pool
 
 **Тип:** `decision`
