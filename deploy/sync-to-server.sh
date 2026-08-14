@@ -24,6 +24,10 @@ rsync -avz --delete \
   --exclude 'backups/' \
   --exclude 'Downloads/' \
   --exclude '.DS_Store' \
+  --exclude '.env' \
+  --exclude 'v2/.env' \
+  --exclude 'v2/.env.sidecar' \
+  --exclude 'v2/.env.prod' \
   "${PROJECT_DIR}/" "${SERVER}:${REMOTE_DIR}/"
 
 echo ""
