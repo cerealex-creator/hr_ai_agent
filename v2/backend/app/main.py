@@ -12,25 +12,29 @@ from app.workers.redis_pool import close_arq_pool
 
 settings = get_settings()
 logger = logging.getLogger("hr_api")
-_bitrix_tick_stop = threading.Event()
+_maintenance_tick_stop = threading.Event()
 
 
-def _bitrix_tick_loop() -> None:
-    while not _bitrix_tick_stop.wait(60):
+def _maintenance_tick_loop() -> None:
+    while not _maintenance_tick_stop.wait(60):
         from app.db.session import SessionLocal
         from app.services.app_settings import get_bitrix
         from app.services.bitrix.think_followup import run_bitrix_maintenance_tick
+        from app.services.interview_auto_advance import run_interview_auto_advance_tick
 
-        if not get_bitrix().get("enabled"):
-            continue
         db = SessionLocal()
         try:
-            result = run_bitrix_maintenance_tick(db)
-            think = result.get("think_followup") or {}
-            if think.get("scheduled") or think.get("created"):
-                logger.info("bitrix maintenance tick: %s", result)
+            adv = run_interview_auto_advance_tick(db)
+            if adv.get("advanced") or adv.get("errors"):
+                logger.info("interview auto-advance tick: %s", adv)
+
+            if get_bitrix().get("enabled"):
+                result = run_bitrix_maintenance_tick(db)
+                think = result.get("think_followup") or {}
+                if think.get("scheduled") or think.get("created"):
+                    logger.info("bitrix maintenance tick: %s", result)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("bitrix maintenance tick error: %s", exc)
+            logger.exception("maintenance tick error: %s", exc)
             db.rollback()
         finally:
             db.close()
@@ -83,10 +87,12 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         print(f"client_notify migrate skipped: {exc}")
 
-    tick_thread = threading.Thread(target=_bitrix_tick_loop, daemon=True, name="bitrix-tick")
+    tick_thread = threading.Thread(
+        target=_maintenance_tick_loop, daemon=True, name="maintenance-tick"
+    )
     tick_thread.start()
     yield
-    _bitrix_tick_stop.set()
+    _maintenance_tick_stop.set()
     await close_arq_pool()
 
 

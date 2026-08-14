@@ -687,6 +687,7 @@ def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> l
         "interview_scheduled",
         "no_response_3d",
         "primary_contact",
+        "rejected_vacancy_closed",
         "rejected_hr",
         "rejected_client",
         "rejected_candidate",

@@ -1163,6 +1163,33 @@ tr:last-child td {
   font-weight: 600;
 }
 
+/* Candidate card action tabs — larger hit area + stronger active state (Q-04) */
+.cand-action-nav {
+  gap: 0.45rem;
+  margin-bottom: 1.15rem;
+  padding-bottom: 0.75rem;
+}
+
+.cand-action-nav .cand-tab {
+  padding: 0.55rem 1.05rem;
+  font-size: 0.95rem;
+  min-height: 2.5rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--card) 92%, var(--accent-soft));
+}
+
+.cand-action-nav .cand-tab:hover {
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--card));
+}
+
+.cand-action-nav .cand-tab.is-active {
+  color: var(--accent-deep);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
 .cand-tab-panel {
   margin-bottom: 1rem;
 }

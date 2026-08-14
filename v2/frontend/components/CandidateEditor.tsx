@@ -32,10 +32,10 @@ const CAND_TABS: { id: CandTab; label: string }[] = [
   { id: "profile", label: "Анкета" },
   { id: "materials", label: "Материалы" },
   { id: "pipeline", label: "Воронка" },
-  { id: "offer", label: "Оффер" },
   { id: "interview", label: "Интервью" },
   { id: "client", label: "Заказчик" },
   { id: "ai", label: "ИИ" },
+  { id: "offer", label: "Сделать оффер" },
 ];
 
 function isCandTab(value: string | null): value is CandTab {
@@ -1211,7 +1211,7 @@ export function CandidateEditor({ initial }: Props) {
         </div>
       ) : null}
 
-      <nav className="cand-tabs" aria-label="Разделы карточки">
+      <nav className="cand-tabs cand-action-nav" aria-label="Разделы карточки">
         {CAND_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -1522,13 +1522,13 @@ export function CandidateEditor({ initial }: Props) {
             </div>
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
               <button type="button" className="chip" onClick={() => setEditingPipeline(true)}>
-                Редактировать
+                Изменить статус
               </button>
               <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
                 Применить этап по статусу заказчика
               </button>
               <button type="button" className="chip" onClick={() => setActiveTab("offer")}>
-                К разделу «Оффер»
+                К разделу «Сделать оффер»
               </button>
             </div>
           </>

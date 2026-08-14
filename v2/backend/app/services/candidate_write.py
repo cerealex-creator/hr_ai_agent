@@ -30,6 +30,7 @@ HR_STAGES: dict[str, str] = {
     "rejected_candidate": "Отказ кандидата",
     "rejected_client": "Отказ заказчика",
     "rejected_hr": "Отказ мой",
+    "rejected_vacancy_closed": "Отказ: вакансия закрыта",
 }
 
 CLIENT_ZONE_ENTRY_STAGE = "client_review"

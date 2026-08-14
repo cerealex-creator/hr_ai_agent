@@ -18,6 +18,7 @@ export const HR_STAGE_LABELS: Record<string, string> = {
   rejected_candidate: "Отказ кандидата",
   rejected_client: "Отказ заказчика",
   rejected_hr: "Отказ мой",
+  rejected_vacancy_closed: "Отказ: вакансия закрыта",
 };
 
 /** Positive funnel for stage progress UI (excludes rejects / archive). */
@@ -27,11 +28,11 @@ export const HR_FUNNEL_STAGES = [
   "no_response_3d",
   "interview_scheduled",
   "interview_done",
+  "offer",
   "test_task",
   "client_review",
   "client_pause",
   "client_meeting",
-  "offer",
   "internship",
   "started_work",
 ] as const;
@@ -41,6 +42,7 @@ export const REJECTION_STAGES = new Set([
   "rejected_candidate",
   "rejected_client",
   "rejected_hr",
+  "rejected_vacancy_closed",
 ]);
 
 export function isRejectionStage(stage: string): boolean {
@@ -89,6 +91,8 @@ export function getStageTone(stage: string | null | undefined): StageTone {
       return "green-1";
     case "interview_done":
       return "green-2";
+    case "offer":
+      return "green-3";
     case "test_task":
       return "green-2";
     case "client_review":
@@ -97,8 +101,6 @@ export function getStageTone(stage: string | null | undefined): StageTone {
       return "green-3";
     case "client_meeting":
       return "green-4";
-    case "offer":
-      return "green-5";
     case "internship":
       return "green-5";
     case "started_work":

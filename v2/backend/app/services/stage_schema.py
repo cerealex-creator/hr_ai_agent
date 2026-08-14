@@ -19,16 +19,17 @@ HR_CATALOG_ORDER = [
     "no_response_3d",
     "interview_scheduled",
     "interview_done",
+    "offer",
     "test_task",
     "client_review",
     "client_pause",
     "client_meeting",
-    "offer",
     "internship",
     "started_work",
     "rejected_candidate",
     "rejected_client",
     "rejected_hr",
+    "rejected_vacancy_closed",
     "archived",
 ]
 
@@ -55,6 +56,7 @@ PROTECTED_HR_STAGES = frozenset(
         "rejected_candidate",
         "rejected_client",
         "rejected_hr",
+        "rejected_vacancy_closed",
     }
 )
 

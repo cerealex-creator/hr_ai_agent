@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     telegram_hr_user_id: str = ""
     telegram_reminder_tz: str = "Europe/Moscow"
     messaging_reminder_interval_sec: int = 60
+    # After meeting start (MSK) + N minutes, auto interview_scheduled → interview_done
+    interview_auto_advance_minutes: int = 30
 
     # Zoom User OAuth (Marketplace app) — create meetings for connected user
     zoom_client_id: str = ""

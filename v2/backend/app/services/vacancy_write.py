@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,24 @@ from app.services.vacancy_outcome import HIRE_STAGES
 CLOSE_REASON_SUCCESS = "success"
 CLOSE_REASON_CLIENT = "client_cancelled"
 CLOSE_REASONS = frozenset({CLOSE_REASON_SUCCESS, CLOSE_REASON_CLIENT})
+
+logger = logging.getLogger(__name__)
+
+# Hire + terminal reject/archive — не трогаем при закрытии вакансии.
+VACANCY_CLOSE_SKIP_STAGES = frozenset(
+    {
+        "internship",
+        "started_work",
+        "rejected",
+        "rejected_candidate",
+        "rejected_client",
+        "rejected_hr",
+        "rejected_vacancy_closed",
+        "archived",
+    }
+)
+VACANCY_CLOSED_CANDIDATE_STAGE = "rejected_vacancy_closed"
+VACANCY_CLOSED_CANDIDATE_NOTE = "вакансия закрыта"
 
 
 class VacancyWriteError(Exception):
@@ -56,6 +75,36 @@ def vacancy_has_hire(db: Session, vacancy_id: int) -> bool:
         )
     )
     return int(cnt or 0) > 0
+
+
+def _reject_hanging_candidates_on_close(db: Session, vacancy_id: int) -> int:
+    """Move intermediate-stage candidates to rejected_vacancy_closed."""
+    from app.services.candidate_write import set_stage
+
+    candidates = list(
+        db.scalars(select(models.Candidate).where(models.Candidate.vacancy_id == vacancy_id)).all()
+    )
+    moved = 0
+    for cand in candidates:
+        stage = (cand.hr_stage or "").strip()
+        if not stage or stage in VACANCY_CLOSE_SKIP_STAGES:
+            continue
+        try:
+            set_stage(
+                db,
+                cand,
+                hr_stage=VACANCY_CLOSED_CANDIDATE_STAGE,
+                note=VACANCY_CLOSED_CANDIDATE_NOTE,
+            )
+            moved += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "vacancy close: candidate %s stage update failed: %s",
+                cand.id,
+                exc,
+            )
+            db.rollback()
+    return moved
 
 
 def _active_title_conflict(
@@ -229,6 +278,16 @@ def close_vacancy(
     flag_modified(vacancy, "payload")
     db.commit()
     db.refresh(vacancy)
+
+    moved = _reject_hanging_candidates_on_close(db, vacancy.id)
+    if moved:
+        logger.info(
+            "vacancy %s closed: %s candidates → %s",
+            vacancy.id,
+            moved,
+            VACANCY_CLOSED_CANDIDATE_STAGE,
+        )
+
     return vacancy
 
 

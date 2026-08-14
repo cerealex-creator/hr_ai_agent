@@ -460,7 +460,7 @@ EXECUTIVE_PERIODS = DASHBOARD_PERIODS  # alias for route validation
 OPERATIONAL_PERIODS = DASHBOARD_PERIODS
 MONTHS_BACK_PERIODS = frozenset({"m1", "m2", "m3", "m6", "m12"})
 REJECT_STAGES = frozenset(
-    {"rejected_hr", "rejected_client", "rejected_candidate", "rejected", "archived"}
+    {"rejected_hr", "rejected_client", "rejected_candidate", "rejected_vacancy_closed", "rejected", "archived"}
 )
 
 

@@ -5,6 +5,44 @@
 
 ---
 
+## 2026-08-14 — Q-02–04 + UI карточки кандидата
+
+**Тип:** `feature` + `fix`
+
+**Сделано:**
+- **Q-02:** при закрытии вакансии «висящие» кандидаты → `rejected_vacancy_closed` (note «вакансия закрыта»); hire/reject не трогаем.
+- **Q-03:** оффер в воронке сразу после `interview_done` (`HR_CATALOG_ORDER`, `HR_FUNNEL_STAGES`).
+- **Q-04:** вкладки карточки крупнее (`.cand-action-nav`).
+- Вкладка «Оффер» → «Сделать оффер», перенесена в конец (после ИИ).
+- В блоке «Этап» (воронка): «Редактировать» → «Изменить статус».
+
+**Файлы:** `vacancy_write.py`, `candidate_write.py`, `stage_schema.py`, `labels.ts`, `CandidateEditor.tsx`, `globals.css`, `stats_service.py`, `vacancies.py`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Локальный smoke: закрыть тест-вакансию, проверить вкладки и полоску этапов.
+
+---
+
+## 2026-08-14 — Q-01: авто interview_scheduled → interview_done (+30 мин)
+
+**Тип:** `feature`
+
+**Сделано:**
+- Новый tick `run_interview_auto_advance_tick`: кандидаты на `interview_scheduled` с прошедшим слотом (MSK) + 30 мин → `interview_done` через `set_stage` с note «авто после начала собеседования».
+- Периодический запуск каждые 60 сек в lifespan API (`maintenance-tick`), независимо от Bitrix.
+- Настройка `INTERVIEW_AUTO_ADVANCE_MINUTES` (default 30) в `config.py`.
+
+**Файлы:** `interview_auto_advance.py`, `main.py`, `config.py`, `v2/docs/QUEUE.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Локальный smoke: кандидат с прошлым слотом → дождаться tick или вызвать tick вручную; потом деплой.
+
+---
+
 ## 2026-08-14 — Деплой smoke-test правок на hr-toolbox.ru
 
 **Тип:** `deploy`
@@ -24,6 +62,24 @@
 
 **Следующий шаг:**
 - Прогнать SMOKE_TEST на https://hr-toolbox.ru
+
+---
+
+## 2026-08-14 — КАСКАД: план ИИ tier fast/top
+
+**Тип:** `decision`
+
+**Сделано:**
+- `v2/docs/IMPLEMENTATION_PLAN_KASKAD.md` — 4 фазы, OpenAPI settings/usage, alembic `ai_usage_log`, task_map
+- BACKLOG B-KASKAD-001; кодовое слово **`КАСКАД`**
+- Уточнение: HH prefilter (H2) не LLM — исключён из task_map
+
+**Файлы:** `IMPLEMENTATION_PLAN_KASKAD.md`, `BACKLOG.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Ревью архитектором → **`КАСКАД P1`**
 
 ---
 
