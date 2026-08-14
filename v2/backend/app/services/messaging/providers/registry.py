@@ -109,11 +109,7 @@ class WebClientZoneProvider:
         *,
         move_to_client_review: bool = False,
     ) -> dict[str, Any]:
-        from app.services.tenancy import (
-            ensure_root_for_zone,
-            generate_client_zone_token,
-            root_company_scope_ids,
-        )
+        from app.services.tenancy import generate_client_zone_token
 
         vacancy = db.get(models.Vacancy, candidate.vacancy_id)
         if not vacancy or vacancy.client_id is None:
@@ -121,20 +117,27 @@ class WebClientZoneProvider:
         client = db.get(models.Client, vacancy.client_id)
         if not client:
             raise RuntimeError("Клиент не найден")
-        root = ensure_root_for_zone(db, client)
-        if not (root.client_zone_token or "").strip():
-            root.client_zone_token = generate_client_zone_token()
+        if not (client.client_zone_token or "").strip():
+            client.client_zone_token = generate_client_zone_token(db)
             db.commit()
-            db.refresh(root)
-        path = f"/c/{root.client_zone_token}"
+            db.refresh(client)
+        path = f"/c/{client.client_zone_token}"
+        label = client.name
+        if client.parent_id:
+            parent = db.get(models.Client, client.parent_id)
+            if parent and parent.name:
+                label = f"{parent.name} · {client.name}"
         return {
             "ok": True,
             "provider": "web",
-            "message": f"Веб-зона: {path}",
+            "message": (
+                f"Кандидат в веб-зоне заказчика ({label}). "
+                f"Отправьте заказчику ссылку из раздела «Клиентская зона» или настроек компании: {path}"
+            ),
             "client_zone_path": path,
-            "company_id": root.id,
-            "company_name": root.name,
-            "scope_client_ids": sorted(root_company_scope_ids(db, root)),
+            "company_id": client.id,
+            "company_name": label,
+            "scope_client_ids": [int(client.id)],
         }
 
 

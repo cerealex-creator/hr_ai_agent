@@ -740,7 +740,7 @@ def create_vacancy_candidate(
     "/vacancies/{vacancy_id}/candidates/bulk-links",
     response_model=BulkLinksOut,
 )
-def bulk_candidates_from_links(
+async def bulk_candidates_from_links(
     vacancy_id: int,
     body: BulkLinksIn,
     db: Session = Depends(get_db),
@@ -766,6 +766,10 @@ def bulk_candidates_from_links(
     result = bulk_add_from_resume_links(
         db, vacancy, uniq, evaluate=bool(body.evaluate)
     )
+    job_ids = await _enqueue_resume_evals(db, result.get("evaluate_candidate_ids") or [])
+    result["evaluate_job_ids"] = job_ids
+    if job_ids and not any("очереди" in m for m in result.get("messages") or []):
+        result.setdefault("messages", []).append(f"Оценка ИИ: задач в очереди {len(job_ids)}")
     return BulkLinksOut(**result)
 
 
@@ -796,7 +800,65 @@ async def candidate_from_resume_file(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job_ids = await _enqueue_resume_evals(db, result.get("evaluate_candidate_ids") or [])
+    result["evaluate_job_ids"] = job_ids
     return BulkLinksOut(**result)
+
+
+async def _enqueue_resume_evals(db: Session, candidate_ids: list[str]) -> list[str]:
+    """Queue background resume evaluation for newly added candidates."""
+    from uuid import UUID
+
+    job_ids: list[str] = []
+    if not candidate_ids:
+        return job_ids
+    try:
+        pool = await get_arq_pool()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"Кандидаты добавлены, но очередь оценки недоступна (Redis/worker): {exc}",
+        ) from exc
+
+    for raw_id in candidate_ids:
+        try:
+            cid = UUID(str(raw_id))
+        except ValueError:
+            continue
+        cand = db.get(models.Candidate, cid)
+        if not cand:
+            continue
+        existing = job_svc.find_active_job_for_candidate(
+            db,
+            job_type="candidate_evaluate_resume",
+            candidate_id=str(cand.id),
+        )
+        if existing:
+            job_ids.append(str(existing.id))
+            continue
+        job = job_svc.create_job_row(
+            db,
+            job_type="candidate_evaluate_resume",
+            vacancy_id=cand.vacancy_id,
+            payload={
+                "candidate_id": str(cand.id),
+                "candidate_name": cand.name,
+            },
+        )
+        try:
+            await pool.enqueue_job(
+                "candidate_evaluate_resume", str(job.id), _job_id=str(job.id)
+            )
+            job_ids.append(str(job.id))
+        except Exception as exc:  # noqa: BLE001
+            job_svc.update_job(
+                db,
+                job.id,
+                status="failed",
+                progress_label="Не удалось поставить в очередь",
+                error=str(exc),
+            )
+    return job_ids
 
 
 @router.post("/vacancies/{vacancy_id}/digest-to-chat")

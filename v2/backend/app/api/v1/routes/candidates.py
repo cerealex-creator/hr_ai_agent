@@ -1,7 +1,7 @@
 """v1 API routes (split from endpoints.py — audit M6)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ from app.schemas import (
     CandidateSendToChatIn,
     CandidateSendToChatOut,
     CandidateEvaluateOut,
+    EvaluateResumeIn,
     BulkLinksIn,
     BulkLinksOut,
     QuestionnaireOut,
@@ -521,6 +522,7 @@ def delete_candidate_endpoint(candidate_id: str, db: Session = Depends(get_db)) 
 )
 async def evaluate_candidate_resume_endpoint(
     candidate_id: str,
+    body: EvaluateResumeIn = Body(default_factory=EvaluateResumeIn),
     db: Session = Depends(get_db),
 ) -> JobCreateOut:
     try:
@@ -550,6 +552,7 @@ async def evaluate_candidate_resume_endpoint(
         payload={
             "candidate_id": str(candidate.id),
             "candidate_name": candidate.name,
+            "skip_questionnaire": bool(body.skip_questionnaire),
         },
     )
     try:
@@ -568,7 +571,12 @@ async def evaluate_candidate_resume_endpoint(
         id=job.id,
         status=job.status,
         job_type=job.job_type,
-        progress_label=job.progress_label or "Оценка резюме в очереди",
+        progress_label=job.progress_label
+        or (
+            "Оценка резюме в очереди (без опросника)"
+            if body.skip_questionnaire
+            else "Оценка резюме в очереди"
+        ),
     )
 
 @router.post(

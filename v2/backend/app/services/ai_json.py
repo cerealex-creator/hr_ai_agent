@@ -229,11 +229,15 @@ def chat_json(
             {"role": "user", "content": user_trim},
         ],
     }
-    resp = requests.post(
+    # Не брать HTTP(S)_PROXY из окружения (Cursor/sandbox даёт 403 Tunnel).
+    session = requests.Session()
+    session.trust_env = False
+    resp = session.post(
         f"{base}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json=payload,
         timeout=180,
+        proxies={"http": None, "https": None},
     )
     if resp.status_code >= 400:
         raise RuntimeError(

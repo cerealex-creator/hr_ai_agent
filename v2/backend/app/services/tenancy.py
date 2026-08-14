@@ -151,30 +151,37 @@ def root_company_scope_ids(db: Session, root: models.Client) -> set[int]:
     return ids
 
 
-def generate_client_zone_token() -> str:
-    return secrets.token_urlsafe(24)
+def generate_client_zone_token(db: Session | None = None) -> str:
+    for _ in range(8):
+        token = secrets.token_urlsafe(24)
+        if db is None:
+            return token
+        exists = db.scalar(
+            select(models.Client.id).where(models.Client.client_zone_token == token)
+        )
+        if exists is None:
+            return token
+    return secrets.token_urlsafe(32)
 
 
 def resolve_client_zone_root(db: Session, token: str) -> models.Client:
+    """Resolve company or department that owns this public zone token."""
     raw = (token or "").strip()
     if not raw:
         raise HTTPException(status_code=404, detail="Zone not found")
-    root = db.scalar(
-        select(models.Client).where(
-            models.Client.client_zone_token == raw,
-            models.Client.parent_id.is_(None),
-        )
-    )
-    if not root:
+    owner = db.scalar(select(models.Client).where(models.Client.client_zone_token == raw))
+    if not owner:
         raise HTTPException(status_code=404, detail="Zone not found")
-    if root.kind == "test":
-        # allow test companies as root too
-        pass
-    return root
+    return owner
+
+
+def zone_owner_scope_ids(owner: models.Client) -> set[int]:
+    """One zone = one client: company-level vacancies or a single department."""
+    return {int(owner.id)}
 
 
 def ensure_root_for_zone(db: Session, client: models.Client) -> models.Client:
-    """Client-zone token lives on root company."""
+    """Walk up to the root company (not used for zone tokens)."""
     if client.parent_id is None:
         return client
     parent = db.get(models.Client, client.parent_id)
@@ -183,11 +190,9 @@ def ensure_root_for_zone(db: Session, client: models.Client) -> models.Client:
     return parent
 
 
-def rotate_client_zone_token(db: Session, root: models.Client) -> str:
-    if root.parent_id is not None:
-        raise HTTPException(status_code=400, detail="Token only on root company")
-    token = generate_client_zone_token()
-    root.client_zone_token = token
+def rotate_client_zone_token(db: Session, owner: models.Client) -> str:
+    token = generate_client_zone_token(db)
+    owner.client_zone_token = token
     db.commit()
-    db.refresh(root)
+    db.refresh(owner)
     return token

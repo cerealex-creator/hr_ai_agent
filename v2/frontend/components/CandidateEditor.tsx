@@ -3,7 +3,15 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CandidateDetail, apiFetch } from "@/lib/api";
-import { HR_STAGE_LABELS, clientStatusLabel, clientStatusLabelForCard, hrStageLabel } from "@/lib/labels";
+import {
+  HR_FUNNEL_STAGES,
+  HR_STAGE_LABELS,
+  clientStatusLabel,
+  clientStatusLabelForCard,
+  controlWordStatusLabel,
+  hrStageLabel,
+  isRejectionStage,
+} from "@/lib/labels";
 import { StageMarker } from "@/components/StageMarker";
 import { StageProgress } from "@/components/StageProgress";
 import { AiCommentBlock } from "@/components/AiCommentBlock";
@@ -11,6 +19,7 @@ import { QuestionnairePanel, type QItem } from "@/components/QuestionnairePanel"
 import { LinkField } from "@/components/LinkField";
 import { ActionBanner } from "@/components/ActionBanner";
 import { CandidateAvatar } from "@/components/CandidateAvatar";
+import { ClientZoneLink, clientZonePathFromSendResults } from "@/components/ClientZoneLink";
 import { CandidateOfferPanel } from "@/components/CandidateOfferPanel";
 import { daysBetween, daysLabel, formatDateRu, isEventPassed, parseLocalDate } from "@/lib/dates";
 import { resolveNextAction } from "@/lib/nextAction";
@@ -230,6 +239,8 @@ export function CandidateEditor({ initial }: Props) {
   const [stageOptions, setStageOptions] = useState<{ id: string; label: string }[]>(
     STAGE_ORDER.map((id) => ({ id, label: HR_STAGE_LABELS[id] || id })),
   );
+  const [funnelStages, setFunnelStages] = useState<string[]>([...HR_FUNNEL_STAGES]);
+  const [stageLabelsMap, setStageLabelsMap] = useState<Record<string, string>>({ ...HR_STAGE_LABELS });
   const [stageNote, setStageNote] = useState("");
   const [deleteCalendarEvent, setDeleteCalendarEvent] = useState(false);
   const [warrantyDate, setWarrantyDate] = useState("");
@@ -266,6 +277,7 @@ export function CandidateEditor({ initial }: Props) {
     );
   });
   const [clientOpen, setClientOpen] = useState(false);
+  const [clientZonePath, setClientZonePath] = useState<string | null>(null);
   const [notifyChannels, setNotifyChannels] = useState<string[]>(["bitrix", "web"]);
   const [aiSectionOpen, setAiSectionOpen] = useState(false);
   const [pendingRemote, setPendingRemote] = useState<CandidateDetail | null>(null);
@@ -292,6 +304,32 @@ export function CandidateEditor({ initial }: Props) {
   const meetingFormat = meetingFormatLabel(c);
   const telegramNotifyEnabled = notifyChannels.includes("telegram");
   const bitrixNotifyEnabled = notifyChannels.includes("bitrix");
+  const webNotifyEnabled = notifyChannels.includes("web");
+
+  useEffect(() => {
+    if (!c.client_id) {
+      setClientZonePath(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/v1/companies/${c.client_id}/client-zone`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && typeof data.path === "string" && data.path.startsWith("/c/")) {
+          setClientZonePath(data.path);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.client_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -338,6 +376,17 @@ export function CandidateEditor({ initial }: Props) {
           .filter((i) => i.enabled !== false || i.id === c.hr_stage)
           .map((i) => ({ id: i.id, label: i.label || HR_STAGE_LABELS[i.id] || i.id }));
         if (!cancelled && opts.length) setStageOptions(opts);
+        if (!cancelled) {
+          const labels: Record<string, string> = { ...HR_STAGE_LABELS };
+          for (const i of items) {
+            if (i.label) labels[i.id] = i.label;
+          }
+          setStageLabelsMap(labels);
+          const enabledFunnel = items
+            .filter((i) => i.enabled !== false && !isRejectionStage(i.id) && i.id !== "archived")
+            .map((i) => i.id);
+          if (enabledFunnel.length) setFunnelStages(enabledFunnel);
+        }
       } catch {
         /* keep defaults */
       }
@@ -780,6 +829,8 @@ export function CandidateEditor({ initial }: Props) {
         );
       }
       if (data.candidate) applyCandidate(data.candidate as CandidateDetail);
+      const zonePath = clientZonePathFromSendResults(data.results);
+      if (zonePath) setClientZonePath(zonePath);
       const partial =
         Array.isArray(data.errors) && data.errors.length > 0 && Boolean(data.ok);
       const baseMsg = data.message || "Отправлено заказчику";
@@ -859,11 +910,14 @@ export function CandidateEditor({ initial }: Props) {
     }
   };
 
-  const evaluateResume = async () => {
+  const evaluateResume = async (opts?: { skipQuestionnaire?: boolean }) => {
     setErr(null);
     setMsg(null);
+    const skipQuestionnaire = Boolean(opts?.skipQuestionnaire);
     const res = await apiFetch(`/api/v1/candidates/${c.id}/evaluate-resume`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skip_questionnaire: skipQuestionnaire }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -879,7 +933,9 @@ export function CandidateEditor({ initial }: Props) {
     setMsg(
       data.reused
         ? "Оценка резюме уже идёт — следите в «Задачи» или строке статуса ниже"
-        : "Запущена оценка резюме и формирование опросника",
+        : skipQuestionnaire
+          ? "Запущена оценка резюме (без опросника)"
+          : "Запущена оценка резюме и формирование опросника",
     );
   };
 
@@ -1002,8 +1058,13 @@ export function CandidateEditor({ initial }: Props) {
             {c.control_word_status ? (
               <span className="cand-summary-muted">
                 {" "}
-                · контроль: {c.control_word_status}
+                · контроль: {controlWordStatusLabel(c.control_word_status)}
                 {c.control_word_match ? ` (${c.control_word_match})` : ""}
+              </span>
+            ) : c.vacancy_control_word_enabled && c.vacancy_control_word ? (
+              <span className="cand-summary-muted">
+                {" "}
+                · контроль: {c.vacancy_control_word} (не проверено)
               </span>
             ) : null}
           </span>
@@ -1132,7 +1193,17 @@ export function CandidateEditor({ initial }: Props) {
             type="button"
             className="chip chip-active"
             onClick={() => {
+              if (nextAction.section === "top") {
+                document.querySelector(".cand-summary-meeting")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                });
+                return;
+              }
               setActiveTab(sectionToTab(nextAction.section));
+              if (nextAction.section === "ai") {
+                setAiSectionOpen(true);
+              }
             }}
           >
             Открыть
@@ -1153,7 +1224,11 @@ export function CandidateEditor({ initial }: Props) {
         ))}
       </nav>
 
-      <StageProgress stage={c.hr_stage} />
+      <StageProgress
+        stage={c.hr_stage}
+        funnelStages={funnelStages}
+        stageLabels={stageLabelsMap}
+      />
 
       {err || msg ? (
         <ActionBanner msg={msg} err={err} tone={bannerTone} />
@@ -1188,6 +1263,28 @@ export function CandidateEditor({ initial }: Props) {
                 <div className="cand-profile-row" style={{ alignItems: "flex-start" }}>
                   <span className="cand-profile-label">HR</span>
                   <span className="cand-profile-value">{hrComment}</span>
+                </div>
+              ) : null}
+              {c.vacancy_control_word_enabled && c.vacancy_control_word ? (
+                <div className="cand-profile-row" style={{ alignItems: "flex-start" }}>
+                  <span className="cand-profile-label">Контрольное слово</span>
+                  <span className="cand-profile-value">
+                    ожидается: <strong>{c.vacancy_control_word}</strong>
+                    {c.control_word_status ? (
+                      <>
+                        {" "}
+                        · {controlWordStatusLabel(c.control_word_status)}
+                        {c.control_word_match ? ` («${c.control_word_match}»)` : ""}
+                      </>
+                    ) : (
+                      <span className="muted"> · не проверено (запустите оценку резюме)</span>
+                    )}
+                    {c.control_word_note ? (
+                      <span className="muted hh-micro" style={{ display: "block", marginTop: "0.25rem" }}>
+                        {c.control_word_note}
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
               ) : null}
             </div>
@@ -1695,8 +1792,7 @@ export function CandidateEditor({ initial }: Props) {
 
       {activeTab === "offer" ? <CandidateOfferPanel candidateId={c.id} /> : null}
 
-      {activeTab === "interview" ? (
-      <div className="rec-card" id="questionnaire">
+      <div className="rec-card" id="questionnaire" hidden={activeTab !== "interview"}>
         <h3 className="rec-card-title">
           Опросник и собеседование
           {(() => {
@@ -1747,7 +1843,6 @@ export function CandidateEditor({ initial }: Props) {
           evaluateResumeStatus={resumeEvalBusy && job ? job.progress_label : null}
         />
       </div>
-      ) : null}
 
       {activeTab === "client" ? (
       <div className="rec-card" id="cand-client">
@@ -1760,6 +1855,13 @@ export function CandidateEditor({ initial }: Props) {
           </span>
         </h3>
         {bannerFor("client")}
+        {webNotifyEnabled ? (
+          <ClientZoneLink
+            path={clientZonePath}
+            label="Ссылка клиентской зоны для заказчика"
+            compact={Boolean(clientZonePath)}
+          />
+        ) : null}
         <p className="muted hh-micro">
           {telegramNotifyEnabled && bitrixNotifyEnabled
             ? "Отправка в Telegram и Bitrix24 (каналы в настройках Bitrix24)."

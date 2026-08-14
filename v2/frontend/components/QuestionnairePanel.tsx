@@ -48,7 +48,7 @@ type Props = {
   onCandidateChange: (next: CandidateDetail) => void;
   onTranscribeAndEvaluate: () => Promise<void>;
   onEvaluateInterview?: () => Promise<void>;
-  onEvaluateResume?: () => Promise<void>;
+  onEvaluateResume?: (opts?: { skipQuestionnaire?: boolean }) => Promise<void>;
   transcriptionBusy?: boolean;
   transcriptionStatus?: string | null;
   evaluateBusy?: boolean;
@@ -163,12 +163,12 @@ export function QuestionnairePanel({
     }
   };
 
-  const generateFromResume = async () => {
+  const generateFromResume = async (skipQuestionnaire = false) => {
     if (!onEvaluateResume) return;
     setErr(null);
     setMsg(null);
     try {
-      await onEvaluateResume();
+      await onEvaluateResume({ skipQuestionnaire });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка формирования");
     }
@@ -338,7 +338,7 @@ export function QuestionnairePanel({
             type="button"
             className="chip chip-active"
             disabled={locked || !onEvaluateResume}
-            onClick={() => void generateFromResume()}
+            onClick={() => void generateFromResume(false)}
           >
             {evaluateResumeBusy ? "Оценка…" : "Сформировать опросник"}
           </button>
@@ -347,7 +347,7 @@ export function QuestionnairePanel({
           type="button"
           className="chip"
           disabled={locked || !onEvaluateResume}
-          onClick={() => void generateFromResume()}
+          onClick={() => void generateFromResume(true)}
           title="Получить оценку ИИ без формирования опросника"
         >
           {evaluateResumeBusy ? "Оценка…" : "Оценить резюме ИИ"}

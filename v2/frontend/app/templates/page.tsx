@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/AppShell";
+import { RecruitingShell } from "@/components/RecruitingShell";
 import { apiFetch } from "@/lib/api";
 
 type Tmpl = {
@@ -52,50 +52,55 @@ export default function TemplatesPage() {
   };
 
   return (
-    <AppShell activePath="/templates">
-      <h1 className="page-title">Шаблоны вакансий</h1>
-      <p className="muted">Импортированные шаблоны → новая вакансия с документами.</p>
-      {err ? <p className="warn">{err}</p> : null}
-      {msg ? <p className="ok">{msg}</p> : null}
-      <table>
-        <thead>
-          <tr>
-            <th>Название</th>
-            <th>Профиль</th>
-            <th>Опросник</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((t) => (
-            <tr key={t.id}>
-              <td>{t.title}</td>
-              <td>{t.has_profile ? "да" : "—"}</td>
-              <td>{t.has_questions ? "да" : "—"}</td>
-              <td>
-                <button
-                  type="button"
-                  className="chip chip-active"
-                  disabled={busyId === t.id}
-                  onClick={() => void createFrom(t.id, t.title)}
-                >
-                  {busyId === t.id ? "…" : "Создать вакансию"}
-                </button>
-              </td>
-            </tr>
-          ))}
-          {!items.length && !err ? (
-            <tr>
-              <td colSpan={4}>Шаблонов нет — импортируйте legacy vacancy_templates.json</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-      <p style={{ marginTop: "1rem" }}>
-        <Link className="back" href="/vacancies">
-          ← К вакансиям
-        </Link>
-      </p>
-    </AppShell>
+    <RecruitingShell activePath="/templates" title="Шаблоны вакансий">
+      <div className="rec-card">
+        <p className="muted" style={{ marginTop: 0 }}>
+          Импортированные шаблоны → новая вакансия с готовыми документами (профиль, опросник и т.д.).
+        </p>
+        {err ? <p className="warn">{err}</p> : null}
+        {msg ? <p className="ok">{msg}</p> : null}
+
+        <div className="rec-table-wrap">
+          <table className="rec-table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Профиль</th>
+                <th>Опросник</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.title}</td>
+                  <td>{t.has_profile ? "да" : "—"}</td>
+                  <td>{t.has_questions ? "да" : "—"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="chip chip-active"
+                      disabled={busyId === t.id}
+                      onClick={() => void createFrom(t.id, t.title)}
+                    >
+                      {busyId === t.id ? "…" : "Создать вакансию"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!items.length && !err ? (
+                <tr>
+                  <td colSpan={4} className="muted">
+                    Шаблонов пока нет. Импортируйте legacy <code>vacancy_templates.json</code> или
+                    создайте вакансию вручную в разделе{" "}
+                    <Link href="/vacancies">Вакансии</Link>.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </RecruitingShell>
   );
 }

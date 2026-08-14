@@ -137,7 +137,13 @@ export type AuthMe = {
 };
 
 export async function authMe(): Promise<AuthMe | null> {
-  const res = await apiFetch("/api/v1/auth/me", { cache: "no-store", skipAuthRedirect: true });
+  let res = await apiFetch("/api/v1/auth/me", { cache: "no-store", skipAuthRedirect: true });
+  if (res.status === 401 && typeof window !== "undefined") {
+    const ok = await tryRefresh();
+    if (ok) {
+      res = await apiFetch("/api/v1/auth/me", { cache: "no-store", skipAuthRedirect: true });
+    }
+  }
   if (res.status === 401) return null;
   if (!res.ok) throw new Error(`API /auth/me: ${res.status}`);
   return res.json() as Promise<AuthMe>;
@@ -293,6 +299,8 @@ export type CandidateDetail = CandidateListItem & {
   control_word_status?: string | null;
   control_word_match?: string | null;
   control_word_note?: string | null;
+  vacancy_control_word_enabled?: boolean;
+  vacancy_control_word?: string | null;
   office_interview_date: string | null;
   office_interview_time: string | null;
   photo_url: string | null;

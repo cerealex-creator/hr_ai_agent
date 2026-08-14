@@ -120,7 +120,14 @@ export default function ClientZoneTokenPage() {
       {!data && !error ? <p className="muted">Загрузка кандидатов…</p> : null}
 
       {data && data.candidates.length === 0 ? (
-        <p className="muted">Сейчас нет кандидатов на рассмотрении.</p>
+        <div className="cz-empty">
+          <p className="muted">Сейчас нет кандидатов на рассмотрении.</p>
+          <p className="muted hh-micro">
+            Кандидаты появятся здесь, когда HR отправит их на этап «На оценке у заказчика». Если вы
+            заказчик — дождитесь ссылку от рекрутера и откройте её целиком (с адресом сайта, не только{" "}
+            <code>/c/…</code>).
+          </p>
+        </div>
       ) : null}
 
       <div className="cz-list">

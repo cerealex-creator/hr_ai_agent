@@ -79,7 +79,6 @@ export default function WarrantySettingsPage() {
                 </option>
               ))}
             </select>
-            <p className="muted hh-micro">Файл: {appSettings.path}</p>
           </div>
         ) : (
           <p className="muted">Загрузка…</p>

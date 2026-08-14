@@ -192,6 +192,9 @@ def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDeta
         client = db.get(models.Client, client_id)
         client_name = client.name if client else None
     fields = candidate_public_fields(candidate.payload)
+    vac_payload = dict(vacancy.payload or {}) if vacancy else {}
+    cw_enabled = bool(vac_payload.get("control_word_enabled"))
+    cw_word = str(vac_payload.get("control_word") or "").strip() or None
     return CandidateDetail(
         id=candidate.id,
         vacancy_id=candidate.vacancy_id,
@@ -204,6 +207,8 @@ def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDeta
         created_at=candidate.created_at,
         status_updated_at=candidate.status_updated_at,
         payload=candidate.payload or {},
+        vacancy_control_word_enabled=cw_enabled,
+        vacancy_control_word=cw_word if cw_enabled else None,
         **fields,
     )
 

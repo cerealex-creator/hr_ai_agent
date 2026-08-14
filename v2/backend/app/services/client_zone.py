@@ -13,7 +13,7 @@ from app.db import models
 from app.services.messaging.client_apply import apply_client_update
 from app.services.messaging.keyboards import interview_format_flags
 from app.services.stats_service import CLIENT_ZONE_STAGES
-from app.services.tenancy import resolve_client_zone_root, root_company_scope_ids
+from app.services.tenancy import resolve_client_zone_root, zone_owner_scope_ids
 
 # Approve / think / reject (+ meeting on ready)
 ZONE_ACTIONS = frozenset({"ready", "think", "reject"})
@@ -44,9 +44,18 @@ def _parse_meeting(
     return date_s, time_s, remote, office
 
 
+def _zone_display_name(db: Session, owner: models.Client) -> str:
+    if owner.parent_id is None:
+        return owner.name
+    parent = db.get(models.Client, owner.parent_id)
+    if parent and parent.name:
+        return f"{parent.name} · {owner.name}"
+    return owner.name
+
+
 def zone_context(db: Session, token: str) -> tuple[models.Client, set[int]]:
-    root = resolve_client_zone_root(db, token)
-    return root, root_company_scope_ids(db, root)
+    owner = resolve_client_zone_root(db, token)
+    return owner, zone_owner_scope_ids(owner)
 
 
 def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
@@ -60,9 +69,10 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
         ).all()
     )
     vac_map = {v.id: v for v in vacancies}
+    display = _zone_display_name(db, root)
     if not vac_map:
         return {
-            "company": {"id": root.id, "name": root.name},
+            "company": {"id": root.id, "name": display},
             "candidates": [],
         }
 
@@ -92,7 +102,7 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
             "vacancy_id": c.vacancy_id,
             "vacancy_title": vac.title,
             "client_id": vac.client_id,
-            "client_name": clients.get(vac.client_id) if vac.client_id else root.name,
+            "client_name": clients.get(vac.client_id) if vac.client_id else display,
             "hr_stage": c.hr_stage,
             "client_status": c.client_status or "wait",
             "ai_score": payload.get("ai_score"),
@@ -109,7 +119,7 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
     actionable.sort(key=lambda x: (x["name"] or "").casefold())
     others.sort(key=lambda x: (x["name"] or "").casefold())
     return {
-        "company": {"id": root.id, "name": root.name},
+        "company": {"id": root.id, "name": display},
         "candidates": actionable + others[:30],
     }
 

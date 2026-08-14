@@ -251,10 +251,7 @@ export default function AiSettingsPage() {
             ) : null}
           </section>
 
-          <p className="muted">
-            Настройки сохранены на сервере
-            <InfoTip text={`Файл: ${data.path}`} />
-          </p>
+          <p className="muted">Настройки сохранены на сервере.</p>
         </>
       )}
     </RecruitingShell>

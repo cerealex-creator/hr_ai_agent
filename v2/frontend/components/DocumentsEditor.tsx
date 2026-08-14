@@ -65,6 +65,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
     const next = {} as Record<DocKey, string>;
     for (const k of EDIT_KEYS) next[k] = docs[k] || "";
     setDrafts(next);
+    setSavedDocs({ ...docs });
     setMeetingBrief(data.meeting_brief || null);
     setMeetingTranscript(String(data.meeting_transcript || ""));
   }, [vacancyId]);
@@ -97,6 +98,10 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
               ? `${fieldLabel(key)}: перегенерировано и сохранено`
               : `${fieldLabel(key)}: сгенерировано и сохранено`,
           );
+          setSavedDocs((prev) => ({
+            ...prev,
+            [key]: value || (drafts[key] ?? ""),
+          }));
           setGenBusy(null);
           setGenJobId(null);
           setGenKey(null);

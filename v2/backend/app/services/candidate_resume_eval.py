@@ -12,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.db import models
 from app.services.ai_json import chat_json
 from app.services.candidate_fields import normalize_gender
+from app.services.pdf_extract import fetch_resume_text_from_url
 from app.services.vacancy_docs import extract_profile_text
 
 RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из текста резюме поля карточки кандидата.
@@ -27,6 +28,17 @@ RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из �
   "salary": "ожидания по ЗП текстом или пусто"
 }
 Не выдумывай данные, которых нет в резюме. Если ФИО нет — full_name: \"Нет информации\"."""
+
+RESUME_EXTRACT_CONTROL_WORD_EXTRA = """
+Дополнительно (если передано КОНТРОЛЬНОЕ СЛОВО):
+Найди сопроводительное письмо в тексте (блок «О себе» / cover letter — НЕ опыт работы).
+Ищи контрольное слово/фразу ТОЛЬКО в сопроводительном письме.
+Допустима семантика «почти точное»: опечатки, раскладка, транслит.
+Добавь в JSON поля:
+  "control_word_status": "exact" | "fuzzy" | "missing" | "no_cover_letter",
+  "control_word_match": "как написал кандидат или пустая строка",
+  "control_word_note": "кратко: точное совпадение / найдено с опечаткой / не найдено / нет письма"
+"""
 
 FUNNEL_EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени соответствие резюме профилю должности на этапе холодного отбора.
 Шкала rating: 0–4 (целое число).
@@ -114,11 +126,22 @@ def load_candidate_resume_text(candidate: models.Candidate) -> tuple[str, str]:
     return text, err
 
 
-def extract_fields_from_resume(resume_text: str, settings: Settings) -> dict[str, Any]:
+def extract_fields_from_resume(
+    resume_text: str,
+    settings: Settings,
+    *,
+    control_word: str | None = None,
+) -> dict[str, Any]:
+    system = RESUME_EXTRACT_SYSTEM
+    user = f"Текст резюме:\n{(resume_text or '')[:8000]}"
+    word = (control_word or "").strip()
+    if word:
+        system = RESUME_EXTRACT_SYSTEM + "\n" + RESUME_EXTRACT_CONTROL_WORD_EXTRA
+        user += f"\n\nКОНТРОЛЬНОЕ СЛОВО (искать только в сопроводительном письме): {word}"
     data = chat_json(
         settings,
-        system=RESUME_EXTRACT_SYSTEM,
-        user=f"Текст резюме:\n{(resume_text or '')[:8000]}",
+        system=system,
+        user=user,
         temperature=0.1,
         max_tokens=1200,
     )
@@ -126,7 +149,7 @@ def extract_fields_from_resume(resume_text: str, settings: Settings) -> dict[str
         data = {}
     email_raw = str(data.get("email") or "").strip()
     email = email_raw if "@" in email_raw else ""
-    return {
+    out: dict[str, Any] = {
         "name": (data.get("full_name") or "Нет информации").strip() or "Нет информации",
         "phone": _format_phone(data.get("phone")),
         "email": email,
@@ -136,6 +159,14 @@ def extract_fields_from_resume(resume_text: str, settings: Settings) -> dict[str
         "salary_expected": str(data.get("salary") or "").strip(),
         "gender": normalize_gender(data.get("gender")),
     }
+    if word:
+        status = str(data.get("control_word_status") or "").strip().lower()
+        if status not in ("exact", "fuzzy", "missing", "no_cover_letter"):
+            status = "missing"
+        out["control_word_status"] = status
+        out["control_word_match"] = str(data.get("control_word_match") or "").strip()
+        out["control_word_note"] = str(data.get("control_word_note") or "").strip()
+    return out
 
 
 def evaluate_resume_for_funnel(
@@ -206,6 +237,11 @@ def apply_extract_to_candidate(candidate: models.Candidate, fields: dict[str, An
             if g:
                 payload[key] = g
             continue
+        if key in ("control_word_status", "control_word_match", "control_word_note"):
+            text = str(val or "").strip()
+            if text:
+                payload[key] = text
+            continue
         text = str(val).strip()
         if text:
             # Don't overwrite an existing email with empty; only fill if present
@@ -241,6 +277,7 @@ def evaluate_candidate_resume(
     candidate: models.Candidate,
     *,
     populate_fields: bool = True,
+    skip_questionnaire: bool = False,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     from app.services.candidate_questionnaire import (
@@ -261,7 +298,13 @@ def evaluate_candidate_resume(
 
     if populate_fields:
         try:
-            fields = extract_fields_from_resume(resume_text, settings)
+            vac_payload = dict(vacancy.payload or {})
+            cw: str | None = None
+            if vac_payload.get("control_word_enabled"):
+                cw = str(vac_payload.get("control_word") or "").strip() or None
+            fields = extract_fields_from_resume(
+                resume_text, settings, control_word=cw
+            )
             apply_extract_to_candidate(candidate, fields)
         except Exception as exc:  # noqa: BLE001
             # evaluation can still proceed
@@ -283,7 +326,7 @@ def evaluate_candidate_resume(
     apply_eval_to_candidate(candidate, ev, resume_text=resume_text)
     questionnaire_generated = False
     questionnaire_count = 0
-    if not get_candidate_questionnaire(candidate):
+    if not skip_questionnaire and not get_candidate_questionnaire(candidate):
         items = generate_candidate_questionnaire(
             db, candidate, keep_manual=True, settings=settings
         )
@@ -319,6 +362,26 @@ def parse_bulk_link_lines(text: str) -> list[str]:
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
+def _name_from_filename(filename: str) -> str | None:
+    """Best-effort ФИО from resume filename (before AI extract)."""
+    raw = (filename or "").strip()
+    if not raw:
+        return None
+    stem = raw.rsplit(".", 1)[0].strip() if "." in raw else raw
+    stem = stem.replace("_", " ").replace("-", " ").strip()
+    stem = re.sub(r"\s+", " ", stem)
+    if not stem:
+        return None
+    low = stem.casefold()
+    if low in {"resume", "cv", "резюме", "анкета", "файл", "document", "doc"}:
+        return None
+    if not re.search(r"[A-Za-zА-Яа-яЁё]", stem):
+        return None
+    if len(stem) > 120:
+        stem = stem[:120].strip()
+    return stem
+
+
 def bulk_add_from_resume_links(
     db: Session,
     vacancy: models.Vacancy,
@@ -327,13 +390,14 @@ def bulk_add_from_resume_links(
     evaluate: bool = False,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Create candidates from PDF links; optionally run AI evaluate."""
+    """Create candidates from PDF links. AI extract/eval is deferred (see enqueue)."""
     from app.services.candidate_write import create_candidate
 
     settings = settings or get_settings()
     created_ids: list[str] = []
     messages: list[str] = []
     errors: list[str] = []
+    evaluate_ids: list[str] = []
 
     for raw in links:
         link = raw.strip()
@@ -343,16 +407,8 @@ def bulk_add_from_resume_links(
         name = "Новый кандидат"
         fields: dict[str, Any] = {"resume_link": link, "cold_screening": True}
         if text:
-            try:
-                extracted = extract_fields_from_resume(text, settings)
-                name = extracted.get("name") or name
-                for k in ("phone", "age", "city", "metro", "salary_expected"):
-                    if extracted.get(k):
-                        fields[k] = extracted[k]
-                fields["resume_text"] = text
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{link}: extract {exc}")
-                fields["resume_text"] = text
+            fields["resume_text"] = text
+            # Лёгкий разбор без ИИ: не блокируем HTTP на RouterAI (до 1–2 мин).
         elif err:
             errors.append(f"{link}: {err}")
             # still create stub with link
@@ -378,29 +434,19 @@ def bulk_add_from_resume_links(
             except Exception:  # noqa: BLE001
                 pass
 
-        if evaluate and text:
-            try:
-                profile = extract_profile_text(vacancy.documents)
-                ev = evaluate_resume_for_funnel(
-                    text,
-                    profile_text=profile,
-                    job_title=vacancy.title,
-                    settings=settings,
-                )
-                apply_eval_to_candidate(cand, ev, resume_text=text)
-                db.commit()
-                messages.append(f"{cand.name}: оценка {ev.get('ai_score')}/4")
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{cand.name}: evaluate {exc}")
+        created_ids.append(str(cand.id))
+        if evaluate and (text or "").strip():
+            evaluate_ids.append(str(cand.id))
+            messages.append(f"Добавлен: {cand.name} — оценка ИИ в очереди")
         else:
             messages.append(f"Добавлен: {cand.name}")
-        created_ids.append(str(cand.id))
 
     return {
         "created": len(created_ids),
         "candidate_ids": created_ids,
         "messages": messages[:40],
         "errors": errors[:20],
+        "evaluate_candidate_ids": evaluate_ids,
     }
 
 
@@ -428,23 +474,14 @@ def add_candidate_from_resume_file(
         raise ValueError("Файл больше 15 МБ")
 
     text = extract_text_from_bytes(name_hint, content)
-    cand_name = "Новый кандидат"
+    cand_name = _name_from_filename(name_hint) or "Новый кандидат"
     fields: dict[str, Any] = {
         "cold_screening": True,
         "resume_filename": name_hint,
     }
     errors: list[str] = []
     if text.strip():
-        try:
-            extracted = extract_fields_from_resume(text, settings)
-            cand_name = extracted.get("name") or cand_name
-            for k in ("phone", "age", "city", "metro", "salary_expected"):
-                if extracted.get(k):
-                    fields[k] = extracted[k]
-            fields["resume_text"] = text
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"extract: {exc}")
-            fields["resume_text"] = text
+        fields["resume_text"] = text
     else:
         errors.append("Не удалось извлечь текст из файла")
 
@@ -466,20 +503,10 @@ def add_candidate_from_resume_file(
         try_attach_candidate_photo(db, cand, pdf_bytes=content)
 
     messages: list[str] = []
+    evaluate_ids: list[str] = []
     if evaluate and text.strip():
-        try:
-            profile = extract_profile_text(vacancy.documents)
-            ev = evaluate_resume_for_funnel(
-                text,
-                profile_text=profile,
-                job_title=vacancy.title,
-                settings=settings,
-            )
-            apply_eval_to_candidate(cand, ev, resume_text=text)
-            db.commit()
-            messages.append(f"{cand.name}: оценка {ev.get('ai_score')}/4")
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"evaluate: {exc}")
+        evaluate_ids.append(str(cand.id))
+        messages.append(f"Добавлен: {cand.name} — оценка ИИ в очереди")
     else:
         messages.append(f"Добавлен: {cand.name}")
 
@@ -489,4 +516,5 @@ def add_candidate_from_resume_file(
         "candidate_id": str(cand.id),
         "messages": messages,
         "errors": errors[:10],
+        "evaluate_candidate_ids": evaluate_ids,
     }

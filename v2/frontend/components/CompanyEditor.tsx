@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ChatIdField } from "@/components/ChatIdField";
+import { ClientZoneLink } from "@/components/ClientZoneLink";
 import { InfoTip } from "@/components/InfoTip";
 import { LockedTextField } from "@/components/LockedTextField";
 import { apiFetch } from "@/lib/api";
@@ -10,6 +11,35 @@ import {
   detailMessage,
   type CompanyNode,
 } from "@/lib/companies";
+
+function pathFromToken(token?: string | null): string | null {
+  return token ? `/c/${token}` : null;
+}
+
+function ZoneRotateBlock({
+  label,
+  path,
+  busy,
+  onRotate,
+}: {
+  label: string;
+  path: string | null;
+  busy: boolean;
+  onRotate: () => void;
+}) {
+  return (
+    <div className="cz-dept-zone">
+      <p className="cz-link-label">{label}</p>
+      <ClientZoneLink path={path} compact hideEmptyHint />
+      {!path ? <p className="muted hh-micro">Ссылка ещё не создана.</p> : null}
+      <div className="chip-row" style={{ marginTop: "0.5rem" }}>
+        <button type="button" className="chip chip-active" disabled={busy} onClick={onRotate}>
+          {busy ? "Создание…" : path ? "Сбросить и выдать новую ссылку" : "Создать ссылку"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 type Props = {
   companyId: number;
@@ -27,6 +57,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
   const [chatName, setChatName] = useState("");
   const [chatId, setChatId] = useState("");
   const [zonePath, setZonePath] = useState<string | null>(null);
+  const [deptZonePaths, setDeptZonePaths] = useState<Record<number, string | null>>({});
   const [deptDrafts, setDeptDrafts] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
@@ -40,10 +71,13 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
     setChatName(data.channel?.name || data.name);
     setChatId(data.channel?.external_id || "");
     const drafts: Record<number, string> = {};
+    const zones: Record<number, string | null> = {};
     for (const d of data.departments || []) {
       drafts[d.id] = d.channel?.external_id || "";
+      zones[d.id] = pathFromToken(d.client_zone_token);
     }
     setDeptDrafts(drafts);
+    setDeptZonePaths(zones);
     const token = (data as { client_zone_token?: string | null }).client_zone_token;
     setZonePath(token ? `/c/${token}` : null);
     onRenamed?.(data.name);
@@ -65,6 +99,29 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
       setBusy(false);
     }
   };
+
+  const rotateZone = (clientId: number, label: string, companyRowId: number) =>
+    run(async () => {
+      const res = await apiFetch(`/api/v1/companies/${clientId}/client-zone/rotate`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(detailMessage(data, `HTTP ${res.status}`));
+      const path = typeof data.path === "string" ? data.path : null;
+      if (!path) throw new Error("Сервер не вернул ссылку — обновите страницу");
+      if (clientId === companyRowId) {
+        setZonePath(path);
+      } else {
+        setDeptZonePaths((prev) => ({ ...prev, [clientId]: path }));
+      }
+      setMsg(`Ссылка создана: ${label}`);
+      try {
+        await load();
+      } catch (e) {
+        // Ссылку уже показали из ответа rotate — не откатываем из‑за сбоя перезагрузки.
+        console.warn("reload after rotate failed", e);
+      }
+    });
 
   if (!co && !err) return <p className="muted">Загрузка…</p>;
   if (!co) return err ? <p className="warn">{err}</p> : null;
@@ -105,42 +162,32 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
       <section className="card-edit" style={{ marginBottom: "1rem" }}>
         <h2>
           Клиентская зона (веб){" "}
-          <InfoTip text="Секретная ссылка для заказчика без логина: он видит только кандидатов своей компании. Один токен на компанию (включая подразделения)." />
+          <InfoTip text="У компании и у каждого подразделения своя секретная ссылка. Заказчик видит только кандидатов этой зоны — без входа." />
         </h2>
         <p className="muted hh-micro">
-          Отдайте ссылку заказчику. При сбросе старая ссылка перестаёт работать.
+          Отдайте нужную ссылку нужному заказчику. При сбросе старая ссылка перестаёт работать.
         </p>
-        {zonePath ? (
-          <p style={{ wordBreak: "break-all" }}>
-            <a href={zonePath} target="_blank" rel="noreferrer">
-              {typeof window !== "undefined" ? `${window.location.origin}${zonePath}` : zonePath}
-            </a>
-          </p>
-        ) : (
-          <p className="muted">Ссылка ещё не создана.</p>
-        )}
-        <div className="chip-row" style={{ marginTop: "0.5rem" }}>
-          <button
-            type="button"
-            className="chip chip-active"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                const res = await apiFetch(`/api/v1/companies/${co.id}/client-zone/rotate`, {
-                  method: "POST",
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(detailMessage(data, `HTTP ${res.status}`));
-                const path = typeof data.path === "string" ? data.path : null;
-                setZonePath(path);
-                setMsg(path ? "Ссылка клиентской зоны обновлена" : "Токен сброшен");
-                await load();
-              })
-            }
-          >
-            {zonePath ? "Сбросить и выдать новую ссылку" : "Создать ссылку"}
-          </button>
-        </div>
+        {err ? <p className="warn">{err}</p> : null}
+        {msg ? <p className="ok">{msg}</p> : null}
+        <ZoneRotateBlock
+          label={
+            co.departments.length
+              ? `Компания «${co.name}» (вакансии без подразделения)`
+              : `Компания «${co.name}»`
+          }
+          path={zonePath}
+          busy={busy}
+          onRotate={() => rotateZone(co.id, co.name, co.id)}
+        />
+        {co.departments.map((d) => (
+          <ZoneRotateBlock
+            key={d.id}
+            label={`Подразделение «${d.name}»`}
+            path={deptZonePaths[d.id] ?? pathFromToken(d.client_zone_token)}
+            busy={busy}
+            onRotate={() => rotateZone(d.id, d.name, co.id)}
+          />
+        ))}
       </section>
 
       <section className="card-edit" style={{ marginBottom: "1rem" }}>

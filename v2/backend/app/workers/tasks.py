@@ -338,6 +338,7 @@ async def candidate_evaluate_resume(ctx, job_id: str) -> dict:
             raise RuntimeError("Job not found")
         payload = dict(job.payload or {})
         candidate_id = str(payload.get("candidate_id") or "").strip()
+        skip_questionnaire = bool(payload.get("skip_questionnaire"))
         if not candidate_id:
             raise RuntimeError("Нужен candidate_id")
         candidate = db.get(models.Candidate, uuid.UUID(candidate_id))
@@ -357,10 +358,17 @@ async def candidate_evaluate_resume(ctx, job_id: str) -> dict:
             if job_svc.is_cancelled_isolated(jid):
                 raise RuntimeError("Отменено")
             job_svc.update_job_isolated(jid, progress_pct=40, progress_label="Оценка резюме ИИ…")
-            result = evaluate_candidate_resume(db, candidate, populate_fields=True, settings=settings)
+            result = evaluate_candidate_resume(
+                db,
+                candidate,
+                populate_fields=True,
+                skip_questionnaire=skip_questionnaire,
+                settings=settings,
+            )
             if job_svc.is_cancelled_isolated(jid):
                 raise RuntimeError("Отменено")
-            job_svc.update_job_isolated(jid, progress_pct=85, progress_label="Формируем опросник…")
+            if not skip_questionnaire:
+                job_svc.update_job_isolated(jid, progress_pct=85, progress_label="Формируем опросник…")
             return result
 
         result = await asyncio.to_thread(_run)
@@ -375,7 +383,7 @@ async def candidate_evaluate_resume(ctx, job_id: str) -> dict:
             progress_pct=100,
             progress_label=(
                 f"Готово · оценка {ai_score if ai_score is not None else '—'}/4"
-                + (f" · опросник {q_count}" if q_count else "")
+                + ("" if skip_questionnaire else (f" · опросник {q_count}" if q_count else ""))
             ),
             result_ref=f"candidate_resume:{candidate.id}",
             payload_patch={

@@ -485,9 +485,8 @@ def client_to_dict(db: Session, c: models.Client, *, with_channel: bool = True) 
             else None
         ),
     }
-    if c.parent_id is None:
-        d["client_zone_token"] = c.client_zone_token
-        d["has_client_zone"] = bool(c.client_zone_token)
+    d["client_zone_token"] = c.client_zone_token
+    d["has_client_zone"] = bool(c.client_zone_token)
     return d
 
 

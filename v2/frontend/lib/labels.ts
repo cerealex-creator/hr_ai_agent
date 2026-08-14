@@ -47,6 +47,18 @@ export function isRejectionStage(stage: string): boolean {
   return REJECTION_STAGES.has(stage);
 }
 
+const CONTROL_WORD_LABELS: Record<string, string> = {
+  exact: "совпало",
+  fuzzy: "почти совпало",
+  missing: "не найдено",
+  no_cover_letter: "нет письма",
+};
+
+export function controlWordStatusLabel(status: string | null | undefined): string {
+  const key = (status || "").trim().toLowerCase();
+  return CONTROL_WORD_LABELS[key] || status || "";
+}
+
 /** Visual tone for list markers (кружок у этапа). */
 export type StageTone =
   | "none"

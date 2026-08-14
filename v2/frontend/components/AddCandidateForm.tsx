@@ -32,7 +32,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
   const [resume, setResume] = useState("");
 
   const [linksText, setLinksText] = useState("");
-  const [evaluate, setEvaluate] = useState(false);
+  const [evaluate, setEvaluate] = useState(true);
   const [file, setFile] = useState<File | null>(null);
 
   const [busy, setBusy] = useState(false);
@@ -46,7 +46,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
     setResume("");
     setLinksText("");
     setFile(null);
-    setEvaluate(false);
+    setEvaluate(true);
     setErr(null);
     setMsg(null);
     setLog([]);
@@ -101,6 +101,11 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
       setMsg(`Добавлено: ${data.created || 0}`);
       setLog([...(data.messages || []), ...(data.errors || []).map((e: string) => `⚠ ${e}`)]);
       setLinksText("");
+      if (Array.isArray(data.evaluate_job_ids) && data.evaluate_job_ids.length) {
+        setMsg(
+          `Добавлено: ${data.created || 0}. Оценка ИИ запущена в фоне (смотрите значок задач).`,
+        );
+      }
       router.refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");

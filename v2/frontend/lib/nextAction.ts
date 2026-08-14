@@ -63,7 +63,7 @@ export function resolveNextAction(c: CandidateDetail): NextAction | null {
   ) {
     return {
       label: "Оценить резюме ИИ",
-      section: "quest",
+      section: "ai",
     };
   }
 

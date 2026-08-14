@@ -261,14 +261,11 @@ def create_department_endpoint(
 
 @router.get("/companies/{company_id}/client-zone")
 def get_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> dict:
-    from app.services.tenancy import ensure_root_for_zone
-
-    company = get_client_or_404(db, company_id)
-    root = ensure_root_for_zone(db, company)
-    token = root.client_zone_token or ""
+    owner = get_client_or_404(db, company_id)
+    token = owner.client_zone_token or ""
     return {
-        "company_id": root.id,
-        "company_name": root.name,
+        "company_id": owner.id,
+        "company_name": owner.name,
         "token": token or None,
         "path": f"/c/{token}" if token else None,
     }
@@ -276,14 +273,13 @@ def get_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> d
 
 @router.post("/companies/{company_id}/client-zone/rotate")
 def rotate_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> dict:
-    from app.services.tenancy import ensure_root_for_zone, rotate_client_zone_token
+    from app.services.tenancy import rotate_client_zone_token
 
-    company = get_client_or_404(db, company_id)
-    root = ensure_root_for_zone(db, company)
-    token = rotate_client_zone_token(db, root)
+    owner = get_client_or_404(db, company_id)
+    token = rotate_client_zone_token(db, owner)
     return {
-        "company_id": root.id,
-        "company_name": root.name,
+        "company_id": owner.id,
+        "company_name": owner.name,
         "token": token,
         "path": f"/c/{token}",
     }

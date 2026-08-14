@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LayoutTemplate,
   Settings,
+  Share2,
   User,
   Wrench,
 } from "lucide-react";
@@ -29,7 +30,7 @@ const EXTRA_NAV = [
   { href: "/settings/yandex-disk", label: "Импорт", icon: HardDriveDownload, ownerOnly: false },
   { href: "/jobs", label: "Задачи", icon: Wrench, ownerOnly: true },
   { href: "/history", label: "История", icon: Wrench, ownerOnly: true },
-  { href: "/client-zone", label: "Клиентская зона", icon: User, ownerOnly: false },
+  { href: "/client-zone", label: "Клиентская зона", icon: Share2, ownerOnly: false },
 ] as const;
 
 type Props = {

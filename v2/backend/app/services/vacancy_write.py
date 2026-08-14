@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,6 +58,29 @@ def vacancy_has_hire(db: Session, vacancy_id: int) -> bool:
     return int(cnt or 0) > 0
 
 
+def _active_title_conflict(
+    db: Session,
+    title: str,
+    *,
+    org_id: uuid.UUID,
+    exclude_id: int | None = None,
+) -> models.Vacancy | None:
+    """Active title duplicate within one organization (not global DB)."""
+    from app.services.tenancy import org_client_ids
+
+    client_ids = org_client_ids(db, org_id)
+    if not client_ids:
+        return None
+    q = select(models.Vacancy).where(
+        models.Vacancy.title == title,
+        models.Vacancy.active.is_(True),
+        models.Vacancy.client_id.in_(client_ids),
+    )
+    if exclude_id is not None:
+        q = q.where(models.Vacancy.id != exclude_id)
+    return db.scalar(q)
+
+
 def create_vacancy(
     db: Session,
     *,
@@ -72,12 +96,13 @@ def create_vacancy(
     if not title:
         raise VacancyWriteError("Введите название должности")
 
-    dup = db.scalar(
-        select(models.Vacancy).where(
-            models.Vacancy.title == title,
-            models.Vacancy.active.is_(True),
-        )
-    )
+    from app.services.tenancy import current_user
+
+    user = current_user()
+    if user is None:
+        raise VacancyWriteError("Нужна авторизация", 401)
+
+    dup = _active_title_conflict(db, title, org_id=user.org_id)
     if dup:
         raise VacancyWriteError(
             "Уже есть активная вакансия с таким названием. "
@@ -85,20 +110,15 @@ def create_vacancy(
         )
 
     if client_id is not None:
-        from app.services.tenancy import client_in_org, current_user
+        from app.services.tenancy import client_in_org
 
         client = db.get(models.Client, client_id)
-        user = current_user()
-        if not client or (user is not None and not client_in_org(db, client, user.org_id)):
+        if not client or not client_in_org(db, client, user.org_id):
             raise VacancyWriteError("Клиент не найден", 404)
     else:
         # Vacancy without client is invisible under org isolation — attach/create root company.
         from app.services.clients_write import ensure_org_root_company
-        from app.services.tenancy import current_user
 
-        user = current_user()
-        if user is None:
-            raise VacancyWriteError("Нужна авторизация", 401)
         client = ensure_org_root_company(db, user.org_id)
         client_id = int(client.id)
 
@@ -221,18 +241,18 @@ def rename_vacancy(db: Session, vacancy: models.Vacancy, title: str) -> models.V
     if title == vacancy.title:
         return vacancy
     if vacancy.active:
-        dup = db.scalar(
-            select(models.Vacancy).where(
-                models.Vacancy.title == title,
-                models.Vacancy.active.is_(True),
-                models.Vacancy.id != vacancy.id,
+        from app.services.tenancy import vacancy_org_id
+
+        oid = vacancy_org_id(db, vacancy)
+        if oid:
+            dup = _active_title_conflict(
+                db, title, org_id=oid, exclude_id=vacancy.id
             )
-        )
-        if dup:
-            raise VacancyWriteError(
-                "Уже есть активная вакансия с таким названием",
-                400,
-            )
+            if dup:
+                raise VacancyWriteError(
+                    "Уже есть активная вакансия с таким названием",
+                    400,
+                )
     vacancy.title = title
     db.add(vacancy)
     db.commit()
@@ -243,18 +263,15 @@ def rename_vacancy(db: Session, vacancy: models.Vacancy, title: str) -> models.V
 def reopen_vacancy(db: Session, vacancy: models.Vacancy) -> models.Vacancy:
     if vacancy.active:
         raise VacancyWriteError("Вакансия уже в работе")
-    # uniqueness among active titles
-    dup = db.scalar(
-        select(models.Vacancy).where(
-            models.Vacancy.title == vacancy.title,
-            models.Vacancy.active.is_(True),
-            models.Vacancy.id != vacancy.id,
-        )
-    )
-    if dup:
-        raise VacancyWriteError(
-            "Уже есть активная вакансия с таким названием — переименуйте одну из них."
-        )
+    from app.services.tenancy import vacancy_org_id
+
+    oid = vacancy_org_id(db, vacancy)
+    if oid:
+        dup = _active_title_conflict(db, vacancy.title, org_id=oid, exclude_id=vacancy.id)
+        if dup:
+            raise VacancyWriteError(
+                "Уже есть активная вакансия с таким названием — переименуйте одну из них."
+            )
     vacancy.active = True
     vacancy.closed_at = None
     payload = dict(vacancy.payload or {})

@@ -223,12 +223,13 @@ def _replace_in_paragraph(paragraph: Any, values: dict[str, str]) -> None:
     new = _replace_text(full, values)
     if new == full:
         return
-    if not paragraph.runs:
-        paragraph.add_run(new)
-        return
-    paragraph.runs[0].text = new
-    for run in paragraph.runs[1:]:
+    # Сброс runs — иначе токены в пользовательском .docx часто разбиты и остаются {{…}}.
+    for run in list(paragraph.runs):
         run.text = ""
+    if paragraph.runs:
+        paragraph.runs[0].text = new
+    else:
+        paragraph.add_run(new)
 
 
 def _iter_all_paragraphs(doc: Document):
@@ -346,13 +347,24 @@ def render_offer_docx(
     if not template_path.is_file():
         raise FileNotFoundError(f"Шаблон оффера не найден: {template_path}")
     doc = Document(str(template_path))
-    _expand_duties_paragraphs(doc, values.get("duties") or "")
-    # After expansion, duties token is gone; still replace other tokens
+    try:
+        _expand_duties_paragraphs(doc, values.get("duties") or "")
+    except Exception:  # noqa: BLE001 — пользовательский шаблон может не содержать {{duties}}
+        pass
     for p in _iter_all_paragraphs(doc):
         if "{{" in (p.text or ""):
-            _replace_in_paragraph(p, values)
-    _format_work_conditions_bullets(doc)
-    _insert_logo(doc, logo_data_url)
+            try:
+                _replace_in_paragraph(p, values)
+            except Exception:  # noqa: BLE001
+                continue
+    try:
+        _format_work_conditions_bullets(doc)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _insert_logo(doc, logo_data_url)
+    except Exception:  # noqa: BLE001
+        pass
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()

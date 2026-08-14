@@ -51,12 +51,16 @@ services:
       APP_ENV: ${APP_ENV:-pilot}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
       REDIS_URL: redis://redis:6379/0
+      # Persist app_settings / OAuth tokens across recreate (host ../data).
+      LEGACY_DATA_DIR: /app/data
       CORS_ORIGINS: ${CORS_ORIGINS}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
       MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
       MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
       MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    volumes:
+      - ../data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -77,9 +81,12 @@ services:
       APP_ENV: ${APP_ENV:-pilot}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hr_v2}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hr_v2}
       REDIS_URL: redis://redis:6379/0
+      LEGACY_DATA_DIR: /app/data
       MESSAGING_OUTBOUND_ENABLED: ${MESSAGING_OUTBOUND_ENABLED:-false}
       MESSAGING_INBOUND_ENABLED: ${MESSAGING_INBOUND_ENABLED:-false}
       MESSAGING_POLL_ENABLED: ${MESSAGING_POLL_ENABLED:-false}
+    volumes:
+      - ../data:/app/data
     depends_on:
       db:
         condition: service_healthy

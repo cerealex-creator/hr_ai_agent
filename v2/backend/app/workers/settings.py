@@ -18,6 +18,27 @@ from app.workers.tasks import (
 _settings = get_settings()
 
 
+async def on_startup(ctx) -> None:
+    """Cursor/sandbox injects HTTP(S)_PROXY → 403 to routerai.ru. Drop them in worker."""
+    import os
+
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "SOCKS_PROXY",
+        "SOCKS5_PROXY",
+        "socks_proxy",
+        "socks5_proxy",
+    ):
+        os.environ.pop(key, None)
+    os.environ["NO_PROXY"] = "*"
+    os.environ["no_proxy"] = "*"
+
+
 class WorkerSettings:
     functions = [
         demo_progress,
@@ -36,3 +57,4 @@ class WorkerSettings:
     max_jobs = 2
     job_timeout = 60 * 30
     keep_result = 60 * 60
+    on_startup = on_startup

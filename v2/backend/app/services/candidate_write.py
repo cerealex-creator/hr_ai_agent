@@ -98,12 +98,19 @@ def apply_hr_stage(
     if new_stage not in HR_STAGES:
         raise ValueError(f"Неизвестный этап: {new_stage}")
     old = candidate.hr_stage
-    if old == new_stage:
-        return None
     payload = dict(candidate.payload or {})
+    note_text = (note or "").strip()
+    if old == new_stage:
+        if note_text:
+            history = list(payload.get("hr_stage_history") or [])
+            history.append({"stage": new_stage, "at": _now_iso(), "note": note_text})
+            payload["hr_stage_history"] = history
+            candidate.payload = payload
+            flag_modified(candidate, "payload")
+        return None
     candidate.hr_stage = new_stage
     history = list(payload.get("hr_stage_history") or [])
-    history.append({"stage": new_stage, "at": _now_iso(), "note": note or ""})
+    history.append({"stage": new_stage, "at": _now_iso(), "note": note_text})
     payload["hr_stage_history"] = history
 
     if new_stage == CLIENT_ZONE_ENTRY_STAGE and old != CLIENT_ZONE_ENTRY_STAGE:

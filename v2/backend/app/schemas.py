@@ -35,6 +35,8 @@ class ClientChannelTreeDeptOut(BaseModel):
     chat_mode: str
     kind: str
     channel: ClientChannelBrief | None = None
+    client_zone_token: str | None = None
+    has_client_zone: bool = False
 
 
 class ClientTreeNodeOut(BaseModel):
@@ -255,6 +257,8 @@ class CandidateDetail(BaseModel):
     control_word_status: str | None = None
     control_word_match: str | None = None
     control_word_note: str | None = None
+    vacancy_control_word_enabled: bool = False
+    vacancy_control_word: str | None = None
     office_interview_date: str | None = None
     office_interview_time: str | None = None
     photo_url: str | None = None
@@ -771,6 +775,10 @@ class CandidateEvaluateOut(BaseModel):
     candidate: CandidateDetail
 
 
+class EvaluateResumeIn(BaseModel):
+    skip_questionnaire: bool = False
+
+
 class BulkLinksIn(BaseModel):
     links: list[str] = Field(default_factory=list)
     text: str | None = None  # newline-separated alternative to links[]
@@ -780,8 +788,11 @@ class BulkLinksIn(BaseModel):
 class BulkLinksOut(BaseModel):
     created: int = 0
     candidate_ids: list[str] = Field(default_factory=list)
+    candidate_id: str | None = None
     messages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    evaluate_candidate_ids: list[str] = Field(default_factory=list)
+    evaluate_job_ids: list[str] = Field(default_factory=list)
 
 
 class QuestionnaireItemOut(BaseModel):
