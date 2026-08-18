@@ -37,6 +37,53 @@
 
 ## Planned
 
+### [B-EFIR-001] ЭФИР B — аватар-видео (цифровой двойник читает вакансию)
+
+- **Источник:** чат 2026-08-16 (фича Б)
+- **Суть:** оцифровка HR у провайдера (HeyGen/D-ID) → job: `vacancy_text` → TTS/аватар → mp4 в S3 → превью + публичная `/v/[token]`. Feature flag. Кодовое слово: **`ЭФИР B0|B1|B2`**.
+- **Модуль:** avatar_video (новый), jobs, S3, settings integrations, public page
+- **Сложность:** L (~8–13 чел·дн + API-стоимость)
+- **Зависимости:** готовый `vacancy_text`; абстракция провайдера; **не** путать SpeechKit STT с TTS
+- **Статус:** planned
+- **Документ / план:** [`IMPLEMENTATION_PLAN_EFIR.md`](IMPLEMENTATION_PLAN_EFIR.md) §2
+
+**Волны:** B0 оцифровка+integrations → B1 job+S3+UI → B2 публичная ссылка
+
+---
+
+### [B-EFIR-002] ЭФИР C — покрытие сценария после записи
+
+- **Источник:** бонус к фиче А (2026-08-16)
+- **Суть:** запись → транскрипт → сверка блоков `video_script` с разговором («не закрыли блок X»).
+- **Модуль:** interview_process, video_script
+- **Сложность:** M
+- **Зависимости:** ЭФИР A + стабильный транскрипт / КАСКАД P2
+- **Статус:** planned
+- **Документ:** [`IMPLEMENTATION_PLAN_EFIR.md`](IMPLEMENTATION_PLAN_EFIR.md) §1.5
+
+---
+
+### [B-ASSISTENT-001] АССИСТЕНТ — ИИ-помощник продукта (Q&A → tools → suggestions)
+
+- **Источник:** продуктовый бриф (2026-08-15)
+- **Суть:** встроенный помощник: A1 чат/справка + ссылки; A2 tool-calling с whitelist и подтверждением; A3 утренние предложения на Рабочем столе. Кодовое слово: **`АССИСТЕНТ`**.
+- **Модуль:** assistant (api/ui), ai_json/RouterAI, dashboard, settings
+- **Сложность:** L (3 фазы, ~15–22 чел·дн)
+- **Зависимости:** желательно КАСКАД P1 (usage/routing); A1 — завести HELP.md + knowledge; не в `/c/`
+- **Статус:** planned
+- **Документ / план:** [`IMPLEMENTATION_PLAN_ASSISTENT.md`](IMPLEMENTATION_PLAN_ASSISTENT.md)
+
+**Волны:**
+| Фаза | Содержание |
+|------|------------|
+| A1 | Q&A drawer + Cmd/Ctrl+K, SSE `/assistant/chat`, логи, knowledge/HELP |
+| A2 | Whitelist tools, confirm, `assistant_actions` |
+| A3 | Cron-предложения + блок на dashboard |
+
+**Старт:** только по команде **`АССИСТЕНТ A1`** (не путать с **`ОЧЕРЕДЬ`** / **`КАСКАД`**).
+
+---
+
 ### [B-YAKOR-001] ЯКОРЬ — persons, дедуп, аналитика, теги, талант-база
 
 - **Источник:** продуктовый бриф + ревью архитектора (2026-08-14)
@@ -65,11 +112,11 @@
 - **Суть:** детерминированная маршрутизация задач fast/top; extract→eval для резюме и интервью; `ai_usage_log`; UI N7; baseline vs cascade. Кодовое слово: **`КАСКАД`**.
 - **Модуль:** ai_json, jobs, settings/ai, все LLM-сервисы
 - **Сложность:** L (4 фазы, ~16–21 чел·день)
-- **Зависимости:** координация payload keys с ЯКОРЬ (tags); migrations отдельным PR от ЯКОРЬ
-- **Статус:** planned
+- **Зависимости:** P2 после ЯКОРЬ PR2 (`candidate_resume_eval`); P4 — выборка baseline + зелёный smoke
+- **Статус:** planned (дизайн утверждён; слайсинг 2026-08-14)
 - **Документ / план:** [`IMPLEMENTATION_PLAN_KASKAD.md`](IMPLEMENTATION_PLAN_KASKAD.md)
 
-**Волны:** P1 router+log → P2 resume/interview → P3 rest+UI → P4 rollout
+**Слайсинг:** P1 сейчас (∥ ОЧЕРЕДЬ) → ЯКОРЬ PR1+PR2 → КАСКАД P2 → P3+P4 после пилота
 
 ---
 
