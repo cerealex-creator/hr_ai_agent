@@ -13,6 +13,9 @@ router = APIRouter(prefix="/client-zone", tags=["client-zone"])
 
 class ClientZoneDecideIn(BaseModel):
     status: str = Field(description="ready | think | reject")
+    decision_role: str = Field(
+        description="unit_head | director | owner",
+    )
     comment: str | None = None
     meeting_date: str | None = None
     meeting_time: str | None = None
@@ -41,6 +44,7 @@ def client_zone_decide(
         token,
         candidate_id,
         status_key=body.status,
+        decision_role=body.decision_role,
         comment=body.comment,
         meeting_date=body.meeting_date,
         meeting_time=body.meeting_time,

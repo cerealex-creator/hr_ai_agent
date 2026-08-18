@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.db import models
 from app.services.app_settings import client_notify_has
 from app.services.messaging.inbound import find_post_for_candidate, refresh_card_message
+from app.services.messaging.keyboards import CLIENT_STATUS_META
 from app.services.messaging.reminders import (
     build_manual_decide_reminder,
     build_manual_evaluate_reminder,
@@ -48,6 +50,52 @@ def primary_post(db: Session, candidate: models.Candidate) -> models.MessagingPo
     vac = db.get(models.Vacancy, candidate.vacancy_id)
     chat_id = vac.chat_id if vac else None
     return find_post_for_candidate(db, candidate.id, chat_id)
+
+
+def notify_zone_decision_telegram(
+    db: Session,
+    candidate: models.Candidate,
+    *,
+    status_key: str,
+    role_label: str,
+) -> tuple[bool, str]:
+    """Update primary card status + reply with decision (keeps «Смотреть» button)."""
+    if not client_notify_has("telegram"):
+        return True, "telegram notify off"
+    post = primary_post(db, candidate)
+    if not post or not post.external_message_id:
+        return False, "Нет карточки в чате"
+
+    ok, msg = refresh_card_message(db, candidate, post, mode="auto")
+    if not ok:
+        return False, msg
+
+    meta = CLIENT_STATUS_META.get(status_key) or {}
+    status_label = str(meta.get("label") or status_key)
+    lines = [f"<b>{_esc(status_label)}</b>"]
+    if status_key == "ready":
+        payload = candidate.payload or {}
+        date_s = str(payload.get("office_interview_date") or "").strip()
+        time_s = str(payload.get("office_interview_time") or "").strip()
+        if date_s and time_s:
+            lines.append(_esc(f"{date_s} {time_s}"))
+    role = (role_label or "").strip()
+    if role:
+        lines.append(_esc(role))
+
+    vac = db.get(models.Vacancy, candidate.vacancy_id)
+    chat_id = vac.chat_id if vac else None
+    ch = db.get(models.MessagingChannel, post.channel_id)
+    target_chat = (ch.external_id if ch else None) or chat_id
+    n_ok, n_msg, _ = send_html_message(
+        target_chat or "",
+        "\n".join(lines),
+        reply_to_message_id=post.external_message_id,
+    )
+    db.commit()
+    if not n_ok:
+        return False, f"карточка обновлена, уведомление: {n_msg}"
+    return True, n_msg or msg
 
 
 def _days_since_status(candidate: models.Candidate) -> int | None:

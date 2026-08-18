@@ -56,6 +56,7 @@ type Props = {
   evaluateResumeStatus?: string | null;
   /** When true, render body only (parent provides CollapsibleCard chrome). */
   embedded?: boolean;
+  readOnly?: boolean;
 };
 
 function moveItem(items: QItem[], index: number, dir: -1 | 1): QItem[] {
@@ -82,6 +83,7 @@ export function QuestionnairePanel({
   evaluateResumeBusy = false,
   evaluateResumeStatus = null,
   embedded = false,
+  readOnly = false,
 }: Props) {
   const [items, setItems] = useState<QItem[]>(initialItems || []);
   const [open, setOpen] = useState(Boolean(initialItems?.length));
@@ -260,7 +262,7 @@ export function QuestionnairePanel({
   const hasDigest = Boolean(digest && (digest.summary || digest.qa.length > 0));
   const regenerateBlocked = Boolean((candidate.video_link || "").trim());
   const filledCount = items.filter((q) => (q.ответ_кандидата || "").trim()).length;
-  const locked = busy || transcriptionBusy || evaluateBusy || evaluateResumeBusy;
+  const locked = busy || transcriptionBusy || evaluateBusy || evaluateResumeBusy || readOnly;
 
   const body = (
     <>
@@ -286,7 +288,7 @@ export function QuestionnairePanel({
         </div>
       ) : null}
       <p className="muted hh-micro">
-        Сначала оценка по резюме и опросник, затем запись собеседования → расшифровка → выжимка
+        Сначала оценка по резюме и опросник, затем запись собеседования → расшифровка → конспект
         вопрос–ответ → заполнение ответов.
       </p>
       {err ? <p className="warn">{err}</p> : null}
@@ -300,7 +302,7 @@ export function QuestionnairePanel({
 
       {hasDigest && digest ? (
         <div className="q-digest" id="interview-digest">
-          <h3 className="hh-subhead">Выжимка собеседования</h3>
+          <h3 className="hh-subhead">Конспект собеседования</h3>
           {digest.summary ? <p className="q-digest-summary">{digest.summary}</p> : null}
           {digest.communication ? (
             <p className="muted hh-micro q-digest-comm">
@@ -332,7 +334,7 @@ export function QuestionnairePanel({
         </div>
       ) : null}
 
-      <div className="chip-row" style={{ marginBottom: "0.75rem" }}>
+      <div className="chip-row" style={{ marginBottom: "0.75rem" }} hidden={readOnly}>
         {!hasAiEval ? (
           <button
             type="button"

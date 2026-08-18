@@ -74,7 +74,7 @@ def build_task_description(
     for label, url in (
         ("📄 Резюме PDF", resume_link),
         ("📄 Резюме HH", hh_resume_link if not (resume_link or "").strip() else None),
-        ("📝 Выжимка собеседования", interview_digest_url),
+        ("📝 Конспект собеседования", interview_digest_url),
         ("🎥 Запись собеседования", video_link),
         ("🎨 Портфолио", portfolio_link),
         ("✅ Задание", task_link),

@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { zoneFetch } from "@/lib/clientZone";
+import { CZ_DECISION_ROLES, zoneFetch } from "@/lib/clientZone";
 
 type Props = {
   token: string;
@@ -9,8 +9,11 @@ type Props = {
   onDone?: () => void;
 };
 
+type DecisionRole = (typeof CZ_DECISION_ROLES)[number]["id"];
+
 export function ClientZoneDecideForm({ token, candidateId, onDone }: Props) {
   const [status, setStatus] = useState<"ready" | "think" | "reject">("ready");
+  const [decisionRole, setDecisionRole] = useState<DecisionRole | "">("");
   const [comment, setComment] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingTime, setMeetingTime] = useState("");
@@ -20,6 +23,10 @@ export function ClientZoneDecideForm({ token, candidateId, onDone }: Props) {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!decisionRole) {
+      setErr("Выберите, кто принимает решение");
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -30,6 +37,7 @@ export function ClientZoneDecideForm({ token, candidateId, onDone }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status,
+            decision_role: decisionRole,
             comment: comment.trim() || null,
             meeting_date: status === "ready" ? meetingDate : null,
             meeting_time: status === "ready" ? meetingTime : null,
@@ -71,6 +79,23 @@ export function ClientZoneDecideForm({ token, candidateId, onDone }: Props) {
           </button>
         ))}
       </div>
+      <label className="cz-field">
+        Кто принимает решение
+        <select
+          required
+          value={decisionRole}
+          onChange={(e) => setDecisionRole(e.target.value as DecisionRole | "")}
+        >
+          <option value="" disabled>
+            Выберите…
+          </option>
+          {CZ_DECISION_ROLES.map((role) => (
+            <option key={role.id} value={role.id}>
+              {role.label}
+            </option>
+          ))}
+        </select>
+      </label>
       {status === "ready" ? (
         <div className="cz-meeting">
           <label>

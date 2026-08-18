@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import socket
 from typing import Any
 
 import requests
 
 from app.core.config import get_settings
+
+
+def _force_ipv4_for_requests() -> None:
+    """Docker bridge often has no IPv6 default route; urllib3 may try AAAA and fail."""
+    try:
+        import urllib3.util.connection as urllib3_connection
+
+        urllib3_connection.allowed_gai_family = lambda: socket.AF_INET
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_force_ipv4_for_requests()
 
 
 class TelegramProviderError(Exception):

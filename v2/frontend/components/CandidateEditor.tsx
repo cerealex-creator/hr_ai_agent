@@ -23,6 +23,8 @@ import { ClientZoneLink, clientZonePathFromSendResults } from "@/components/Clie
 import { CandidateOfferPanel } from "@/components/CandidateOfferPanel";
 import { daysBetween, daysLabel, formatDateRu, isEventPassed, parseLocalDate } from "@/lib/dates";
 import { resolveNextAction } from "@/lib/nextAction";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
+import { useAuth } from "@/components/AuthGate";
 
 type Props = { initial: CandidateDetail };
 
@@ -77,6 +79,14 @@ const CHAT_POLL_MS = 8000;
 
 function field(v: string | null | undefined): string {
   return v ?? "";
+}
+
+function payloadStr(c: CandidateDetail, key: string): string {
+  return String((c.payload as Record<string, unknown> | undefined)?.[key] ?? "").trim();
+}
+
+function payloadFlag(c: CandidateDetail, key: string): boolean {
+  return Boolean((c.payload as Record<string, unknown> | undefined)?.[key]);
 }
 
 function candidateHasResumeForEval(c: CandidateDetail): boolean {
@@ -211,6 +221,7 @@ function resolveWaiting(c: CandidateDetail): WaitingInfo | null {
 
 export function CandidateEditor({ initial }: Props) {
   const router = useRouter();
+  const { isDemo, isOwner } = useAuth();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
   const activeTab: CandTab = isCandTab(tabParam) ? tabParam : "profile";
@@ -231,6 +242,8 @@ export function CandidateEditor({ initial }: Props) {
   const [salary, setSalary] = useState(field(initial.salary_expected));
   const [resumeLink, setResumeLink] = useState(field(initial.resume_link));
   const [hhLink, setHhLink] = useState(field(initial.hh_resume_link));
+  const [anonResume, setAnonResume] = useState(payloadStr(initial, "anonymized_resume_link"));
+  const [previewIncluded, setPreviewIncluded] = useState(payloadFlag(initial, "resume_preview_included"));
   const [portfolio, setPortfolio] = useState(field(initial.portfolio_link));
   const [video, setVideo] = useState(field(initial.video_link));
   const [taskLink, setTaskLink] = useState(field(initial.task_link));
@@ -263,6 +276,7 @@ export function CandidateEditor({ initial }: Props) {
   const [vacancies, setVacancies] = useState<{ id: number; title: string }[]>([]);
   const [moveToClientReview, setMoveToClientReview] = useState(true);
   const [busy, setBusy] = useState(false);
+  const writeLocked = busy || isDemo;
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingMaterials, setEditingMaterials] = useState(false);
   const [editingPipeline, setEditingPipeline] = useState(false);
@@ -436,6 +450,8 @@ export function CandidateEditor({ initial }: Props) {
     setSalary(field(next.salary_expected));
     setResumeLink(field(next.resume_link));
     setHhLink(field(next.hh_resume_link));
+    setAnonResume(payloadStr(next, "anonymized_resume_link"));
+    setPreviewIncluded(payloadFlag(next, "resume_preview_included"));
     setPortfolio(field(next.portfolio_link));
     setVideo(field(next.video_link));
     setTaskLink(field(next.task_link));
@@ -459,6 +475,8 @@ export function CandidateEditor({ initial }: Props) {
     salary !== field(c.salary_expected) ||
     resumeLink !== field(c.resume_link) ||
     hhLink !== field(c.hh_resume_link) ||
+    anonResume !== payloadStr(c, "anonymized_resume_link") ||
+    previewIncluded !== payloadFlag(c, "resume_preview_included") ||
     portfolio !== field(c.portfolio_link) ||
     video !== field(c.video_link) ||
     taskLink !== field(c.task_link) ||
@@ -526,6 +544,10 @@ export function CandidateEditor({ initial }: Props) {
   };
 
   const saveCard = async () => {
+    if (isDemo) {
+      setFeedback("anketa", null, DEMO_WRITE_HINT, "warning");
+      return;
+    }
     setBusy(true);
     setFeedback("anketa", null);
     try {
@@ -542,6 +564,8 @@ export function CandidateEditor({ initial }: Props) {
           salary_expected: salary,
           resume_link: resumeLink,
           hh_resume_link: hhLink,
+          anonymized_resume_link: anonResume,
+          ...(isOwner ? { resume_preview_included: previewIncluded } : {}),
           portfolio_link: portfolio,
           video_link: video,
           task_link: taskLink,
@@ -808,6 +832,7 @@ export function CandidateEditor({ initial }: Props) {
   }, [c.vacancy_id]);
 
   const remove = async () => {
+    if (isDemo) return;
     if (!window.confirm(`Удалить кандидата «${c.name}»?`)) return;
     setBusy(true);
     setErr(null);
@@ -823,6 +848,10 @@ export function CandidateEditor({ initial }: Props) {
   };
 
   const sendToChat = async () => {
+    if (isDemo) {
+      setFeedback("client", null, DEMO_WRITE_HINT, "warning");
+      return;
+    }
     setBusy(true);
     setClientOpen(true);
     setFeedback("client", null);
@@ -848,14 +877,9 @@ export function CandidateEditor({ initial }: Props) {
       if (zonePath) setClientZonePath(zonePath);
       const partial =
         Array.isArray(data.errors) && data.errors.length > 0 && Boolean(data.ok);
-      const baseMsg = data.message || "Отправлено заказчику";
-      const errExtra =
-        partial && Array.isArray(data.errors) && data.errors.length
-          ? `\n${data.errors.join("\n")}`
-          : "";
       setFeedback(
         "client",
-        `${baseMsg}${errExtra}`,
+        data.message || "Отправлено заказчику",
         null,
         partial ? "warning" : "success",
       );
@@ -1073,6 +1097,12 @@ export function CandidateEditor({ initial }: Props) {
               {clientStatusLabelForCard(c.hr_stage, c.client_status)}
             </span>
           </div>
+          {isDemo ? (
+            <p className="muted hh-micro">
+              Демо: оценка, опросник и конспект уже заполнены. Сохранить, отправить в чат или
+              запустить ИИ нельзя.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -1172,7 +1202,7 @@ export function CandidateEditor({ initial }: Props) {
                 <button
                   type="button"
                   className="chip"
-                  disabled={busy}
+                  disabled={writeLocked}
                   onClick={confirmMeeting}
                   style={{ marginLeft: "0.5rem", verticalAlign: "middle" }}
                 >
@@ -1343,18 +1373,29 @@ export function CandidateEditor({ initial }: Props) {
               {hhLink ? (
                 <a href={hhLink} target="_blank" rel="noreferrer" className="chip">HH.ru</a>
               ) : null}
-              {!resumeLink && !hhLink ? (
+              {isOwner && anonResume ? (
+                <a href={anonResume} target="_blank" rel="noreferrer" className="chip">
+                  Макет PDF
+                </a>
+              ) : null}
+              {!resumeLink && !hhLink && !anonResume ? (
                 <span className="muted hh-micro">Ссылки на резюме не добавлены</span>
               ) : null}
             </div>
 
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
+              {isDemo ? (
+                <p className="muted hh-micro">{DEMO_WRITE_HINT}</p>
+              ) : (
+                <>
               <button type="button" className="chip" onClick={() => setEditingProfile(true)}>
                 Редактировать
               </button>
-              <button type="button" className="chip" disabled={busy} onClick={remove}>
+              <button type="button" className="chip" disabled={writeLocked} onClick={remove}>
                 Удалить
               </button>
+                </>
+              )}
             </div>
           </>
         ) : (
@@ -1362,54 +1403,76 @@ export function CandidateEditor({ initial }: Props) {
             {bannerFor("anketa")}
             <div className="hh-field">
               <label className="hh-label" htmlFor="cand-name">Имя</label>
-              <input id="cand-name" value={name} onChange={(e) => setName(e.target.value)} disabled={busy} />
+              <input id="cand-name" value={name} onChange={(e) => setName(e.target.value)} disabled={writeLocked} />
             </div>
             <div className="hh-inline-pair">
               <div className="hh-field">
                 <label className="hh-label" htmlFor="cand-phone">Телефон</label>
-                <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+                <input id="cand-phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={writeLocked} />
               </div>
               <div className="hh-field">
                 <label className="hh-label" htmlFor="cand-email">Email</label>
-                <input id="cand-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} placeholder="опционально" />
+                <input id="cand-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={writeLocked} placeholder="опционально" />
               </div>
             </div>
             <div className="hh-inline-pair">
               <div className="hh-field">
                 <label className="hh-label" htmlFor="cand-age">Возраст</label>
-                <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={busy} />
+                <input id="cand-age" value={age} onChange={(e) => setAge(e.target.value)} disabled={writeLocked} />
               </div>
               <div className="hh-field">
                 <label className="hh-label" htmlFor="cand-city">Город</label>
-                <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={busy} />
+                <input id="cand-city" value={city} onChange={(e) => setCity(e.target.value)} disabled={writeLocked} />
               </div>
             </div>
             <div className="hh-field">
               <label className="hh-label" htmlFor="cand-metro">Метро</label>
-              <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={busy} />
+              <input id="cand-metro" value={metro} onChange={(e) => setMetro(e.target.value)} disabled={writeLocked} />
             </div>
             <div className="hh-field">
               <label className="hh-label" htmlFor="cand-salary">Зарплатные ожидания</label>
-              <input id="cand-salary" value={salary} onChange={(e) => setSalary(e.target.value)} disabled={busy} />
+              <input id="cand-salary" value={salary} onChange={(e) => setSalary(e.target.value)} disabled={writeLocked} />
             </div>
 
             <h3 className="hh-subhead">Ссылки</h3>
-            <LinkField id="cand-resume" label="Резюме PDF (Яндекс.Диск)" openLabel="Открыть PDF" value={resumeLink} onChange={setResumeLink} disabled={busy} placeholder="https://disk.yandex.ru/…" />
-            <LinkField id="cand-hh" label="HH (без контактов)" openLabel="Открыть HH" value={hhLink} onChange={setHhLink} disabled={busy} placeholder="https://hh.ru/resume/…" />
+            <LinkField id="cand-resume" label="Резюме PDF (Яндекс.Диск)" openLabel="Открыть PDF" value={resumeLink} onChange={setResumeLink} disabled={writeLocked} placeholder="https://disk.yandex.ru/…" />
+            <LinkField id="cand-hh" label="HH (без контактов)" openLabel="Открыть HH" value={hhLink} onChange={setHhLink} disabled={writeLocked} placeholder="https://hh.ru/resume/…" />
+            {isOwner ? (
+            <>
+            <LinkField
+              id="cand-anon-resume"
+              label="Макет PDF без контактов"
+              openLabel="Открыть макет"
+              value={anonResume}
+              onChange={setAnonResume}
+              disabled={writeLocked}
+              placeholder="https://disk.yandex.ru/… PDF без телефона и почты"
+            />
+            <label className="hh-check">
+              <input
+                type="checkbox"
+                checked={previewIncluded}
+                onChange={(e) => setPreviewIncluded(e.target.checked)}
+                disabled={writeLocked}
+              />
+              Показать в зоне макетов заказчика
+            </label>
+            </>
+            ) : null}
 
             <div className="hh-field">
               <label className="hh-label" htmlFor="cand-hr">Комментарий HR</label>
-              <textarea id="cand-hr" rows={3} value={hrComment} onChange={(e) => setHrComment(e.target.value)} disabled={busy} />
+              <textarea id="cand-hr" rows={3} value={hrComment} onChange={(e) => setHrComment(e.target.value)} disabled={writeLocked} />
             </div>
 
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
-              <button type="button" className="chip chip-active" disabled={busy} onClick={() => { void saveCard(); setEditingProfile(false); }}>
+              <button type="button" className="chip chip-active" disabled={writeLocked} onClick={() => { void saveCard(); setEditingProfile(false); }}>
                 Сохранить
               </button>
               <button type="button" className="chip" onClick={() => setEditingProfile(false)}>
                 Отмена
               </button>
-              <button type="button" className="chip" disabled={busy} onClick={remove}>
+              <button type="button" className="chip" disabled={writeLocked} onClick={remove}>
                 Удалить
               </button>
             </div>
@@ -1472,7 +1535,7 @@ export function CandidateEditor({ initial }: Props) {
               openLabel="Открыть запись"
               value={video}
               onChange={setVideo}
-              disabled={busy || transcriptionBusy}
+              disabled={writeLocked || transcriptionBusy}
               placeholder="Ссылка на запись видео/аудио"
             />
             <LinkField
@@ -1481,7 +1544,7 @@ export function CandidateEditor({ initial }: Props) {
               openLabel="Открыть портфолио"
               value={portfolio}
               onChange={setPortfolio}
-              disabled={busy}
+              disabled={writeLocked}
             />
             <LinkField
               id="cand-task"
@@ -1489,14 +1552,14 @@ export function CandidateEditor({ initial }: Props) {
               openLabel="Открыть задание"
               value={taskLink}
               onChange={setTaskLink}
-              disabled={busy}
+              disabled={writeLocked}
               placeholder="https://…"
             />
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
               <button
                 type="button"
                 className="chip chip-active"
-                disabled={busy}
+                disabled={writeLocked}
                 onClick={() => {
                   void saveCard();
                   setEditingMaterials(false);
@@ -1568,15 +1631,26 @@ export function CandidateEditor({ initial }: Props) {
               ) : null}
             </div>
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
-              <button type="button" className="chip" onClick={() => setEditingPipeline(true)}>
-                Изменить статус
-              </button>
-              <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
-                Применить этап по статусу заказчика
-              </button>
-              <button type="button" className="chip" onClick={() => setActiveTab("offer")}>
-                К разделу «Сделать оффер»
-              </button>
+              {isDemo ? (
+                <>
+                  <p className="muted hh-micro">{DEMO_WRITE_HINT}</p>
+                  <button type="button" className="chip" onClick={() => setActiveTab("offer")}>
+                    К разделу «Сделать оффер»
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" className="chip" onClick={() => setEditingPipeline(true)}>
+                    Изменить статус
+                  </button>
+                  <button type="button" className="chip" disabled={writeLocked} onClick={applyClientStage}>
+                    Применить этап по статусу заказчика
+                  </button>
+                  <button type="button" className="chip" onClick={() => setActiveTab("offer")}>
+                    К разделу «Сделать оффер»
+                  </button>
+                </>
+              )}
             </div>
           </>
         ) : (
@@ -1589,7 +1663,7 @@ export function CandidateEditor({ initial }: Props) {
             id="hr-stage"
             value={stage}
             onChange={(e) => setStage(e.target.value)}
-            disabled={busy}
+            disabled={writeLocked}
           >
             {stageOptions.map((opt) => (
               <option key={opt.id} value={opt.id}>
@@ -1612,7 +1686,7 @@ export function CandidateEditor({ initial }: Props) {
                   type="date"
                   value={interviewDate}
                   onChange={(e) => setInterviewDate(e.target.value)}
-                  disabled={busy}
+                  disabled={writeLocked}
                 />
               </div>
               <div className="hh-field">
@@ -1624,7 +1698,7 @@ export function CandidateEditor({ initial }: Props) {
                   type="time"
                   value={interviewTime}
                   onChange={(e) => setInterviewTime(e.target.value)}
-                  disabled={busy}
+                  disabled={writeLocked}
                 />
               </div>
             </div>
@@ -1634,7 +1708,7 @@ export function CandidateEditor({ initial }: Props) {
                 <button
                   type="button"
                   className="chip chip-active"
-                  disabled={busy || scheduleBusy}
+                  disabled={writeLocked || scheduleBusy}
                   onClick={() => setScheduleModalOpen(true)}
                 >
                   Назначить встречу
@@ -1645,12 +1719,12 @@ export function CandidateEditor({ initial }: Props) {
                   <label className="hh-label" htmlFor="meet-link">
                     Ссылка на встречу (Zoom)
                   </label>
-                  <input id="meet-link" value={meetingLink} readOnly disabled={busy} />
+                  <input id="meet-link" value={meetingLink} readOnly disabled={writeLocked} />
                   <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.45rem" }}>
                     <button
                       type="button"
                       className="chip chip-active"
-                      disabled={busy}
+                      disabled={writeLocked}
                       onClick={async () => {
                         const text = buildMeetingInviteText({
                           name,
@@ -1708,7 +1782,7 @@ export function CandidateEditor({ initial }: Props) {
             id="stage-note"
             value={stageNote}
             onChange={(e) => setStageNote(e.target.value)}
-            disabled={busy}
+            disabled={writeLocked}
             placeholder="необязательно"
           />
         </div>
@@ -1723,7 +1797,7 @@ export function CandidateEditor({ initial }: Props) {
                 type="date"
                 value={warrantyDate}
                 onChange={(e) => setWarrantyDate(e.target.value)}
-                disabled={busy}
+                disabled={writeLocked}
               />
             </div>
             <div className="hh-field">
@@ -1734,7 +1808,7 @@ export function CandidateEditor({ initial }: Props) {
                 id="warranty-months"
                 value={warrantyMonths}
                 onChange={(e) => setWarrantyMonths(Number(e.target.value))}
-                disabled={busy}
+                disabled={writeLocked}
               >
                 {[1, 2, 3, 4, 5, 6].map((m) => (
                   <option key={m} value={m}>
@@ -1750,7 +1824,7 @@ export function CandidateEditor({ initial }: Props) {
             type="checkbox"
             checked={deleteCalendarEvent}
             onChange={(e) => setDeleteCalendarEvent(e.target.checked)}
-            disabled={busy}
+            disabled={writeLocked}
           />
           Удалить событие из Google Calendar
         </label>
@@ -1758,7 +1832,7 @@ export function CandidateEditor({ initial }: Props) {
           <button
             type="button"
             className="chip chip-active"
-            disabled={busy}
+            disabled={writeLocked}
             onClick={() => {
               void (async () => {
                 await saveStage();
@@ -1771,7 +1845,7 @@ export function CandidateEditor({ initial }: Props) {
           <button type="button" className="chip" onClick={() => setEditingPipeline(false)}>
             Отмена
           </button>
-          <button type="button" className="chip" disabled={busy} onClick={applyClientStage}>
+          <button type="button" className="chip" disabled={writeLocked} onClick={applyClientStage}>
             Применить этап по статусу заказчика
           </button>
         </div>
@@ -1805,6 +1879,7 @@ export function CandidateEditor({ initial }: Props) {
         </ul>
       </div>
 
+      {!isDemo ? (
       <div className="rec-card">
         <div className="hh-field">
           <label className="hh-label" htmlFor="copy-target">
@@ -1814,7 +1889,7 @@ export function CandidateEditor({ initial }: Props) {
             id="copy-target"
             value={copyTargetId}
             onChange={(e) => setCopyTargetId(e.target.value)}
-            disabled={busy}
+            disabled={writeLocked}
           >
             <option value="">— выбрать —</option>
             {vacancies.map((v) => (
@@ -1826,7 +1901,7 @@ export function CandidateEditor({ initial }: Props) {
           <button
             type="button"
             className="chip"
-            disabled={busy || !copyTargetId}
+            disabled={writeLocked || !copyTargetId}
             onClick={copyCandidate}
             style={{ marginTop: "0.35rem" }}
           >
@@ -1834,6 +1909,7 @@ export function CandidateEditor({ initial }: Props) {
           </button>
         </div>
       </div>
+      ) : null}
       </>
       ) : null}
 
@@ -1853,11 +1929,11 @@ export function CandidateEditor({ initial }: Props) {
             );
             let hint: string | undefined;
             if (hasDig && hasQuestionnaire) {
-              hint = `${(c.interview_questionnaire as unknown[]).length} вопросов · есть выжимка`;
+              hint = `${(c.interview_questionnaire as unknown[]).length} вопросов · есть конспект`;
             } else if (hasQuestionnaire) {
               hint = `${(c.interview_questionnaire as unknown[]).length} вопросов`;
             } else if (hasDig) {
-              hint = "есть выжимка";
+              hint = "есть конспект";
             } else if ((c.transcript || "").trim()) {
               hint = "есть расшифровка";
             }
@@ -1870,6 +1946,7 @@ export function CandidateEditor({ initial }: Props) {
         </h3>
         <QuestionnairePanel
           embedded
+          readOnly={isDemo}
           candidate={c}
           initialItems={
             Array.isArray(c.interview_questionnaire)
@@ -1926,28 +2003,28 @@ export function CandidateEditor({ initial }: Props) {
             type="checkbox"
             checked={moveToClientReview}
             onChange={(e) => setMoveToClientReview(e.target.checked)}
-            disabled={busy}
+            disabled={writeLocked}
           />
           Перевести на этап «На оценке у заказчика»
         </label>
         <div className="hh-row-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
-          <button type="button" className="chip chip-active" disabled={busy} onClick={sendToChat}>
+          <button type="button" className="chip chip-active" disabled={writeLocked} onClick={sendToChat}>
             Отправить заказчику
           </button>
           {telegramNotifyEnabled ? (
             <>
-              <button type="button" className="chip" disabled={busy} onClick={refreshClientCard}>
+              <button type="button" className="chip" disabled={writeLocked} onClick={refreshClientCard}>
                 Обновить данные по кандидату
               </button>
               <button
                 type="button"
                 className="chip"
-                disabled={busy}
+                disabled={writeLocked}
                 onClick={() => remind("evaluate")}
               >
                 Напомнить о кандидате
               </button>
-              <button type="button" className="chip" disabled={busy} onClick={() => remind("decide")}>
+              <button type="button" className="chip" disabled={writeLocked} onClick={() => remind("decide")}>
                 Напомнить принять решение
               </button>
             </>
@@ -1959,20 +2036,20 @@ export function CandidateEditor({ initial }: Props) {
           <input
             value={materialTitle}
             onChange={(e) => setMaterialTitle(e.target.value)}
-            disabled={busy}
+            disabled={writeLocked}
             placeholder="Заголовок"
           />
           <input
             value={materialUrl}
             onChange={(e) => setMaterialUrl(e.target.value)}
-            disabled={busy}
+            disabled={writeLocked}
             placeholder="https://…"
             style={{ marginTop: "0.35rem" }}
           />
           <button
             type="button"
             className="chip"
-            disabled={busy || !materialUrl.trim()}
+            disabled={writeLocked || !materialUrl.trim()}
             onClick={sendMaterial}
             style={{ marginTop: "0.35rem" }}
           >
@@ -2068,7 +2145,7 @@ export function CandidateEditor({ initial }: Props) {
                 <button
                   type="button"
                   className="chip chip-active"
-                  disabled={resumeEvalBusy || attachBusy}
+                  disabled={isDemo || resumeEvalBusy || attachBusy}
                   onClick={() => {
                     void evaluateResume().catch((e) => {
                       setErr(e instanceof Error ? e.message : "Ошибка оценки");
@@ -2097,7 +2174,7 @@ export function CandidateEditor({ initial }: Props) {
                   id="ai-resume-link"
                   value={attachResumeLink}
                   onChange={(e) => setAttachResumeLink(e.target.value)}
-                  disabled={attachBusy || resumeEvalBusy}
+                  disabled={isDemo || attachBusy || resumeEvalBusy}
                   placeholder="https://disk.yandex.ru/…"
                 />
               </div>
@@ -2109,7 +2186,7 @@ export function CandidateEditor({ initial }: Props) {
                   id="ai-resume-file"
                   type="file"
                   accept=".pdf,.doc,.docx,.txt"
-                  disabled={attachBusy || resumeEvalBusy}
+                  disabled={isDemo || attachBusy || resumeEvalBusy}
                   onChange={(e) => setAttachResumeFile(e.target.files?.[0] || null)}
                 />
               </div>
@@ -2157,7 +2234,7 @@ export function CandidateEditor({ initial }: Props) {
             <button
               type="button"
               className="chip chip-active"
-              disabled={scheduleBusy || !interviewDate || !interviewTime}
+              disabled={isDemo || scheduleBusy || !interviewDate || !interviewTime}
               onClick={async () => {
                 setScheduleBusy(true);
                 setFeedback("stage", null);
@@ -2200,7 +2277,7 @@ export function CandidateEditor({ initial }: Props) {
             <button
               type="button"
               className="chip"
-              disabled={scheduleBusy}
+              disabled={isDemo || scheduleBusy}
               onClick={() => setScheduleModalOpen(false)}
             >
               Отмена

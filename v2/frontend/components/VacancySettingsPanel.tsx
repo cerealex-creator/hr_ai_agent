@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { type VacancyDetail, apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 import { ChatSelect } from "@/components/ChatSelect";
 import { VacancyStageSchemaPanel } from "@/components/VacancyStageSchemaPanel";
 import {
@@ -15,6 +17,7 @@ import {
 type Props = { vacancy: VacancyDetail };
 
 export function VacancySettingsPanel({ vacancy }: Props) {
+  const { isDemo } = useAuth();
   const router = useRouter();
   const payload = vacancy.payload || {};
   const [isTest, setIsTest] = useState(Boolean(payload.is_test));
@@ -30,6 +33,10 @@ export function VacancySettingsPanel({ vacancy }: Props) {
   const [err, setErr] = useState<string | null>(null);
 
   const save = async () => {
+    if (isDemo) {
+      setErr(DEMO_WRITE_HINT);
+      return;
+    }
     setBusy(true);
     setErr(null);
     setMsg(null);
@@ -118,6 +125,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           </span>
         ) : null}
       </h3>
+      {isDemo ? <p className="warn cz-banner">{DEMO_WRITE_HINT}</p> : null}
       {err ? <p className="warn">{err}</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
       <div className="hh-field" style={{ marginBottom: "0.85rem" }}>
@@ -128,7 +136,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
               key={key}
               type="button"
               className={`vac-avatar-pick${avatarKey === key ? " is-active" : ""}`}
-              disabled={busy}
+              disabled={busy || isDemo}
               onClick={() => setAvatarKey(key)}
               title={VACANCY_AVATAR_LABELS[key as VacancyAvatarKey]}
             >
@@ -151,7 +159,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           type="checkbox"
           checked={isTest}
           onChange={(e) => setIsTest(e.target.checked)}
-          disabled={busy}
+          disabled={busy || isDemo}
         />
         Тестовая вакансия
       </label>
@@ -160,7 +168,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           type="checkbox"
           checked={showPortfolio}
           onChange={(e) => setShowPortfolio(e.target.checked)}
-          disabled={busy}
+          disabled={busy || isDemo}
         />
         Показывать поле портфолио
       </label>
@@ -169,7 +177,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           type="checkbox"
           checked={cwEnabled}
           onChange={(e) => setCwEnabled(e.target.checked)}
-          disabled={busy}
+          disabled={busy || isDemo}
         />
         Контрольное слово
       </label>
@@ -178,7 +186,7 @@ export function VacancySettingsPanel({ vacancy }: Props) {
           <input
             value={controlWord}
             onChange={(e) => setControlWord(e.target.value)}
-            disabled={busy}
+            disabled={busy || isDemo}
             placeholder="слово"
           />
         </div>

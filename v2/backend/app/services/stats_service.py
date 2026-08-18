@@ -111,9 +111,12 @@ def resolve_stats_client_ids(db: Session, client_id: int | None) -> list[int] | 
 def _candidates_for_vacancies(db: Session, vac_ids: list[int]) -> list[models.Candidate]:
     if not vac_ids:
         return []
-    return list(
+    from app.services.resume_preview import is_resume_preview_included
+
+    rows = list(
         db.scalars(select(models.Candidate).where(models.Candidate.vacancy_id.in_(vac_ids))).all()
     )
+    return [c for c in rows if not is_resume_preview_included(c.payload)]
 
 
 def build_funnel_stats(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -55,6 +56,9 @@ FUNNEL_EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени 
   "strengths": ["..."],
   "weaknesses": ["..."]
 }
+
+Поля strengths и weaknesses обязательны: по 2–4 коротких пункта.
+Минусы — конкретные пробелы или риски по профилю, не общие фразы.
 
 Структура comment_sections обязательна. Поле "comment" не используй — только comment_sections.
 
@@ -339,15 +343,9 @@ def evaluate_candidate_resume(
     if not str((candidate.payload or {}).get("photo_url") or "").strip():
         link = str((candidate.payload or {}).get("resume_link") or "").strip()
         if link:
-            try:
-                from app.services.pdf_extract import download_url_bytes
-                from app.services.candidate_photo import try_attach_candidate_photo
+            from app.services.candidate_photo import try_attach_candidate_photo_from_link
 
-                blob = download_url_bytes(link)
-                if blob.lstrip().startswith(b"%PDF"):
-                    try_attach_candidate_photo(db, candidate, pdf_bytes=blob)
-            except Exception:  # noqa: BLE001
-                pass
+            try_attach_candidate_photo_from_link(db, candidate, link)
     return {
         "ok": True,
         "ai_score": ev.get("ai_score"),
@@ -382,16 +380,44 @@ def _name_from_filename(filename: str) -> str | None:
     return stem
 
 
+def _incomplete_candidates(db: Session, vacancy_id: int) -> list[models.Candidate]:
+    rows = list(
+        db.scalars(
+            select(models.Candidate).where(models.Candidate.vacancy_id == vacancy_id)
+        ).all()
+    )
+    return [c for c in rows if (c.payload or {}).get("ai_score") is None]
+
+
+def _reuse_incomplete_from_resume_text(
+    db: Session, vacancy: models.Vacancy, resume_text: str
+) -> models.Candidate | None:
+    from app.services.yandex_disk_sync import person_name_in_text
+
+    text = (resume_text or "").strip()
+    if not text:
+        return None
+    for cand in _incomplete_candidates(db, vacancy.id):
+        name = (cand.name or "").strip()
+        if not name or name.casefold() in {"новый кандидат", "new candidate"}:
+            continue
+        if person_name_in_text(name, text):
+            return cand
+    return None
+
+
 def bulk_add_from_resume_links(
     db: Session,
     vacancy: models.Vacancy,
     links: list[str],
     *,
     evaluate: bool = False,
+    for_resume_preview: bool = False,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create candidates from PDF links. AI extract/eval is deferred (see enqueue)."""
     from app.services.candidate_write import create_candidate
+    from app.services.candidate_photo import try_attach_candidate_photo_from_link
 
     settings = settings or get_settings()
     created_ids: list[str] = []
@@ -408,14 +434,25 @@ def bulk_add_from_resume_links(
         fields: dict[str, Any] = {"resume_link": link, "cold_screening": True}
         if text:
             fields["resume_text"] = text
-            # Лёгкий разбор без ИИ: не блокируем HTTP на RouterAI (до 1–2 мин).
         elif err:
             errors.append(f"{link}: {err}")
-            # still create stub with link
-        cand = create_candidate(db, vacancy_id=vacancy.id, name=name, fields=fields)
+
+        cand = _reuse_incomplete_from_resume_text(db, vacancy, text or "")
+        reused = cand is not None
+        if cand is None:
+            cand = create_candidate(db, vacancy_id=vacancy.id, name=name, fields=fields)
         payload = dict(cand.payload or {})
-        payload["source"] = "bulk_links"
+        payload["source"] = payload.get("source") or "bulk_links"
         payload["cold_screening"] = True
+        if not str(payload.get("resume_link") or "").strip():
+            payload["resume_link"] = link
+        if for_resume_preview:
+            from app.services.resume_preview import mark_resume_preview
+
+            cand.payload = payload
+            flag_modified(cand, "payload")
+            mark_resume_preview(cand, pdf_url=link, included=True)
+            payload = dict(cand.payload or {})
         if fields.get("resume_text"):
             payload["resume_text"] = fields["resume_text"]
         cand.payload = payload
@@ -423,27 +460,21 @@ def bulk_add_from_resume_links(
         db.commit()
         db.refresh(cand)
 
-        if not (cand.payload or {}).get("photo_url"):
-            from app.services.pdf_extract import download_url_bytes
-            from app.services.candidate_photo import try_attach_candidate_photo
-
-            try:
-                blob = download_url_bytes(link)
-                if blob.lstrip().startswith(b"%PDF"):
-                    try_attach_candidate_photo(db, cand, pdf_bytes=blob)
-            except Exception:  # noqa: BLE001
-                pass
+        try_attach_candidate_photo_from_link(db, cand, link)
 
         created_ids.append(str(cand.id))
+        label = "Дополнена карточка" if reused else "Добавлен"
         if evaluate and (text or "").strip():
             evaluate_ids.append(str(cand.id))
-            messages.append(f"Добавлен: {cand.name} — оценка ИИ в очереди")
+            eval_hint = "лёгкая оценка в очереди" if for_resume_preview else "оценка ИИ в очереди"
+            messages.append(f"{label}: {cand.name} — {eval_hint}")
         else:
-            messages.append(f"Добавлен: {cand.name}")
+            messages.append(f"{label}: {cand.name}")
 
     return {
         "created": len(created_ids),
         "candidate_ids": created_ids,
+        "candidate_id": created_ids[0] if created_ids else None,
         "messages": messages[:40],
         "errors": errors[:20],
         "evaluate_candidate_ids": evaluate_ids,
@@ -457,6 +488,7 @@ def add_candidate_from_resume_file(
     filename: str,
     content: bytes,
     evaluate: bool = False,
+    for_resume_preview: bool = False,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Create one candidate from an uploaded resume file (pdf/docx/txt/…)."""
@@ -485,9 +517,22 @@ def add_candidate_from_resume_file(
     else:
         errors.append("Не удалось извлечь текст из файла")
 
-    cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields)
+    from app.services.yandex_disk_sync import match_candidate_by_filename
+
+    reused = False
+    cand = match_candidate_by_filename(name_hint, _incomplete_candidates(db, vacancy.id))
+    if cand is None:
+        cand = _reuse_incomplete_from_resume_text(db, vacancy, text)
+    if cand is None:
+        cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields)
+    else:
+        reused = True
+        if cand_name and cand_name != "Новый кандидат" and (
+            not (cand.name or "").strip() or cand.name.startswith("Новый")
+        ):
+            cand.name = cand_name
     payload = dict(cand.payload or {})
-    payload["source"] = "resume_upload"
+    payload["source"] = payload.get("source") or "resume_upload"
     payload["cold_screening"] = True
     payload["resume_filename"] = name_hint
     if fields.get("resume_text"):
@@ -502,13 +547,27 @@ def add_candidate_from_resume_file(
 
         try_attach_candidate_photo(db, cand, pdf_bytes=content)
 
+    if for_resume_preview:
+        from app.services.resume_preview import mark_resume_preview
+
+        mark_resume_preview(cand, included=True)
+        db.add(cand)
+        db.commit()
+        db.refresh(cand)
+
     messages: list[str] = []
     evaluate_ids: list[str] = []
+    label = "Дополнена карточка" if reused else "Добавлен"
     if evaluate and text.strip():
         evaluate_ids.append(str(cand.id))
-        messages.append(f"Добавлен: {cand.name} — оценка ИИ в очереди")
+        eval_hint = "лёгкая оценка в очереди" if for_resume_preview else "оценка ИИ в очереди"
+        messages.append(f"{label}: {cand.name} — {eval_hint}")
     else:
-        messages.append(f"Добавлен: {cand.name}")
+        messages.append(f"{label}: {cand.name}")
+    if for_resume_preview and not str((cand.payload or {}).get("anonymized_resume_link") or "").strip():
+        messages.append(
+            f"{cand.name}: для кнопки «Посмотреть резюме» вставьте публичную ссылку Я.Диска в поле макета"
+        )
 
     return {
         "created": 1,
@@ -565,19 +624,13 @@ def attach_resume_to_candidate(
         elif err:
             raise ValueError(err or "Не удалось скачать резюме по ссылке")
         if not str(payload.get("photo_url") or "").strip() and link:
-            from app.services.pdf_extract import download_url_bytes
-            from app.services.candidate_photo import try_attach_candidate_photo
+            from app.services.candidate_photo import try_attach_candidate_photo_from_link
 
-            try:
-                blob = download_url_bytes(link)
-                if blob.lstrip().startswith(b"%PDF"):
-                    try_attach_candidate_photo(db, candidate, pdf_bytes=blob)
-                    payload = dict(candidate.payload or {})
-                    payload["resume_link"] = link
-                    if text.strip():
-                        payload["resume_text"] = text
-            except Exception:  # noqa: BLE001
-                pass
+            try_attach_candidate_photo_from_link(db, candidate, link)
+            payload = dict(candidate.payload or {})
+            payload["resume_link"] = link
+            if text.strip():
+                payload["resume_text"] = text
 
     candidate.payload = payload
     flag_modified(candidate, "payload")

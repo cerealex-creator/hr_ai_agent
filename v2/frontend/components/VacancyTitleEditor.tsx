@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 type Props = {
   vacancyId: number;
@@ -21,6 +22,7 @@ export function VacancyTitleEditor({
   const [draft, setDraft] = useState(initialTitle);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { isDemo } = useAuth();
 
   const save = async () => {
     const next = draft.trim();
@@ -59,6 +61,16 @@ export function VacancyTitleEditor({
     e.preventDefault();
     void save();
   };
+
+  if (isDemo) {
+    return (
+      <h1 className="vac-head-title">
+        {title}
+        {searchModeWarranty ? <span className="muted"> · гарантийный поиск</span> : null}
+        {isTest ? <span className="muted"> · тест</span> : null}
+      </h1>
+    );
+  }
 
   if (editing) {
     return (

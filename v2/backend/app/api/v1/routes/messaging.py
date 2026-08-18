@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.session import get_db
+from app.core.auth import AuthUser, require_auth
 from app.api.v1.common import (
     ALLOWED_JOB_TYPES,
     ARQ_FUNCTION_BY_TYPE,
@@ -131,7 +132,7 @@ def messaging_list_channels(db: Session = Depends(get_db)) -> list[MessagingChan
     rows = [
         r
         for r in list_channels(db)
-        if r.client_id is None or r.client_id in allowed
+        if r.client_id is not None and r.client_id in allowed
     ]
     return [_channel_out(r) for r in rows]
 
@@ -169,9 +170,22 @@ def messaging_sync_channels(db: Session = Depends(get_db)) -> MessagingChannelsS
     return MessagingChannelsSyncOut(**sync_channels_from_vacancies(db))
 
 @router.get("/messaging/status")
-def messaging_status() -> dict:
+def messaging_status(user: AuthUser = Depends(require_auth)) -> dict:
     from app.core.config import get_settings
     from app.services.messaging.telegram_provider import get_me
+
+    if user.is_demo:
+        return {
+            "outbound_enabled": False,
+            "inbound_enabled": False,
+            "poll_enabled": False,
+            "token_configured": False,
+            "hr_user_id": None,
+            "bot_ok": False,
+            "bot_message": "В демо бот не подключается",
+            "bot": {},
+            "note": "",
+        }
 
     settings = get_settings()
     token_set = bool((settings.telegram_bot_token or "").strip())

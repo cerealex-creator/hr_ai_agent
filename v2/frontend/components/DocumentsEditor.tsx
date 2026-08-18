@@ -7,10 +7,16 @@ import { DocumentsFromBrief } from "@/components/DocumentsFromBrief";
 import { DocumentsFromMaterials } from "@/components/DocumentsFromMaterials";
 import { apiFetch } from "@/lib/api";
 import { fieldLabel } from "@/lib/labels";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 const EDIT_KEYS = ["profile", "vacancy_text", "questions", "keywords", "notes"] as const;
 const GENERATABLE = new Set(["profile", "vacancy_text", "questions", "keywords"]);
 type DocKey = (typeof EDIT_KEYS)[number];
+
+function visibleDocKeys(isDemo: boolean): readonly DocKey[] {
+  return isDemo ? EDIT_KEYS.filter((k) => k !== "keywords") : EDIT_KEYS;
+}
 
 type Props = {
   vacancyId: number;
@@ -33,6 +39,8 @@ function isFilled(text: string): boolean {
 }
 
 export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = "" }: Props) {
+  const { isDemo } = useAuth();
+  const docKeys = visibleDocKeys(isDemo);
   const router = useRouter();
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [drafts, setDrafts] = useState<Record<DocKey, string>>(() => {
@@ -196,6 +204,29 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
     }
   };
 
+  const docsFormed =
+    isFilled(drafts.profile) || isFilled(drafts.vacancy_text) || isFilled(drafts.questions);
+
+  const regenPack = !isDemo ? (
+    <>
+      <DocumentsFromBrief
+        vacancyId={vacancyId}
+        defaultTitle={vacancyTitle}
+        onDone={() => {
+          void reloadEditor();
+          router.refresh();
+        }}
+      />
+      <DocumentsFromMaterials
+        vacancyId={vacancyId}
+        onDone={() => {
+          void reloadEditor();
+          router.refresh();
+        }}
+      />
+    </>
+  ) : null;
+
   const renderAiControls = (key: DocKey) => {
     if (!GENERATABLE.has(key)) {
       return <p className="muted hh-micro">Заметки только вручную.</p>;
@@ -239,7 +270,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
 
   return (
     <div className="docs-editor">
-      {!isFilled(drafts.profile) ? (
+      {!isDemo && !docsFormed ? (
         <div className="card-edit" style={{ marginBottom: "1rem", borderColor: "var(--accent)" }}>
           <h3 className="hh-subhead">С чего начать</h3>
           <p className="muted" style={{ marginBottom: "0.5rem" }}>
@@ -249,22 +280,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
         </div>
       ) : null}
 
-      <DocumentsFromBrief
-        vacancyId={vacancyId}
-        defaultTitle={vacancyTitle}
-        onDone={() => {
-          void reloadEditor();
-          router.refresh();
-        }}
-      />
-
-      <DocumentsFromMaterials
-        vacancyId={vacancyId}
-        onDone={() => {
-          void reloadEditor();
-          router.refresh();
-        }}
-      />
+      {!docsFormed ? regenPack : null}
 
       {meetingBrief && (meetingBrief.summary || (meetingBrief.qa || []).length) ? (
         <div className="card-edit" style={{ marginBottom: "1rem" }}>
@@ -298,6 +314,10 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
       ) : null}
 
       <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginBottom: "0.75rem" }}>
+        {isDemo ? (
+          <p className="muted hh-micro">{DEMO_WRITE_HINT}</p>
+        ) : (
+          <>
         <button
           type="button"
           className={mode === "edit" ? "chip chip-active" : "chip"}
@@ -317,6 +337,8 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
             {busy ? "…" : "Сохранить документы"}
           </button>
         ) : null}
+          </>
+        )}
       </div>
 
       {err ? <p className="warn">{err}</p> : null}
@@ -327,7 +349,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
 
       {mode === "edit" ? (
         <div className="doc-stack">
-          {EDIT_KEYS.map((key) => (
+          {docKeys.map((key) => (
             <details key={key} id={key === "questions" ? "questions-template" : undefined} className="card-edit doc-block-accordion">
               <summary className="doc-summary">
                 <span className="doc-summary-main">
@@ -358,7 +380,7 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
         </div>
       ) : (
         <div className="doc-stack">
-          {EDIT_KEYS.map((key) => {
+          {docKeys.map((key) => {
             const value = savedDocs[key] ?? drafts[key];
             return (
               <DocumentBlock
@@ -369,12 +391,14 @@ export function DocumentsEditor({ vacancyId, initialDocuments, vacancyTitle = ""
                 collapsible
                 showEmpty
                 defaultOpen={false}
-                actions={renderAiControls(key)}
+                actions={isDemo ? undefined : renderAiControls(key)}
               />
             );
           })}
         </div>
       )}
+
+      {docsFormed ? regenPack : null}
     </div>
   );
 }

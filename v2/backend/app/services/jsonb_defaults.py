@@ -50,6 +50,10 @@ def default_candidate_payload() -> dict[str, Any]:
         "salary_expected": "",
         "resume_link": "",
         "hh_resume_link": "",
+        "anonymized_resume_link": "",
+        "resume_preview_included": False,
+        "resume_preview_visible": True,
+        "resume_preview_status": "",
         "hh_resume_id": "",
         "portfolio_link": "",
         "video_link": "",
@@ -169,5 +173,7 @@ def default_vacancy_payload() -> dict[str, Any]:
             "last_sync_at": "",
             "ingest_new_resumes": True,
         },
+        "resume_preview_token": "",
+        "resume_preview_sent_at": "",
         "stage_schema": default_stage_schema(),
     }

@@ -390,6 +390,13 @@ def patch_candidate_endpoint(
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
     candidate = get_candidate_or_404(db, cid)
     data = body.model_dump(exclude_unset=True)
+    from app.core.auth import user_is_platform_owner
+    from app.services.tenancy import current_user
+
+    user = current_user()
+    if not user or not user_is_platform_owner(user):
+        data.pop("resume_preview_included", None)
+        data.pop("resume_preview_visible", None)
     name = data.pop("name", None)
     from app.services.messaging.ops import refresh_candidate_telegram, snapshot_card_payload
 

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 export type OfferDraft = {
   greeting: string;
@@ -54,6 +56,7 @@ async function readError(res: Response): Promise<string> {
 }
 
 export function CandidateOfferPanel({ candidateId }: Props) {
+  const { isDemo } = useAuth();
   const [draft, setDraft] = useState<OfferDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -112,6 +115,10 @@ export function CandidateOfferPanel({ candidateId }: Props) {
   };
 
   const save = async () => {
+    if (isDemo) {
+      setErr(DEMO_WRITE_HINT);
+      return;
+    }
     if (!draft) return;
     setBusy(true);
     setErr(null);
@@ -181,7 +188,7 @@ export function CandidateOfferPanel({ candidateId }: Props) {
   };
 
   const download = async () => {
-    if (dirty) {
+    if (dirty && !isDemo) {
       await save();
     }
     setBusy(true);
@@ -317,6 +324,12 @@ export function CandidateOfferPanel({ candidateId }: Props) {
           <span className="muted hh-micro">Авто / ИИ / ручная правка → Word</span>
         </div>
         <div className="offer-mock-toolbar-actions">
+          {isDemo ? (
+            <button type="button" className="chip chip-active" disabled={busy} onClick={() => void download()}>
+              Скачать Word
+            </button>
+          ) : (
+            <>
           <button type="button" className="chip" disabled={busy} onClick={() => void prefill()}>
             Заполнить из данных
           </button>
@@ -329,10 +342,12 @@ export function CandidateOfferPanel({ candidateId }: Props) {
           <button type="button" className="chip chip-active" disabled={busy} onClick={() => void download()}>
             Скачать Word
           </button>
+            </>
+          )}
         </div>
       </div>
 
-      {err ? <p className="warn">{err}</p> : null}
+      {isDemo ? <p className="muted hh-micro">{DEMO_WRITE_HINT} Скачать Word можно.</p> : null}
       {msg ? <p className="ok">{msg}</p> : null}
 
       <div className="offer-mock-grid">
@@ -439,6 +454,7 @@ export function CandidateOfferPanel({ candidateId }: Props) {
                 <span className="offer-mock-logo-mark">Нет лого</span>
               )}
             </div>
+            {isDemo ? null : (
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
               <label className="chip" style={{ cursor: busy || !draft.company_client_id ? "default" : "pointer" }}>
                 Загрузить лого
@@ -459,6 +475,7 @@ export function CandidateOfferPanel({ candidateId }: Props) {
                 Убрать
               </button>
             </div>
+            )}
           </section>
 
           <section className="rec-card offer-mock-card">
@@ -467,6 +484,7 @@ export function CandidateOfferPanel({ candidateId }: Props) {
               Сейчас: <strong>{templateLabel}</strong>. В тексте шаблона — плейсхолдеры{" "}
               <code>{`{{position}}`}</code>, <code>{`{{duties}}`}</code> и др. (см. OFFER_TEMPLATE.md).
             </p>
+            {isDemo ? null : (
             <div className="hh-row-actions" style={{ justifyContent: "flex-start", marginTop: "0.75rem" }}>
               <label
                 className="chip"
@@ -492,6 +510,7 @@ export function CandidateOfferPanel({ candidateId }: Props) {
                 Встроенный шаблон
               </button>
             </div>
+            )}
           </section>
 
           <section className="rec-card offer-mock-card">
@@ -501,7 +520,8 @@ export function CandidateOfferPanel({ candidateId }: Props) {
               className="offer-mock-textarea"
               rows={12}
               value={draft.duties}
-              disabled={busy}
+              readOnly={isDemo}
+              disabled={busy && !isDemo}
               onChange={(e) => patch({ duties: e.target.value })}
             />
           </section>
@@ -526,6 +546,7 @@ function Field({
   auto?: boolean;
   multiline?: boolean;
 }) {
+  const { isDemo } = useAuth();
   return (
     <label className="hh-field offer-mock-field">
       <span className="hh-label">
@@ -538,10 +559,11 @@ function Field({
           className="offer-mock-textarea"
           rows={3}
           value={value}
+          readOnly={isDemo}
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <input type="text" value={value} onChange={(e) => onChange(e.target.value)} />
+        <input type="text" value={value} readOnly={isDemo} onChange={(e) => onChange(e.target.value)} />
       )}
     </label>
   );

@@ -12,7 +12,7 @@
 > Без **`КАСКАД`** — не трогаем. Учёт: [`BACKLOG.md`](BACKLOG.md) → **B-KASKAD-001**.  
 > Связь с **ЯКОРЬ**: задачи `suggested_tags` (D3.1), `talent_pool_hh_match` (T4.1) — сразу в `task_map`.
 
-**Статус:** план для ревью архитектора · код после **`КАСКАД P1`**.  
+**Статус:** дизайн утверждён архитектором (2026-08-14) · слайсинг исполнения зафиксирован ниже.  
 **Текущий ИИ:** один `chat_json()` → `resolve_ai_model_name()` → RouterAI (`ai_json.py`, N7 `/settings/ai`).
 
 ---
@@ -28,25 +28,46 @@
 
 ---
 
-## 1. Фазы (порядок)
+## 1. Фазы, слайсинг и оценки
+
+### 1.1 Утверждённый порядок исполнения (слайсинг)
 
 ```mermaid
 flowchart LR
-  P1[P1 Роутинг + log baseline] --> P2[P2 Resume + Interview]
-  P2 --> P3[P3 Остальное + UI N7]
-  P3 --> P4[P4 Включить fast + сравнить]
+  P1[КАСКАД P1 + ОЧЕРЕДЬ] --> Y[ЯКОРЬ PR1+PR2]
+  Y --> P2[КАСКАД P2]
+  P2 --> P3[КАСКАД P3+P4 после пилота]
 ```
 
-**Почему не P2 раньше P1:** без `ai_route()` и `ai_usage_log` нет baseline и нет единой точки fallback.
+| Слайс | Что | Оценка | Меняет качество? |
+|-------|-----|--------|------------------|
+| **КАСКАД P1** сейчас, параллельно ОЧЕРЕДИ | `ai_route`, миграция `ai_usage_log`, все LLM через router, `cascade_enabled=false`, **task keys на call sites** | **4–5 чел·дн** | Нет |
+| **ЯКОРЬ PR1+PR2** | persons/dedup, аналитика стадий, теги/сегменты | 18–22 (см. ЯКОРЬ) | Нет для ИИ-качества |
+| **КАСКАД P2** после ЯКОРЬ PR2 | двухстадийные `evaluate_resume` + `interview_process`, `resume_facts` | **5–7 чел·дн** | Да (экономия токенов) |
+| **КАСКАД P3+P4** после стабилизации пилота | docs/HH/offer/inbox + N7 UI; затем включение fast | **5–6 + 2–3 = 7–9 чел·дн** | Да |
 
-| Фаза | Суть | Меняет качество? |
-|------|------|------------------|
-| **P1** | `ai_route`, конфиг, миграция `ai_usage_log`, все вызовы через router, tier=top | Нет |
-| **P2** | Двухстадийные pipeline + `payload.resume_facts` / `interview_struct` | Да (экономия токенов) |
-| **P3** | docs, inbox, HH LLM, offer, stats brief, N7 UI | Да |
-| **P4** | Включить fast в task_map, дашборд сравнения, runbook отката | Да |
+**Итого КАСКАД:** 16–21 чел·дн (без ЯКОРЬ).
 
-**Параллельность:** P3 задачи без общего pipeline (offer, stats) — параллельно после merge P1.
+**Почему так, а не P2 сразу после P1:** конфликт по `candidate_resume_eval.py` с ЯКОРЬ PR2 (теги); P1 накапливает baseline, пока идёт ЯКОРЬ.
+
+**ЯКОРЬ PR3 (talent pool):** не блокирует P2. Делать после PR2, можно параллельно с КАСКАД P3 (разные файлы). `talent_pool_hh_match` в `task_map` с P1, реализация — в ЯКОРЬ PR3.
+
+**ОЧЕРЕДЬ на момент слайса:** Q-01…Q-04 уже done локально — пересечения с P1 почти нет (`ai_json.py` vs воронка/UI). Если появятся новые queue-задачи — не трогать `ai_json.py` / `ai_route.py` в том же PR.
+
+### 1.2 Гейты
+
+| Переход | Гейт |
+|---------|------|
+| P1 → merge | smoke ИИ без регрессии (16.2, 7.x, 15.3); usage пишется; `cascade_enabled=false` |
+| ЯКОРЬ PR2 → КАСКАД P2 | PR2 влит; `candidate_resume_eval` стабилен |
+| **Старт P4 (включить fast)** | (1) baseline-выборка: ≥7 дней **или** N≥30 jobs по `resume_eval` / `questionnaire_generate` / `vacancy_doc_*`; (2) P2+P3 влиты; (3) зелёный smoke **16.x / 7.x / 15.3 на новых конвейерах** |
+| **Оставить fast (конец P4)** | сравнение с baseline: tokens↓ на ключевых task; error rate `ai_error_logs` не выше baseline + 10%; иначе откат `cascade_enabled=false` |
+
+**Уточнение к формулировке «подтверждённая baseline-экономика»:** на старте P4 экономика ещё не доказана (P1 считает только all-top). Гейт старта P4 = **достаточная выборка baseline**. Доказанная экономия — гейт **оставить fast** после замера.
+
+### 1.3 Зачем P1 раньше P2
+
+Без `ai_route()` и `ai_usage_log` нет baseline и нет единой точки fallback.
 
 ---
 
@@ -91,7 +112,9 @@ flowchart LR
       "hh_cold_eval": "top",
       "suggested_tags": "fast",
       "talent_pool_hh_match": "top",
-      "message_draft": "fast"
+      "message_draft": "fast",
+      "video_interview_script": "top",
+      "avatar_pitch_compress": "fast"
     },
     "task_overrides": {
       "resume_extract": "top"
@@ -145,8 +168,10 @@ flowchart LR
 | `hh_manual_eval` / `hh_cold_eval` | top | = resume_eval |
 | `talent_pool_hh_match` | top | 4.1 — confidence % |
 | `message_draft` | fast | C5 черновики |
+| `video_interview_script` | top | ЭФИР A — сценарий для камеры (качество = эфир) |
+| `avatar_pitch_compress` | fast | ЭФИР B — ужать vacancy_text под лимит аватара |
 
-**Не в map (не LLM):** `hh_prefilter`, SpeechKit, ffmpeg, HH REST API.
+**Не в map (не LLM):** `hh_prefilter`, SpeechKit, ffmpeg, HH REST API, рендер HeyGen/D-ID.
 
 ---
 
@@ -342,19 +367,33 @@ CREATE INDEX ix_ai_usage_task_created ON ai_usage_log (task, created_at DESC);
 
 ## 9. Надёжность и fallback
 
+### 9.1 Матрица (4 обязательных случая)
+
+| # | Случай | Действие | Лог `tier` / meta | Job падает? |
+|---|--------|----------|-------------------|-------------|
+| 1 | **Провал валидации** fast (JSON parse или pydantic schema) | **1 ретрай на fast** → если снова fail → **эскалация на top** с **полным** исходным user text (не битый JSON) | `retry_count=1`; затем `tier=fallback_top`, `meta.escalated_from_fast=validate` | Нет, если top успешен |
+| 2 | **Fast недоступен** (модель не задана, HTTP 5xx/timeout/сеть) | **Сразу top**, без ретрая fast | `tier=fallback_top`, `meta.reason=fast_unavailable` | Нет, если top успешен |
+| 3 | **Top A упал** (429 / 5xx / timeout) | **Один** вызов **top B**, если `models.top_b` задан; иначе как сегодня | `tier=top_b`; если top_b нет — ошибка job | Да, только если A и B (или A без B) упали |
+| 4 | **Ошибка роутинга** (unknown task, битый `task_map`, исключение в `resolve_tier`) | **Сразу top** + **log warning** | `tier=fallback_top`, `meta.reason=routing_error` | Нет, если top успешен |
+
+P1 (`cascade_enabled=false`): случаи 1–2 на практике не срабатывают (всё и так top). Реализовать матрицу в `ai_route` **сразу в P1**, чтобы P2 не изобретал fallback заново. На P1 обязательны **#3 и #4**; #1–#2 — код есть, ветки dormant до включения fast.
+
+### 9.2 Дерево (то же)
+
 ```
 fast call
-  ├─ HTTP fail / no fast model → top (log fast_unavailable)
-  ├─ JSON parse fail → retry fast (1x)
-  ├─ pydantic validate fail → retry fast (1x) → top with full input (log validate_escalate)
+  ├─ HTTP fail / no fast model → top (log fast_unavailable)     [#2]
+  ├─ JSON parse / schema fail → retry fast (1x) → top            [#1]
   └─ success → persist cache → top stage
 
+resolve_tier fail → top + warning                                [#4]
+
 top_a call
-  ├─ fail → top_b (if set)
+  ├─ fail → top_b (if set)                                       [#3]
   └─ fail → raise (job error as today)
 ```
 
-Job **не падает** из-за fast-stage fail если escalation на top успешна.
+Job **не падает** из-за fast-stage fail, если escalation на top успешна.
 
 ---
 
@@ -393,15 +432,19 @@ Job **не падает** из-за fast-stage fail если escalation на top
 
 ---
 
-## 12. Оценки
+## 12. Оценки (для управления слайсами)
 
-| Фаза | Чел·дни |
-|------|---------|
-| P1 — router + log + baseline | 4–5 |
-| P2 — resume + interview pipelines | 5–7 |
-| P3 — docs/HH/offer/inbox + N7 UI | 5–6 |
-| P4 — rollout + dashboard compare | 2–3 |
-| **Итого** | **16–21** |
+Дублирует §1.1 — здесь разбивка внутри фазы.
+
+| Фаза | Состав | Чел·дни |
+|------|--------|---------|
+| **P1** | миграция `ai_usage_log`; `ai_route` + fallback-матрица §9.1; `chat_json` → routed; **проставить `task=` на всех существующих вызовах** (~15 call sites); GET usage summary; `cascade_enabled=false` | **4–5** |
+| **P2** | `ResumeFactsSchema` + cache hash; pipeline evaluate_resume; cleanup+QA+eval interview; прогресс job | **5–7** |
+| **P3** | docs facts→prose; inbox; HH LLM keys; offer fast+top; stats brief; N7 селекторы + таблица task→tier + мини-дашборд | **5–6** |
+| **P4** | включить fast; сравнить 7d vs baseline; runbook отката; ручной прогон 10 карточек | **2–3** |
+| **Итого КАСКАД** | | **16–21** |
+
+P1 без `task=` на call sites **не принимаем**: baseline тогда не режется по `resume_eval` / опросник / документы, и гейт P4 слепой.
 
 ---
 
@@ -459,8 +502,10 @@ Job **не падает** из-за fast-stage fail если escalation на top
 
 ## Pre-start
 
-1. **`КАСКАД`** только после согласования порядка с **ЯКОРЬ** (общие payload keys — OK, migrations — разные PR).
-2. P1 можно параллельно **ОЧЕРЕДЬ** (queue fixes) — разные файлы, кроме осторожности в `candidate_resume_eval.py` (координировать merge).
+1. Слайсинг утверждён: **P1 сейчас** → **ЯКОРЬ PR1+PR2** → **КАСКАД P2** → **P3+P4 после пилота**.
+2. Миграции КАСКАД и ЯКОРЬ — **разные PR**, не одна цепочка без нужды (P1 `h5…` vs ЯКОРЬ `h1…h3`).
+3. P1 не меняет `candidate_resume_eval` логику — только `chat_json(..., task=...)`.
+4. Старт кода: команда **`КАСКАД P1`**.
 
 ---
 

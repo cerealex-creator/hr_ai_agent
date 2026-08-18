@@ -30,7 +30,7 @@ const EXTRA_NAV = [
   { href: "/settings/yandex-disk", label: "Импорт", icon: HardDriveDownload, ownerOnly: false },
   { href: "/jobs", label: "Задачи", icon: Wrench, ownerOnly: true },
   { href: "/history", label: "История", icon: Wrench, ownerOnly: true },
-  { href: "/client-zone", label: "Клиентская зона", icon: Share2, ownerOnly: false },
+  { href: "/client-zone", label: "Зона заказчика вакансии", icon: Share2, ownerOnly: false },
 ] as const;
 
 type Props = {
@@ -42,7 +42,7 @@ type Props = {
 
 export function RecruitingShell({ children, activePath = "/dashboard", toolbar, title }: Props) {
   const logout = useAuthLogout();
-  const { isOwner, user } = useAuth();
+  const { isOwner, user, isDemo } = useAuth();
   const userLabel = (user?.full_name || "").trim() || user?.email || "";
 
   return (
@@ -75,7 +75,11 @@ export function RecruitingShell({ children, activePath = "/dashboard", toolbar, 
             <ChevronDown size={18} strokeWidth={2} aria-hidden />
           </summary>
           <ul>
-            {EXTRA_NAV.filter((item) => !item.ownerOnly || isOwner).map(({ href, label, icon: Icon }) => {
+            {EXTRA_NAV.filter((item) => {
+              if (item.ownerOnly && !isOwner) return false;
+              if (isDemo && item.href === "/settings/yandex-disk") return false;
+              return true;
+            }).map(({ href, label, icon: Icon }) => {
               const active = activePath === href || activePath.startsWith(`${href}/`);
               return (
                 <li key={href}>

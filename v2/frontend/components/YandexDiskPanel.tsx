@@ -22,6 +22,7 @@ type SyncResult = {
   errors: string[];
   changed: boolean;
   last_sync_at: string | null;
+  evaluate_job_ids?: string[];
 };
 
 type Props = {
@@ -119,8 +120,11 @@ export function YandexDiskPanel({ vacancyId, initial }: Props) {
       }
       setLast(data as SyncResult);
       setLastSync(data.last_sync_at || null);
+      const evalN = Array.isArray(data.evaluate_job_ids) ? data.evaluate_job_ids.length : 0;
       setMsg(
-        `Синхронизация: +${data.created || 0} новых, обновлено ${data.updated || 0}, пропуск ${data.skipped || 0}`,
+        evalN
+          ? `Синхронизация: +${data.created || 0} новых, обновлено ${data.updated || 0}. Оценка ИИ запущена в фоне (${evalN}).`
+          : `Синхронизация: +${data.created || 0} новых, обновлено ${data.updated || 0}, пропуск ${data.skipped || 0}`,
       );
       router.refresh();
     } catch (e) {

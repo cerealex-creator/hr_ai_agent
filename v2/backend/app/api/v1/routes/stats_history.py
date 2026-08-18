@@ -215,7 +215,11 @@ def import_stats(db: Session = Depends(get_db)) -> ImportStatsOut:
         "vacancy_templates": _count_templates(),
         "jobs": _count_jobs(),
     }
-    if not last:
+    from app.core.auth import user_is_platform_owner
+    from app.services.tenancy import require_current_user
+
+    user = require_current_user()
+    if not last or user.is_demo or not user_is_platform_owner(user):
         return ImportStatsOut(counts=counts)
     return ImportStatsOut(
         last_import_at=last.created_at,
@@ -226,9 +230,10 @@ def import_stats(db: Session = Depends(get_db)) -> ImportStatsOut:
 
 @router.get("/warranty/registry")
 def warranty_registry(db: Session = Depends(get_db)) -> list[dict]:
+    from app.services.tenancy import require_org_id
     from app.services.warranty import collect_warranty_registry
 
-    return collect_warranty_registry(db)
+    return collect_warranty_registry(db, organization_id=require_org_id())
 
 @router.get("/stats/funnel", response_model=FunnelStatsOut)
 def funnel_stats(
@@ -441,6 +446,13 @@ def get_history_item(generation_id: str, db: Session = Depends(get_db)) -> Docum
     ok = (row.vacancy_id in vac_ids) or (row.client_id in client_ids)
     if not ok:
         raise HTTPException(status_code=404, detail="History item not found")
+    snapshot = dict(row.documents_snapshot or {})
+    from app.services.tenancy import current_user
+    from app.services.documents_preview import strip_keyword_docs
+
+    user = current_user()
+    if user and user.is_demo:
+        snapshot = strip_keyword_docs(snapshot)
     return DocumentGenerationDetail(
         id=row.id,
         source_filename=row.source_filename,
@@ -448,8 +460,8 @@ def get_history_item(generation_id: str, db: Session = Depends(get_db)) -> Docum
         mode=row.mode,
         created_at_legacy=row.created_at_legacy,
         imported_at=row.imported_at,
-        preview=history_preview(row.documents_snapshot),
-        documents_snapshot=row.documents_snapshot or {},
+        preview=history_preview(snapshot),
+        documents_snapshot=snapshot,
         vacancy_id=row.vacancy_id,
     )
 

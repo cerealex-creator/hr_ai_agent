@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -22,9 +22,10 @@ CLOSE_REASONS = frozenset({CLOSE_REASON_SUCCESS, CLOSE_REASON_CLIENT})
 
 logger = logging.getLogger(__name__)
 
-# Hire + terminal reject/archive — не трогаем при закрытии вакансии.
+# Hire + terminal reject/archive + offer — не трогаем при закрытии вакансии.
 VACANCY_CLOSE_SKIP_STAGES = frozenset(
     {
+        "offer",
         "internship",
         "started_work",
         "rejected",
@@ -35,8 +36,9 @@ VACANCY_CLOSE_SKIP_STAGES = frozenset(
         "archived",
     }
 )
-VACANCY_CLOSED_CANDIDATE_STAGE = "rejected_vacancy_closed"
-VACANCY_CLOSED_CANDIDATE_NOTE = "вакансия закрыта"
+VACANCY_CLOSED_CANDIDATE_STAGE = "rejected_hr"
+VACANCY_CLOSED_CANDIDATE_NOTE = "Отказ в связи с закрытием вакансии"
+VACANCY_REOPEN_GRACE_DAYS = 7
 
 
 class VacancyWriteError(Exception):
@@ -77,10 +79,101 @@ def vacancy_has_hire(db: Session, vacancy_id: int) -> bool:
     return int(cnt or 0) > 0
 
 
-def _reject_hanging_candidates_on_close(db: Session, vacancy_id: int) -> int:
-    """Move intermediate-stage candidates to rejected_vacancy_closed."""
-    from app.services.candidate_write import set_stage
+def _parse_iso_dt(raw: str | None) -> datetime | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
+
+def _append_hr_comment(payload: dict[str, Any], note: str) -> None:
+    clean = (note or "").strip()
+    if not clean:
+        return
+    prev = str(payload.get("hr_comment") or "").strip()
+    payload["hr_comment"] = f"{prev}\n{clean}".strip() if prev else clean
+
+
+def _append_client_close_comment(payload: dict[str, Any], note: str) -> None:
+    from app.services.messaging.client_apply import format_telegram_comment_entry
+
+    clean = (note or "").strip()
+    if not clean:
+        return
+    entry = format_telegram_comment_entry(clean, author="система", status_key="reject")
+    prev = str(payload.get("client_comment") or "").strip()
+    payload["client_comment"] = f"{prev}\n{entry}".strip() if prev else entry
+
+
+def _refresh_channels_on_vacancy_close(db: Session, candidate: models.Candidate) -> None:
+    try:
+        from app.services.messaging.ops import refresh_candidate_telegram
+
+        refresh_candidate_telegram(db, candidate, notify=False)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("vacancy close: telegram refresh failed for %s: %s", candidate.id, exc)
+    try:
+        from app.services.bitrix.task_sync import sync_decision_task_for_candidate
+
+        comment = str((candidate.payload or {}).get("client_comment") or "").strip() or None
+        sync_decision_task_for_candidate(
+            db,
+            candidate,
+            status_key="reject",
+            client_comment=comment,
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("vacancy close: bitrix sync failed for %s: %s", candidate.id, exc)
+        db.rollback()
+
+
+def _apply_vacancy_close_to_candidate(
+    db: Session,
+    candidate: models.Candidate,
+    *,
+    closed_at: str,
+) -> None:
+    from app.services.candidate_write import apply_hr_stage
+
+    stage = (candidate.hr_stage or "").strip()
+    if not stage or stage in VACANCY_CLOSE_SKIP_STAGES:
+        return
+
+    payload = dict(candidate.payload or {})
+    payload["vacancy_close_snapshot"] = {
+        "hr_stage": stage,
+        "client_status": candidate.client_status,
+        "status_updated_at": candidate.status_updated_at,
+        "closed_at": closed_at,
+    }
+    _append_hr_comment(payload, VACANCY_CLOSED_CANDIDATE_NOTE)
+    _append_client_close_comment(payload, VACANCY_CLOSED_CANDIDATE_NOTE)
+    candidate.payload = payload
+    flag_modified(candidate, "payload")
+
+    apply_hr_stage(candidate, VACANCY_CLOSED_CANDIDATE_STAGE, note=VACANCY_CLOSED_CANDIDATE_NOTE)
+    candidate.client_status = "reject"
+    candidate.status_updated_at = closed_at
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    _refresh_channels_on_vacancy_close(db, candidate)
+
+
+def _reject_hanging_candidates_on_close(
+    db: Session,
+    vacancy_id: int,
+    *,
+    closed_at: str,
+) -> int:
+    """Move active candidates to rejected_hr with vacancy-close note."""
     candidates = list(
         db.scalars(select(models.Candidate).where(models.Candidate.vacancy_id == vacancy_id)).all()
     )
@@ -90,12 +183,7 @@ def _reject_hanging_candidates_on_close(db: Session, vacancy_id: int) -> int:
         if not stage or stage in VACANCY_CLOSE_SKIP_STAGES:
             continue
         try:
-            set_stage(
-                db,
-                cand,
-                hr_stage=VACANCY_CLOSED_CANDIDATE_STAGE,
-                note=VACANCY_CLOSED_CANDIDATE_NOTE,
-            )
+            _apply_vacancy_close_to_candidate(db, cand, closed_at=closed_at)
             moved += 1
         except Exception as exc:  # noqa: BLE001
             logger.exception(
@@ -105,6 +193,99 @@ def _reject_hanging_candidates_on_close(db: Session, vacancy_id: int) -> int:
             )
             db.rollback()
     return moved
+
+
+def _previous_stage_from_history(payload: dict[str, Any], terminal_stage: str) -> str | None:
+    history = list(payload.get("hr_stage_history") or [])
+    for idx in range(len(history) - 1, -1, -1):
+        row = history[idx] if isinstance(history[idx], dict) else {}
+        if str(row.get("stage") or "") != terminal_stage:
+            continue
+        if idx <= 0:
+            return None
+        prev = history[idx - 1] if isinstance(history[idx - 1], dict) else {}
+        stage = str(prev.get("stage") or "").strip()
+        return stage or None
+    return None
+
+
+def _restore_candidates_on_reopen(
+    db: Session,
+    vacancy_id: int,
+    *,
+    last_closed_at: str | None,
+) -> int:
+    """Restore vacancy-close rejects if reopen is within VACANCY_REOPEN_GRACE_DAYS."""
+    closed_dt = _parse_iso_dt(last_closed_at)
+    if closed_dt is None:
+        return 0
+    now = datetime.now(timezone.utc)
+    if now - closed_dt > timedelta(days=VACANCY_REOPEN_GRACE_DAYS):
+        return 0
+
+    from app.services.candidate_write import apply_hr_stage
+
+    restored = 0
+    candidates = list(
+        db.scalars(select(models.Candidate).where(models.Candidate.vacancy_id == vacancy_id)).all()
+    )
+    for cand in candidates:
+        payload = dict(cand.payload or {})
+        if cand.hr_stage not in (VACANCY_CLOSED_CANDIDATE_STAGE, "rejected_vacancy_closed"):
+            continue
+
+        snapshot = payload.get("vacancy_close_snapshot")
+        prev_stage: str | None = None
+        prev_client_status: str | None = None
+        prev_status_updated_at: str | None = None
+
+        if isinstance(snapshot, dict) and str(snapshot.get("closed_at") or "") == (last_closed_at or ""):
+            prev_stage = str(snapshot.get("hr_stage") or "").strip() or None
+            prev_client_status = str(snapshot.get("client_status") or "").strip() or None
+            prev_status_updated_at = str(snapshot.get("status_updated_at") or "").strip() or None
+        elif cand.hr_stage == "rejected_vacancy_closed":
+            prev_stage = _previous_stage_from_history(payload, "rejected_vacancy_closed")
+        else:
+            continue
+
+        if not prev_stage or prev_stage in VACANCY_CLOSE_SKIP_STAGES:
+            continue
+
+        try:
+            apply_hr_stage(
+                cand,
+                prev_stage,
+                note=f"вакансия снова открыта (в течение {VACANCY_REOPEN_GRACE_DAYS} дней)",
+            )
+            if prev_client_status:
+                cand.client_status = prev_client_status
+            if prev_status_updated_at:
+                cand.status_updated_at = prev_status_updated_at
+            payload.pop("vacancy_close_snapshot", None)
+            cand.payload = payload
+            flag_modified(cand, "payload")
+            db.add(cand)
+            db.commit()
+            db.refresh(cand)
+            restored += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "vacancy reopen: candidate %s restore failed: %s",
+                cand.id,
+                exc,
+            )
+            db.rollback()
+    return restored
+
+
+def reconcile_closed_vacancy_candidates(db: Session, vacancy: models.Vacancy) -> int:
+    """Idempotent: apply vacancy-close reject to hanging candidates on archived vacancy."""
+    if vacancy.active:
+        return 0
+    closed_at = (vacancy.closed_at or "").strip()
+    if not closed_at:
+        return 0
+    return _reject_hanging_candidates_on_close(db, vacancy.id, closed_at=closed_at)
 
 
 def _active_title_conflict(
@@ -271,7 +452,8 @@ def close_vacancy(
         )
 
     vacancy.active = False
-    vacancy.closed_at = _now_iso()
+    closed_at = _now_iso()
+    vacancy.closed_at = closed_at
     payload = dict(vacancy.payload or {})
     payload["close_reason"] = reason
     vacancy.payload = payload
@@ -279,7 +461,7 @@ def close_vacancy(
     db.commit()
     db.refresh(vacancy)
 
-    moved = _reject_hanging_candidates_on_close(db, vacancy.id)
+    moved = _reject_hanging_candidates_on_close(db, vacancy.id, closed_at=closed_at)
     if moved:
         logger.info(
             "vacancy %s closed: %s candidates → %s",
@@ -331,6 +513,12 @@ def reopen_vacancy(db: Session, vacancy: models.Vacancy) -> models.Vacancy:
             raise VacancyWriteError(
                 "Уже есть активная вакансия с таким названием — переименуйте одну из них."
             )
+    last_closed_at = vacancy.closed_at
+    restored = _restore_candidates_on_reopen(
+        db,
+        vacancy.id,
+        last_closed_at=last_closed_at,
+    )
     vacancy.active = True
     vacancy.closed_at = None
     payload = dict(vacancy.payload or {})
@@ -339,6 +527,12 @@ def reopen_vacancy(db: Session, vacancy: models.Vacancy) -> models.Vacancy:
     flag_modified(vacancy, "payload")
     db.commit()
     db.refresh(vacancy)
+    if restored:
+        logger.info(
+            "vacancy %s reopened: restored %s candidates from vacancy-close reject",
+            vacancy.id,
+            restored,
+        )
     return vacancy
 
 

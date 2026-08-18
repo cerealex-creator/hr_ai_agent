@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import (
@@ -24,6 +24,11 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.config import get_settings
+from app.core.demo import (
+    DEMO_LOGIN_RETRY_DETAIL,
+    DEMO_REFRESH_KEEP,
+    demo_login_allowed,
+)
 from app.db import models
 from app.db.session import get_db
 from app.schemas import (
@@ -56,6 +61,7 @@ def _me_out(user: AuthUser) -> AuthMeOut:
         bitrix_responsible_id=user.bitrix_responsible_id or "",
         # Recruiters: Telegram UI is a stub on this deploy
         telegram_available=bool(user.auth_disabled or is_owner),
+        is_demo=bool(user.is_demo),
     )
 
 
@@ -83,10 +89,90 @@ def login(body: AuthLoginIn, response: Response, db: Session = Depends(get_db)) 
         org_id=auth_user.org_id,
         roles=list(auth_user.roles),
         settings=settings,
+        demo=auth_user.is_demo,
     )
-    refresh = issue_refresh_row(db, user_id=auth_user.id, settings=settings)
+    refresh = issue_refresh_row(db, user_id=auth_user.id, settings=settings, demo=auth_user.is_demo)
     db.commit()
-    set_auth_cookies(response, access_token=access, refresh_token=refresh, settings=settings)
+    set_auth_cookies(
+        response,
+        access_token=access,
+        refresh_token=refresh,
+        settings=settings,
+        demo=auth_user.is_demo,
+    )
+    return _me_out(auth_user)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip() or "unknown"
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _prune_refresh_tokens(db: Session, user_id, *, keep_active: int = DEMO_REFRESH_KEEP) -> None:
+    now = datetime.now(timezone.utc)
+    db.execute(
+        delete(models.RefreshToken).where(
+            models.RefreshToken.user_id == user_id,
+            models.RefreshToken.expires_at < now,
+        )
+    )
+    active = list(
+        db.scalars(
+            select(models.RefreshToken)
+            .where(
+                models.RefreshToken.user_id == user_id,
+                models.RefreshToken.revoked_at.is_(None),
+            )
+            .order_by(models.RefreshToken.created_at.desc())
+        ).all()
+    )
+    for row in active[keep_active:]:
+        row.revoked_at = now
+
+
+@router.post("/demo", response_model=AuthMeOut)
+def demo_login(request: Request, response: Response, db: Session = Depends(get_db)) -> AuthMeOut:
+    """Passwordless read-only session in the fictional showcase org."""
+    settings = get_settings()
+    if auth_is_disabled(settings):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="При AUTH_DISABLED демо-вход не нужен — вы уже в системе",
+        )
+    if not demo_login_allowed(_client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=DEMO_LOGIN_RETRY_DETAIL,
+        )
+    from app.services.demo_showcase import ensure_demo_showcase
+
+    _org, user, _created = ensure_demo_showcase(db)
+    loaded = load_membership(db, user.id)
+    if not loaded:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Demo user has no org")
+    _user, member = loaded
+    auth_user = auth_user_from_membership(_user, member)
+    _prune_refresh_tokens(db, auth_user.id)
+    access = create_access_token(
+        user_id=auth_user.id,
+        org_id=auth_user.org_id,
+        roles=list(auth_user.roles),
+        settings=settings,
+        demo=True,
+    )
+    refresh = issue_refresh_row(db, user_id=auth_user.id, settings=settings, demo=True)
+    db.commit()
+    set_auth_cookies(
+        response,
+        access_token=access,
+        refresh_token=refresh,
+        settings=settings,
+        demo=True,
+    )
     return _me_out(auth_user)
 
 
@@ -122,10 +208,17 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         org_id=auth_user.org_id,
         roles=list(auth_user.roles),
         settings=settings,
+        demo=auth_user.is_demo,
     )
-    new_refresh = issue_refresh_row(db, user_id=auth_user.id, settings=settings)
+    new_refresh = issue_refresh_row(db, user_id=auth_user.id, settings=settings, demo=auth_user.is_demo)
     db.commit()
-    set_auth_cookies(response, access_token=access, refresh_token=new_refresh, settings=settings)
+    set_auth_cookies(
+        response,
+        access_token=access,
+        refresh_token=new_refresh,
+        settings=settings,
+        demo=auth_user.is_demo,
+    )
     return AuthOkOut(ok=True)
 
 

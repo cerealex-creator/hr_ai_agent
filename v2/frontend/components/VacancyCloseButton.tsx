@@ -3,16 +3,23 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { apiFetch, type VacancyDetail } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 type Props = { vacancy: VacancyDetail };
 
 export function VacancyCloseButton({ vacancy }: Props) {
+  const { isDemo } = useAuth();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const call = async (path: string, body?: unknown) => {
+    if (isDemo) {
+      setErr(DEMO_WRITE_HINT);
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -36,6 +43,10 @@ export function VacancyCloseButton({ vacancy }: Props) {
       setBusy(false);
     }
   };
+
+  if (isDemo) {
+    return null;
+  }
 
   if (!vacancy.active) {
     return (

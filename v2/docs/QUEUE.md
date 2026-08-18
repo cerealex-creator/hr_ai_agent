@@ -32,7 +32,17 @@
 
 ## Ready
 
-*(пусто)*
+### [Q-2026-08-16-01] ЭФИР A — сценарий видео-собеседования + телесуфлёр
+
+- **Источник:** чат 2026-08-16 (фича А)
+- **Суть:** новый документ `video_script` (профиль + опросник + 10/20/30 мин) → блоки с таймингом; страница телесуфлёра. Код — по **`ЭФИР A`**.
+- **Модуль:** documents, candidates, frontend teleprompter
+- **Сложность:** M (2–3 чел·дн)
+- **Приоритет:** P2
+- **Зависимости:** желательно КАСКАД task key `video_interview_script=top`; опросник вакансии/кандидата
+- **Статус:** ready
+- **Документ:** [`IMPLEMENTATION_PLAN_EFIR.md`](IMPLEMENTATION_PLAN_EFIR.md) §1
+- **Файлы (ожидаемые):** `document_generate.py` / `video_script.py`, `DocumentsEditor.tsx`, teleprompter page, `labels.ts`
 
 ---
 

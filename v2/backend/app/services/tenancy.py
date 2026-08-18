@@ -37,6 +37,11 @@ def current_user() -> AuthUser | None:
     return getattr(request.state, "auth_user", None)
 
 
+def is_demo_user() -> bool:
+    user = current_user()
+    return bool(user and user.is_demo)
+
+
 def require_current_user() -> AuthUser:
     user = current_user()
     if user is None:

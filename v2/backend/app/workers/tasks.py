@@ -261,7 +261,7 @@ async def candidate_interview_process(ctx, job_id: str) -> dict:
         db.commit()
         db.refresh(candidate)
 
-        job_svc.update_job(db, jid, progress_pct=88, progress_label="Выжимка вопрос–ответ")
+        job_svc.update_job(db, jid, progress_pct=88, progress_label="Конспект вопрос–ответ")
         from app.services.interview_digest import (
             ensure_interview_digest_token,
             structure_interview_digest,
@@ -357,7 +357,8 @@ async def candidate_evaluate_resume(ctx, job_id: str) -> dict:
             job_svc.update_job_isolated(jid, progress_pct=20, progress_label="Извлекаем текст резюме…")
             if job_svc.is_cancelled_isolated(jid):
                 raise RuntimeError("Отменено")
-            job_svc.update_job_isolated(jid, progress_pct=40, progress_label="Оценка резюме ИИ…")
+            eval_label = "Лёгкая оценка для макета…" if skip_questionnaire else "Оценка резюме ИИ…"
+            job_svc.update_job_isolated(jid, progress_pct=40, progress_label=eval_label)
             result = evaluate_candidate_resume(
                 db,
                 candidate,
@@ -776,6 +777,18 @@ async def yandex_disk_sync(ctx, job_id: str) -> dict:
         if job_svc.is_cancelled(db, jid):
             job_svc.update_job(db, jid, progress_label="Отменено")
             return {"ok": False, "cancelled": True}
+
+        eval_ids = result.get("evaluate_candidate_ids") or []
+        if eval_ids:
+            try:
+                await job_svc.enqueue_candidate_resume_evals(
+                    db,
+                    eval_ids,
+                    pool=ctx.get("redis"),
+                    raise_on_pool_error=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         job_svc.update_job(
             db,

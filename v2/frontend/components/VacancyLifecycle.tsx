@@ -3,11 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { apiFetch, type VacancyDetail } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 type Props = { vacancy: VacancyDetail };
 
 /** Удаление вакансии. Закрытие / возврат в работу — в шапке (VacancyCloseButton). */
 export function VacancyLifecycle({ vacancy }: Props) {
+  const { isDemo } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -30,6 +33,10 @@ export function VacancyLifecycle({ vacancy }: Props) {
       setBusy(false);
     }
   };
+
+  if (isDemo) {
+    return null;
+  }
 
   return (
     <div className="rec-card">

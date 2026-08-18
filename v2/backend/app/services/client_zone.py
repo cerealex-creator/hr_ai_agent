@@ -1,17 +1,20 @@
 """Web client zone (D2): token URL access, minimal decide actions."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
+from app.services.candidate_fields import normalize_gender
 from app.services.messaging.client_apply import apply_client_update
 from app.services.messaging.keyboards import interview_format_flags
+from app.services.demo_showcase import client_org_is_demo
 from app.services.stats_service import CLIENT_ZONE_STAGES
 from app.services.tenancy import resolve_client_zone_root, zone_owner_scope_ids
 from app.services.yandex_public import yandex_link_for_display
@@ -19,6 +22,13 @@ from app.services.yandex_public import yandex_link_for_display
 # Approve / think / reject (+ meeting on ready)
 ZONE_ACTIONS = frozenset({"ready", "think", "reject"})
 ACTIONABLE_STATUSES = frozenset({"wait", "think"})
+
+# Who decided in client zone (stable keys — same list for every zone)
+ZONE_DECISION_ROLES: dict[str, str] = {
+    "unit_head": "Руководитель подразделения",
+    "director": "Директор",
+    "owner": "Собственник",
+}
 
 
 def _https_url(raw: Any) -> str | None:
@@ -86,13 +96,52 @@ def _parse_meeting(
     return date_s, time_s, remote, office
 
 
-def _zone_display_name(db: Session, owner: models.Client) -> str:
+def _zone_company_parts(db: Session, owner: models.Client) -> tuple[str, str | None]:
+    """Company name + optional department name for the zone owner."""
     if owner.parent_id is None:
-        return owner.name
+        return owner.name, None
     parent = db.get(models.Client, owner.parent_id)
     if parent and parent.name:
-        return f"{parent.name} · {owner.name}"
-    return owner.name
+        return parent.name, owner.name
+    return owner.name, None
+
+
+def _place_parts(
+    client_id: int | None,
+    *,
+    names: dict[int, str],
+    parent_ids: dict[int, int | None],
+    fallback_company: str,
+    fallback_dept: str | None,
+) -> tuple[str, str | None]:
+    if client_id is None:
+        return fallback_company, fallback_dept
+    own = names.get(client_id)
+    parent_id = parent_ids.get(client_id)
+    if parent_id:
+        parent_name = names.get(parent_id) or fallback_company
+        return parent_name, own
+    return own or fallback_company, None
+
+
+def _client_maps(db: Session, scope: set[int]) -> tuple[dict[int, str], dict[int, int | None]]:
+    rows = list(db.scalars(select(models.Client).where(models.Client.id.in_(scope))).all())
+    parent_ids = {int(c.parent_id) for c in rows if c.parent_id is not None}
+    if parent_ids:
+        rows.extend(db.scalars(select(models.Client).where(models.Client.id.in_(parent_ids))).all())
+    names = {int(c.id): c.name for c in rows}
+    parents = {int(c.id): (int(c.parent_id) if c.parent_id is not None else None) for c in rows}
+    return names, parents
+
+
+def _zone_header(db: Session, owner: models.Client) -> dict[str, Any]:
+    company, dept = _zone_company_parts(db, owner)
+    return {
+        "id": owner.id,
+        "name": company,
+        "department_name": dept,
+        "demo": client_org_is_demo(db, owner),
+    }
 
 
 def zone_context(db: Session, token: str) -> tuple[models.Client, set[int]]:
@@ -144,18 +193,30 @@ def _zone_list_item(
     c: models.Candidate,
     vac: models.Vacancy,
     *,
-    display: str,
-    clients: dict[int, str],
+    names: dict[int, str],
+    parent_ids: dict[int, int | None],
+    fallback_company: str,
+    fallback_dept: str | None,
 ) -> dict[str, Any]:
     payload = c.payload or {}
     links = _zone_candidate_links(payload)
+    company_name, department_name = _place_parts(
+        vac.client_id,
+        names=names,
+        parent_ids=parent_ids,
+        fallback_company=fallback_company,
+        fallback_dept=fallback_dept,
+    )
+    client_name = department_name or company_name
     return {
         "id": str(c.id),
         "name": c.name or "Без имени",
         "vacancy_id": c.vacancy_id,
         "vacancy_title": vac.title,
         "client_id": vac.client_id,
-        "client_name": clients.get(vac.client_id) if vac.client_id else display,
+        "client_name": client_name,
+        "company_name": company_name,
+        "department_name": department_name,
         "hr_stage": c.hr_stage,
         "client_status": c.client_status or "wait",
         "ai_score": payload.get("ai_score"),
@@ -167,6 +228,8 @@ def _zone_list_item(
         "has_resume": bool(links.get("resume_url")),
         "has_video": bool(links.get("video_url")),
         "has_digest": bool(links.get("interview_digest")),
+        "photo_url": (str(payload.get("photo_url") or "").strip() or None),
+        "gender": normalize_gender(payload.get("gender") or payload.get("sex")),
     }
 
 
@@ -181,17 +244,16 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
         ).all()
     )
     vac_map = {v.id: v for v in vacancies}
-    display = _zone_display_name(db, root)
+    company_name, department_name = _zone_company_parts(db, root)
+    header = _zone_header(db, root)
     if not vac_map:
         return {
-            "company": {"id": root.id, "name": display},
+            "company": header,
             "candidates": [],
+            "demo": bool(header.get("demo")),
         }
 
-    clients = {
-        c.id: c.name
-        for c in db.scalars(select(models.Client).where(models.Client.id.in_(scope))).all()
-    }
+    names, parent_ids = _client_maps(db, scope)
     rows = list(
         db.scalars(
             select(models.Candidate).where(
@@ -207,7 +269,16 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
         vac = vac_map.get(c.vacancy_id)
         if not vac:
             continue
-        item = _zone_list_item(c, vac, display=display, clients=clients)
+        item = _zone_list_item(
+            c,
+            vac,
+            names=names,
+            parent_ids=parent_ids,
+            fallback_company=company_name,
+            fallback_dept=department_name,
+        )
+        if header.get("demo"):
+            item["actionable"] = False
         if item["actionable"]:
             actionable.append(item)
         else:
@@ -215,8 +286,9 @@ def list_zone_candidates(db: Session, token: str) -> dict[str, Any]:
     actionable.sort(key=lambda x: (x["name"] or "").casefold())
     others.sort(key=lambda x: (x["name"] or "").casefold())
     return {
-        "company": {"id": root.id, "name": display},
+        "company": header,
         "candidates": actionable + others[:30],
+        "demo": bool(header.get("demo")),
     }
 
 
@@ -232,20 +304,126 @@ def get_zone_candidate(db: Session, token: str, candidate_id: str | UUID) -> dic
     vacancy = db.get(models.Vacancy, candidate.vacancy_id)
     if not vacancy or vacancy.client_id not in scope or candidate.hr_stage not in CLIENT_ZONE_STAGES:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    display = _zone_display_name(db, root)
-    clients = {
-        c.id: c.name
-        for c in db.scalars(select(models.Client).where(models.Client.id.in_(scope))).all()
-    }
-    item = _zone_list_item(candidate, vacancy, display=display, clients=clients)
+    company_name, department_name = _zone_company_parts(db, root)
+    names, parent_ids = _client_maps(db, scope)
+    item = _zone_list_item(
+        candidate,
+        vacancy,
+        names=names,
+        parent_ids=parent_ids,
+        fallback_company=company_name,
+        fallback_dept=department_name,
+    )
     payload = candidate.payload or {}
     links = _zone_candidate_links(payload)
     item.update(links)
     item["ai_comment"] = str(payload.get("ai_comment") or "").strip() or item.get("ai_comment")
+    header = _zone_header(db, root)
+    if header.get("demo"):
+        item["actionable"] = False
     return {
-        "company": {"id": root.id, "name": display},
+        "company": header,
         "candidate": item,
+        "demo": bool(header.get("demo")),
     }
+
+
+def _sync_zone_decision_outbound(
+    db: Session,
+    candidate: models.Candidate,
+    *,
+    status_key: str,
+    clean_comment: str,
+    meeting_date_s: str | None = None,
+    meeting_time_s: str | None = None,
+    remote_interview: bool | None = None,
+    office_interview: bool | None = None,
+) -> tuple[bool, str]:
+    """Push client-zone decision to Bitrix task (same as decide link flow)."""
+    from app.services.app_settings import get_bitrix
+    from app.services.bitrix.hr_notify import notify_hr_meeting_pending
+    from app.services.bitrix.meeting_task import create_meeting_bitrix_task
+    from app.services.bitrix.task_sync import (
+        find_decision_task_post,
+        sync_decision_task_for_candidate,
+        sync_meeting_task_hr_status,
+    )
+    from app.services.bitrix.think_followup import register_think_decision_task
+    from app.services.messaging.attendance import set_meeting_hr_confirmed
+
+    if not get_bitrix().get("enabled"):
+        return False, "bitrix off"
+
+    post = find_decision_task_post(db, candidate.id)
+    if status_key == "ready" and meeting_date_s and meeting_time_s:
+        set_meeting_hr_confirmed(candidate, False)
+        try:
+            create_meeting_bitrix_task(
+                db,
+                candidate,
+                meeting_date=meeting_date_s,
+                meeting_time=meeting_time_s,
+                remote_interview=bool(remote_interview),
+                office_interview=bool(office_interview) if office_interview is not None else True,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        notify_hr_meeting_pending(db, candidate)
+    elif status_key == "think" and post:
+        tid = str(post.external_message_id or (post.payload or {}).get("task_id") or "")
+        if tid:
+            register_think_decision_task(db, candidate, task_id=tid)
+
+    if post:
+        action_type = "meeting_scheduled" if status_key == "ready" else f"status:{status_key}"
+        action_payload: dict[str, Any] = {
+            "via": "client_zone",
+            "comment": clean_comment or None,
+        }
+        if status_key == "ready":
+            action_payload.update(
+                {
+                    "date": meeting_date_s,
+                    "time": meeting_time_s,
+                    "remote": remote_interview,
+                    "office": office_interview,
+                }
+            )
+        db.add(
+            models.MessagingAction(
+                post_id=post.id,
+                action_type=action_type,
+                status="completed",
+                external_callback_data=f"client_zone:{status_key}",
+                payload=action_payload,
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+
+    try:
+        ok = sync_decision_task_for_candidate(
+            db,
+            candidate,
+            status_key=status_key,
+            client_comment=clean_comment or None,
+        )
+        if status_key == "ready" and meeting_date_s and meeting_time_s:
+            sync_meeting_task_hr_status(db, candidate, confirmed=False)
+        db.commit()
+        return ok, "bitrix synced" if ok else "bitrix task not found"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc) or "bitrix sync failed"
+
+
+def resolve_zone_decision_role(role_key: str | None) -> tuple[str, str]:
+    key = (role_key or "").strip()
+    label = ZONE_DECISION_ROLES.get(key)
+    if not label:
+        raise HTTPException(
+            status_code=400,
+            detail="Выберите роль: Руководитель подразделения, Директор или Собственник",
+        )
+    return key, label
 
 
 def apply_zone_decision(
@@ -254,15 +432,21 @@ def apply_zone_decision(
     candidate_id: str | UUID,
     *,
     status_key: str,
+    decision_role: str | None = None,
     comment: str | None = None,
     meeting_date: str | None = None,
     meeting_time: str | None = None,
     meeting_format: str | None = None,
 ) -> dict[str, Any]:
     root, scope = zone_context(db, token)
+    if client_org_is_demo(db, root):
+        from app.core.demo import DEMO_WRITE_DETAIL
+
+        raise HTTPException(status_code=403, detail=DEMO_WRITE_DETAIL)
     status = (status_key or "").strip()
     if status not in ZONE_ACTIONS:
         raise HTTPException(status_code=400, detail="status: ready | think | reject")
+    role_key, role_label = resolve_zone_decision_role(decision_role)
 
     try:
         cid = candidate_id if isinstance(candidate_id, UUID) else UUID(str(candidate_id))
@@ -280,9 +464,15 @@ def apply_zone_decision(
     if status in ("think", "reject") and not clean_comment:
         raise HTTPException(status_code=400, detail="Нужен комментарий")
 
+    meeting_date_s: str | None = None
+    meeting_time_s: str | None = None
+    remote_interview: bool | None = None
+    office_interview: bool | None = None
     meeting_kwargs: dict[str, Any] = {}
     if status == "ready":
         date_s, time_s, remote, office = _parse_meeting(meeting_date, meeting_time, meeting_format)
+        meeting_date_s, meeting_time_s = date_s, time_s
+        remote_interview, office_interview = remote, office
         meeting_kwargs = {
             "office_interview_date": date_s,
             "office_interview_time": time_s,
@@ -303,15 +493,46 @@ def apply_zone_decision(
         comment=clean_comment or None,
         append_comment=True,
         actor="client_zone",
-        actor_note=root.name,
+        actor_note=role_label,
         **meeting_kwargs,
     )
+    payload = dict(candidate.payload or {})
+    payload["zone_decision_role"] = role_key
+    payload["zone_decision_role_label"] = role_label
+    candidate.payload = payload
+    flag_modified(candidate, "payload")
     db.commit()
     db.refresh(candidate)
+
+    from app.services.messaging.ops import notify_zone_decision_telegram
+
+    tg_ok, tg_msg = notify_zone_decision_telegram(
+        db,
+        candidate,
+        status_key=status,
+        role_label=role_label,
+    )
+    bx_ok, bx_msg = _sync_zone_decision_outbound(
+        db,
+        candidate,
+        status_key=status,
+        clean_comment=clean_comment,
+        meeting_date_s=meeting_date_s,
+        meeting_time_s=meeting_time_s,
+        remote_interview=remote_interview,
+        office_interview=office_interview,
+    )
+
     return {
         "ok": True,
         "candidate_id": str(candidate.id),
         "client_status": candidate.client_status,
         "hr_stage": candidate.hr_stage,
         "company_id": root.id,
+        "decision_role": role_key,
+        "decision_role_label": role_label,
+        "telegram_notified": tg_ok,
+        "telegram_message": tg_msg,
+        "bitrix_synced": bx_ok,
+        "bitrix_message": bx_msg,
     }

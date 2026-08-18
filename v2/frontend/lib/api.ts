@@ -134,6 +134,7 @@ export type AuthMe = {
   auth_disabled?: boolean;
   bitrix_responsible_id?: string;
   telegram_available?: boolean;
+  is_demo?: boolean;
 };
 
 export async function authMe(): Promise<AuthMe | null> {
@@ -168,6 +169,18 @@ export async function authLogin(email: string, password: string): Promise<AuthMe
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
+    skipAuthRedirect: true,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(loginErrorMessage(res.status, text));
+  }
+  return res.json() as Promise<AuthMe>;
+}
+
+export async function authDemo(): Promise<AuthMe> {
+  const res = await apiFetch("/api/v1/auth/demo", {
+    method: "POST",
     skipAuthRedirect: true,
   });
   if (!res.ok) {

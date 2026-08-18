@@ -13,6 +13,7 @@ from app.api.v1.routes import (
     interview_digest,
     jobs,
     messaging,
+    resume_preview,
     settings,
     stats_history,
     vacancies,
@@ -26,6 +27,7 @@ router.include_router(auth.router)
 router.include_router(health_meta.public_router)
 router.include_router(integrations.public_router)
 router.include_router(client_zone.router)
+router.include_router(resume_preview.router)
 router.include_router(interview_digest.router)
 
 # Protected

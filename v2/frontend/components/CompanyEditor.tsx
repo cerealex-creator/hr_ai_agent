@@ -161,7 +161,7 @@ export function CompanyEditor({ companyId, onRenamed }: Props) {
 
       <section className="card-edit" style={{ marginBottom: "1rem" }}>
         <h2>
-          Клиентская зона (веб){" "}
+          Зона заказчика вакансии (веб){" "}
           <InfoTip text="У компании и у каждого подразделения своя секретная ссылка. Заказчик видит только кандидатов этой зоны — без входа." />
         </h2>
         <p className="muted hh-micro">

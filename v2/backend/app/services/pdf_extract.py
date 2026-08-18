@@ -57,16 +57,13 @@ def _download_yadisk_app_bytes(url: str) -> tuple[bytes, str]:
         return b"", f"Не удалось скачать с Яндекс.Диска: {exc}"
 
 
-def extract_text_from_pdf_url(url: str) -> str:
-    """Public Yandex Disk, yadisk-app (OAuth) or direct PDF URL → text."""
+def download_resume_bytes(url: str, *, timeout: int = 60) -> tuple[bytes, str]:
+    """Download resume file bytes. Resolves yadisk: / disk.yandex.ru / yadi.sk to a real PDF."""
     url = (url or "").strip()
     if not url:
-        return ""
+        return b"", "Пустая ссылка"
     if url.startswith("yadisk-app:"):
-        content, _err = _download_yadisk_app_bytes(url)
-        if not content:
-            return ""
-        return _pdf_text_from_bytes(content)
+        return _download_yadisk_app_bytes(url)
     download = url
     if url.startswith("yadisk:") or "disk.yandex" in url or "yadi.sk" in url:
         direct = get_yandex_download_url(url)
@@ -76,11 +73,18 @@ def extract_text_from_pdf_url(url: str) -> str:
             if meta and meta.get("file"):
                 direct = meta["file"]
         if not direct:
-            return ""
+            return b"", "Не удалось получить прямую ссылку Яндекс.Диска"
         download = direct
     try:
-        content = download_url_bytes(download)
-    except Exception:  # noqa: BLE001
+        return download_url_bytes(download, timeout=timeout), ""
+    except Exception as exc:  # noqa: BLE001
+        return b"", f"Не удалось скачать: {exc}"
+
+
+def extract_text_from_pdf_url(url: str) -> str:
+    """Public Yandex Disk, yadisk-app (OAuth) or direct PDF URL → text."""
+    content, _err = download_resume_bytes(url)
+    if not content:
         return ""
     return _pdf_text_from_bytes(content)
 

@@ -19,6 +19,12 @@ AVATAR_KEYS: tuple[str, ...] = (
     "legal",
     "education",
     "general",
+    "pencil",
+    "monitor",
+    "cargo",
+    "alert",
+    "people",
+    "question",
 )
 
 AVATAR_LABELS: dict[str, str] = {
@@ -34,6 +40,12 @@ AVATAR_LABELS: dict[str, str] = {
     "legal": "Юриспруденция",
     "education": "Обучение",
     "general": "Общая",
+    "pencil": "Карандаш",
+    "monitor": "Монитор",
+    "cargo": "Ящик / груз",
+    "alert": "Восклицательный знак",
+    "people": "Люди",
+    "question": "Вопросительный знак",
 }
 
 # (avatar_key, keywords) — first match wins

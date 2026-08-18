@@ -89,7 +89,7 @@ from app.schemas import (
 )
 from app.services import jobs as job_svc
 from app.services.candidate_fields import candidate_public_fields
-from app.services.documents_preview import history_preview, nonempty_document_keys
+from app.services.documents_preview import history_preview, nonempty_document_keys, strip_keyword_docs
 from app.services.hh_search_criteria import (
     AREA_PRESETS,
     SCHEDULE_OPTIONS,
@@ -143,10 +143,12 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
     if vacancy.client_id is not None:
         client = db.get(models.Client, vacancy.client_id)
         client_name = client.name if client else None
+    from app.services.resume_preview import sql_not_resume_preview
+
     cnt = db.scalar(
         select(func.count())
         .select_from(models.Candidate)
-        .where(models.Candidate.vacancy_id == vacancy.id)
+        .where(models.Candidate.vacancy_id == vacancy.id, sql_not_resume_preview())
     )
     hire_cnt = db.scalar(
         select(func.count())
@@ -159,6 +161,12 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
     close_reason = close_reason_from_payload(vacancy.payload)
     has_hire = int(hire_cnt or 0) > 0
     from app.services.vacancy_avatar import resolve_avatar_key
+    from app.services.tenancy import current_user
+
+    docs = dict(vacancy.documents or {})
+    user = current_user()
+    if user and user.is_demo:
+        docs = strip_keyword_docs(docs)
 
     return VacancyDetail(
         id=vacancy.id,
@@ -167,7 +175,7 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
         client_id=vacancy.client_id,
         client_name=client_name,
         chat_id=vacancy.chat_id,
-        documents=vacancy.documents or {},
+        documents=docs,
         created_at=vacancy.created_at,
         closed_at=vacancy.closed_at,
         close_reason=close_reason,
@@ -179,7 +187,7 @@ def _vacancy_detail(db: Session, vacancy: models.Vacancy) -> VacancyDetail:
         ),
         payload=vacancy.payload or {},
         candidates_count=int(cnt or 0),
-        document_keys=nonempty_document_keys(vacancy.documents),
+        document_keys=nonempty_document_keys(docs),
         avatar_key=resolve_avatar_key(vacancy.payload, vacancy.title),
     )
 

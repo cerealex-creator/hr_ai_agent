@@ -15,6 +15,12 @@ export const VACANCY_AVATAR_KEYS = [
   "legal",
   "education",
   "general",
+  "pencil",
+  "monitor",
+  "cargo",
+  "alert",
+  "people",
+  "question",
 ] as const;
 
 export type VacancyAvatarKey = (typeof VACANCY_AVATAR_KEYS)[number];
@@ -32,6 +38,12 @@ export const VACANCY_AVATAR_LABELS: Record<VacancyAvatarKey, string> = {
   legal: "Юриспруденция",
   education: "Обучение",
   general: "Общая",
+  pencil: "Карандаш",
+  monitor: "Монитор",
+  cargo: "Ящик / груз",
+  alert: "Восклицательный знак",
+  people: "Люди",
+  question: "Вопросительный знак",
 };
 
 const TONES: Record<VacancyAvatarKey, { bg: string; fg: string }> = {
@@ -47,6 +59,12 @@ const TONES: Record<VacancyAvatarKey, { bg: string; fg: string }> = {
   legal: { bg: "#f3ebe4", fg: "#92400e" },
   education: { bg: "#fff4d6", fg: "#b45309" },
   general: { bg: "#eef2f7", fg: "#3b4a63" },
+  pencil: { bg: "#fff1e8", fg: "#c2410c" },
+  monitor: { bg: "#e8eef8", fg: "#334155" },
+  cargo: { bg: "#f3ebe0", fg: "#9a3412" },
+  alert: { bg: "#fde8e8", fg: "#b91c1c" },
+  people: { bg: "#e8f1fb", fg: "#1d4ed8" },
+  question: { bg: "#f3eefc", fg: "#6d28d9" },
 };
 
 function Icon({ avatarKey }: { avatarKey: VacancyAvatarKey }) {
@@ -150,6 +168,60 @@ function Icon({ avatarKey }: { avatarKey: VacancyAvatarKey }) {
         <svg {...common}>
           <path d="M2 9l10-5 10 5-10 5L2 9z" />
           <path d="M6 11.5V16c0 1.5 2.5 3 6 3s6-1.5 6-3v-4.5" />
+        </svg>
+      );
+    case "pencil":
+      return (
+        <svg {...common}>
+          <path d="M4 20l4.5-1.2L19.5 8l-3.3-3.3L5.7 15.2 4 20z" />
+          <path d="M14.5 6.2l3.3 3.3" />
+          <path d="M5.2 16.5l2.4 2.2" />
+        </svg>
+      );
+    case "monitor":
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="18" height="13" rx="2" />
+          <path d="M8 21h8" />
+          <path d="M12 17v4" />
+          <path d="M7 9h10" />
+          <path d="M7 12h6" />
+        </svg>
+      );
+    case "cargo":
+      return (
+        <svg {...common}>
+          <path d="M4 8l8-3 8 3v10l-8 3-8-3V8z" />
+          <path d="M12 5v13" />
+          <path d="M4 8l8 3 8-3" />
+          <path d="M9 11.2v3.2" />
+        </svg>
+      );
+    case "alert":
+      return (
+        <svg {...common}>
+          <path d="M12 3l9 16H3L12 3z" />
+          <path d="M12 10v4" />
+          <path d="M12 16.5h.01" />
+        </svg>
+      );
+    case "people":
+      return (
+        <svg {...common}>
+          <circle cx="7" cy="8" r="2.4" />
+          <circle cx="12" cy="7" r="2.6" />
+          <circle cx="17" cy="8" r="2.4" />
+          <path d="M2.8 19c.4-2.6 2.4-4.2 4.4-4.2 1.1 0 2.1.5 2.8 1.2" />
+          <path d="M7.5 19c.5-3 2.4-5 4.5-5s4 2 4.5 5" />
+          <path d="M14 16c.7-.7 1.7-1.2 2.8-1.2 2 0 4 1.6 4.4 4.2" />
+        </svg>
+      );
+    case "question":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.6 9.2a2.6 2.6 0 015 .9c0 1.5-1.2 2.1-2.1 2.7-.7.5-1.1 1-1.1 1.9" />
+          <path d="M12 17.2h.01" />
         </svg>
       );
     default:

@@ -4,7 +4,7 @@ import threading
 
 from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api.v1.endpoints import router as v1_router
 from app.core.config import get_settings
@@ -75,6 +75,9 @@ async def lifespan(_app: FastAPI):
         ensure_candidate_intake_column(db)
         ensure_bitrix_responsible_column(db)
         ensure_bootstrap_user(db)
+        from app.services.demo_showcase import ensure_demo_showcase
+
+        ensure_demo_showcase(db)
     except Exception as exc:  # noqa: BLE001
         print(f"auth bootstrap skipped: {exc}")
     finally:
@@ -110,6 +113,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_DEMO_WRITE_ALLOW = frozenset(
+    {
+        "/api/v1/auth/login",
+        "/api/v1/auth/demo",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+    }
+)
+
+
+@app.middleware("http")
+async def demo_read_only_writes(request: Request, call_next):
+    """Demo sessions may look around; mutating API is blocked."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        path = request.url.path.rstrip("/") or "/"
+        if path not in _DEMO_WRITE_ALLOW:
+            from app.core.auth import ACCESS_COOKIE, decode_access_token
+            from app.core.demo import DEMO_WRITE_DETAIL
+            from fastapi import HTTPException as FastAPIHTTPException
+
+            access = request.cookies.get(ACCESS_COOKIE) or ""
+            auth_header = request.headers.get("Authorization") or ""
+            if not access and auth_header.lower().startswith("bearer "):
+                access = auth_header[7:].strip()
+            if access:
+                try:
+                    payload = decode_access_token(access)
+                except FastAPIHTTPException:
+                    payload = {}
+                if payload.get("demo"):
+                    return JSONResponse(status_code=403, content={"detail": DEMO_WRITE_DETAIL})
+    return await call_next(request)
 
 
 @app.middleware("http")

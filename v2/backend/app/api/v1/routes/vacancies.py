@@ -18,9 +18,11 @@ from app.api.v1.common import (
     _parse_webhook_payload,
     require_intake_channel,
 )
+from app.core.auth import AuthUser, require_platform_owner, user_is_platform_owner
 from app.core.config import get_settings
 from app.services import jobs as job_svc
 from app.services.candidate_fields import candidate_public_fields
+from app.services.candidate_query import serialize_list_item
 from app.services.documents_preview import history_preview, nonempty_document_keys
 from app.services.hh_search_criteria import (
     AREA_PRESETS,
@@ -49,6 +51,7 @@ from app.schemas import (
     CandidateEvaluateOut,
     BulkLinksIn,
     BulkLinksOut,
+    ResumePreviewIncludeIn,
     QuestionnaireOut,
     QuestionnaireRegenerateIn,
     QuestionnairePutIn,
@@ -124,6 +127,13 @@ from app.schemas import (
 
 router = APIRouter()
 
+
+def _owner_resume_preview(requested: bool) -> bool:
+    from app.services.tenancy import current_user
+
+    user = current_user()
+    return bool(requested) and bool(user and user_is_platform_owner(user))
+
 @router.get("/vacancies", response_model=list[VacancyListItem])
 def list_vacancies(
     active: bool | None = Query(default=None),
@@ -131,11 +141,13 @@ def list_vacancies(
     db: Session = Depends(get_db),
 ) -> list[VacancyListItem]:
     from app.services.tenancy import org_client_ids, require_org_id
+    from app.services.resume_preview import sql_not_resume_preview
 
     org_id = require_org_id()
     allowed = org_client_ids(db, org_id)
     cand_count = (
         select(models.Candidate.vacancy_id, func.count().label("cnt"))
+        .where(sql_not_resume_preview())
         .group_by(models.Candidate.vacancy_id)
         .subquery()
     )
@@ -399,10 +411,20 @@ def vacancy_documents_editor(vacancy_id: int, db: Session = Depends(get_db)) -> 
     from app.services.vacancy_documents_write import EDITABLE_DOCUMENT_KEYS, documents_for_editor
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
+    docs = documents_for_editor(vacancy.documents)
+    from app.services.tenancy import current_user
+    from app.services.documents_preview import strip_keyword_docs
+
+    user = current_user()
+    if user and user.is_demo:
+        docs = strip_keyword_docs(docs)
+        keys = [k for k in EDITABLE_DOCUMENT_KEYS if k != "keywords"]
+    else:
+        keys = list(EDITABLE_DOCUMENT_KEYS)
     return {
         "vacancy_id": vacancy.id,
-        "keys": list(EDITABLE_DOCUMENT_KEYS),
-        "documents": documents_for_editor(vacancy.documents),
+        "keys": keys,
+        "documents": docs,
         "meeting_brief": (vacancy.documents or {}).get("meeting_brief") or {},
         "meeting_transcript": str((vacancy.documents or {}).get("meeting_transcript") or ""),
         "meeting_conflicts": list((vacancy.documents or {}).get("meeting_conflicts") or []),
@@ -612,11 +634,15 @@ async def vacancy_documents_from_materials(
 
 @router.get("/vacancies/{vacancy_id}/yandex-disk", response_model=YandexDiskConfigOut)
 def get_vacancy_yandex_disk(vacancy_id: int, db: Session = Depends(get_db)) -> YandexDiskConfigOut:
-    from app.services.yandex_disk_sync import ensure_yandex_config
+    from app.services.tenancy import is_demo_user
+    from app.services.yandex_disk_sync import default_yandex_disk_config, ensure_yandex_config
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
-    cfg = ensure_yandex_config(vacancy)
-    db.commit()
+    if is_demo_user():
+        cfg = default_yandex_disk_config()
+    else:
+        cfg = ensure_yandex_config(vacancy)
+        db.commit()
     return YandexDiskConfigOut(
         vacancy_id=vacancy.id,
         root_url=str(cfg.get("root_url") or ""),
@@ -653,7 +679,7 @@ def patch_vacancy_yandex_disk(
     )
 
 @router.post("/vacancies/{vacancy_id}/yandex-disk/sync", response_model=YandexDiskSyncOut)
-def sync_vacancy_yandex_disk_now(
+async def sync_vacancy_yandex_disk_now(
     vacancy_id: int,
     db: Session = Depends(get_db),
 ) -> YandexDiskSyncOut:
@@ -663,11 +689,16 @@ def sync_vacancy_yandex_disk_now(
     require_intake_channel("disk_public_sync")
     vacancy = get_vacancy_or_404(db, vacancy_id)
     result = sync_vacancy_yandex_disk(db, vacancy)
+    data = result.as_dict()
+    job_ids = await _enqueue_resume_evals(db, data.get("evaluate_candidate_ids") or [])
+    if job_ids and not any("очереди" in m for m in data.get("messages") or []):
+        data.setdefault("messages", []).append(f"Оценка ИИ: задач в очереди {len(job_ids)}")
     cfg = (vacancy.payload or {}).get("yandex_disk") or {}
     return YandexDiskSyncOut(
         vacancy_id=vacancy.id,
         last_sync_at=str(cfg.get("last_sync_at") or "") or None,
-        **result.as_dict(),
+        evaluate_job_ids=job_ids,
+        **data,
     )
 
 @router.get("/vacancies/{vacancy_id}/candidates", response_model=list[CandidateListItem])
@@ -685,8 +716,8 @@ def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> l
         "test_task",
         "interview_done",
         "interview_scheduled",
-        "no_response_3d",
         "primary_contact",
+        "no_response_3d",
         "rejected_vacancy_closed",
         "rejected_hr",
         "rejected_client",
@@ -695,9 +726,12 @@ def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> l
         "archived",
     ]
     rank = {s: i for i, s in enumerate(stage_order)}
+    from app.services.resume_preview import is_resume_preview_included
+
     rows = list(
         db.scalars(select(models.Candidate).where(models.Candidate.vacancy_id == vacancy_id)).all()
     )
+    rows = [c for c in rows if not is_resume_preview_included(c.payload)]
     rows.sort(
         key=lambda c: (
             rank.get(c.hr_stage or "resume_screening", len(stage_order)),
@@ -706,16 +740,7 @@ def list_vacancy_candidates(vacancy_id: int, db: Session = Depends(get_db)) -> l
         )
     )
     return [
-        CandidateListItem(
-            id=c.id,
-            vacancy_id=c.vacancy_id,
-            name=c.name,
-            hr_stage=c.hr_stage,
-            client_status=c.client_status,
-            created_at=c.created_at,
-            phone=(c.payload or {}).get("phone"),
-            city=(c.payload or {}).get("city"),
-        )
+        CandidateListItem(**serialize_list_item(c))
         for c in rows
     ]
 
@@ -764,13 +789,23 @@ async def bulk_candidates_from_links(
         raise HTTPException(status_code=400, detail="Нет ссылок")
     if len(uniq) > 30:
         raise HTTPException(status_code=400, detail="Максимум 30 ссылок за раз")
+    preview = _owner_resume_preview(bool(body.for_resume_preview))
     result = bulk_add_from_resume_links(
-        db, vacancy, uniq, evaluate=bool(body.evaluate)
+        db,
+        vacancy,
+        uniq,
+        evaluate=bool(body.evaluate),
+        for_resume_preview=preview,
     )
-    job_ids = await _enqueue_resume_evals(db, result.get("evaluate_candidate_ids") or [])
+    job_ids = await _enqueue_resume_evals(
+        db,
+        result.get("evaluate_candidate_ids") or [],
+        skip_questionnaire=preview,
+    )
     result["evaluate_job_ids"] = job_ids
     if job_ids and not any("очереди" in m for m in result.get("messages") or []):
-        result.setdefault("messages", []).append(f"Оценка ИИ: задач в очереди {len(job_ids)}")
+        hint = "лёгкая оценка для макетов" if preview else "Оценка ИИ"
+        result.setdefault("messages", []).append(f"{hint}: задач в очереди {len(job_ids)}")
     return BulkLinksOut(**result)
 
 
@@ -782,6 +817,7 @@ async def candidate_from_resume_file(
     vacancy_id: int,
     file: UploadFile = File(...),
     evaluate: str = Form(default="false"),
+    for_resume_preview: str = Form(default="false"),
     db: Session = Depends(get_db),
 ) -> BulkLinksOut:
     from app.services.candidate_resume_eval import add_candidate_from_resume_file
@@ -791,6 +827,9 @@ async def candidate_from_resume_file(
     raw = await file.read()
     filename = (file.filename or "resume.pdf").strip() or "resume.pdf"
     do_eval = str(evaluate).strip().lower() in ("1", "true", "yes", "on")
+    do_preview = _owner_resume_preview(
+        str(for_resume_preview).strip().lower() in ("1", "true", "yes", "on")
+    )
     try:
         result = add_candidate_from_resume_file(
             db,
@@ -798,68 +837,37 @@ async def candidate_from_resume_file(
             filename=filename,
             content=raw,
             evaluate=do_eval,
+            for_resume_preview=do_preview,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    job_ids = await _enqueue_resume_evals(db, result.get("evaluate_candidate_ids") or [])
+    job_ids = await _enqueue_resume_evals(
+        db,
+        result.get("evaluate_candidate_ids") or [],
+        skip_questionnaire=do_preview,
+    )
     result["evaluate_job_ids"] = job_ids
     return BulkLinksOut(**result)
 
 
-async def _enqueue_resume_evals(db: Session, candidate_ids: list[str]) -> list[str]:
+async def _enqueue_resume_evals(
+    db: Session,
+    candidate_ids: list[str],
+    *,
+    skip_questionnaire: bool = False,
+) -> list[str]:
     """Queue background resume evaluation for newly added candidates."""
-    from uuid import UUID
-
-    job_ids: list[str] = []
-    if not candidate_ids:
-        return job_ids
     try:
-        pool = await get_arq_pool()
+        return await job_svc.enqueue_candidate_resume_evals(
+            db,
+            candidate_ids,
+            skip_questionnaire=skip_questionnaire,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=503,
             detail=f"Кандидаты добавлены, но очередь оценки недоступна (Redis/worker): {exc}",
         ) from exc
-
-    for raw_id in candidate_ids:
-        try:
-            cid = UUID(str(raw_id))
-        except ValueError:
-            continue
-        cand = db.get(models.Candidate, cid)
-        if not cand:
-            continue
-        existing = job_svc.find_active_job_for_candidate(
-            db,
-            job_type="candidate_evaluate_resume",
-            candidate_id=str(cand.id),
-        )
-        if existing:
-            job_ids.append(str(existing.id))
-            continue
-        job = job_svc.create_job_row(
-            db,
-            job_type="candidate_evaluate_resume",
-            vacancy_id=cand.vacancy_id,
-            payload={
-                "candidate_id": str(cand.id),
-                "candidate_name": cand.name,
-            },
-        )
-        try:
-            await pool.enqueue_job(
-                "candidate_evaluate_resume", str(job.id), _job_id=str(job.id)
-            )
-            job_ids.append(str(job.id))
-        except Exception as exc:  # noqa: BLE001
-            job_svc.update_job(
-                db,
-                job.id,
-                status="failed",
-                progress_label="Не удалось поставить в очередь",
-                error=str(exc),
-            )
-    return job_ids
 
 
 @router.post("/vacancies/{vacancy_id}/digest-to-chat")
@@ -871,4 +879,66 @@ def vacancy_digest_to_chat(vacancy_id: int, db: Session = Depends(get_db)) -> di
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg}
+
+
+@router.get("/vacancies/{vacancy_id}/resume-preview")
+def vacancy_resume_preview(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.resume_preview import pack_status
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    return pack_status(db, vacancy)
+
+
+@router.post("/vacancies/{vacancy_id}/resume-preview/ensure")
+def vacancy_resume_preview_ensure(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.resume_preview import ensure_preview_token, pack_status
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    ensure_preview_token(db, vacancy)
+    return pack_status(db, vacancy)
+
+
+@router.post("/vacancies/{vacancy_id}/resume-preview/send")
+def vacancy_resume_preview_send(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.messaging.gateway import MessagingError
+    from app.services.resume_preview import send_preview_pack
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    try:
+        return send_preview_pack(db, vacancy)
+    except MessagingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post("/vacancies/{vacancy_id}/resume-preview/candidates/{candidate_id}")
+def vacancy_resume_preview_include(
+    vacancy_id: int,
+    candidate_id: str,
+    body: ResumePreviewIncludeIn,
+    db: Session = Depends(get_db),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    from app.services.resume_preview import set_included
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    return set_included(
+        db,
+        vacancy,
+        candidate_id,
+        included=body.included,
+        visible=body.visible,
+        pdf_url=body.pdf_url,
+    )
 

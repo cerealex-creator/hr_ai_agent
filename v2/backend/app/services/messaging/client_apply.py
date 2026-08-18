@@ -152,7 +152,7 @@ def apply_client_update(
 
     if comment is not None:
         text = comment.strip()
-        if actor == "telegram" and text:
+        if actor in ("telegram", "client_zone") and text:
             text = format_telegram_comment_entry(
                 text,
                 author=actor_note,

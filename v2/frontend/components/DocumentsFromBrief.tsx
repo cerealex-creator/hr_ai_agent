@@ -49,7 +49,7 @@ export function DocumentsFromBrief({ vacancyId, defaultTitle = "", onDone }: Pro
         if (cancelled) return;
         setJob(next);
         if (next.status === "completed") {
-          setMsg("ИИ собрал документы и сохранил. Можно править в редакторе ниже.");
+          setMsg("ИИ собрал документы и сохранил. Можно править в списке документов.");
           setBusy(false);
           setOpen(false);
           onDone?.();

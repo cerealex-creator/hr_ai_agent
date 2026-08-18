@@ -10,11 +10,13 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { authLogout, authMe, type AuthMe } from "@/lib/api";
+import { DemoBanner } from "@/components/DemoBanner";
 
 type AuthContextValue = {
   user: AuthMe | null;
   loading: boolean;
   isOwner: boolean;
+  isDemo: boolean;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -23,6 +25,7 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
   isOwner: false,
+  isDemo: false,
   logout: async () => undefined,
   refresh: async () => undefined,
 });
@@ -37,6 +40,29 @@ function rolesIncludeOwner(user: AuthMe | null): boolean {
   return (user.roles || []).includes("platform_owner");
 }
 
+function isSharePublicPage(pathname: string | null): boolean {
+  return (
+    pathname === "/c" ||
+    Boolean(pathname?.startsWith("/c/")) ||
+    pathname === "/m" ||
+    Boolean(pathname?.startsWith("/m/")) ||
+    pathname === "/i" ||
+    Boolean(pathname?.startsWith("/i/")) ||
+    pathname === "/design-preview" ||
+    Boolean(pathname?.startsWith("/design-preview/"))
+  );
+}
+
+/** Только внутренний путь, без open-redirect. */
+function safeNextPath(raw: string | null | undefined): string {
+  if (!raw) return "/";
+  const path = raw.trim();
+  if (!path.startsWith("/")) return "/";
+  if (path.startsWith("//") || path.startsWith("/\\")) return "/";
+  if (path === "/login" || path.startsWith("/login/")) return "/";
+  return path;
+}
+
 type Props = {
   children: ReactNode;
 };
@@ -46,14 +72,8 @@ export function AuthGate({ children }: Props) {
   const router = useRouter();
   const [user, setUser] = useState<AuthMe | null | undefined>(undefined);
   const isLogin = pathname === "/login" || pathname?.startsWith("/login/");
-  const isPublicPage =
-    pathname === "/c" ||
-    pathname?.startsWith("/c/") ||
-    pathname === "/i" ||
-    pathname?.startsWith("/i/") ||
-    pathname === "/design-preview" ||
-    pathname?.startsWith("/design-preview/") ||
-    pathname === "/";
+  const isHub = pathname === "/";
+  const isPublicPage = isHub || isSharePublicPage(pathname);
 
   const refresh = async () => {
     const me = await authMe();
@@ -61,7 +81,7 @@ export function AuthGate({ children }: Props) {
   };
 
   useEffect(() => {
-    if (isPublicPage) {
+    if (isSharePublicPage(pathname)) {
       setUser(null);
       return;
     }
@@ -71,24 +91,29 @@ export function AuthGate({ children }: Props) {
         const me = await authMe();
         if (cancelled) return;
         setUser(me);
+        if (isHub) return;
         if (!me && !isLogin) {
           const next = `${pathname || "/"}${typeof window !== "undefined" ? window.location.search : ""}`;
           router.replace(`/login?next=${encodeURIComponent(next)}`);
         }
         if (me && isLogin) {
-          router.replace("/");
+          const next =
+            typeof window !== "undefined"
+              ? new URLSearchParams(window.location.search).get("next")
+              : null;
+          router.replace(safeNextPath(next));
         }
       } catch {
         if (!cancelled) {
           setUser(null);
-          if (!isLogin) router.replace("/login");
+          if (!isLogin && !isHub) router.replace("/login");
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [pathname, isLogin, isPublicPage, router]);
+  }, [pathname, isLogin, isHub, router]);
 
   const logout = async () => {
     await authLogout();
@@ -101,6 +126,7 @@ export function AuthGate({ children }: Props) {
       user: user ?? null,
       loading: user === undefined && !isLogin && !isPublicPage,
       isOwner: rolesIncludeOwner(user ?? null),
+      isDemo: Boolean((user ?? null)?.is_demo),
       logout,
       refresh,
     }),
@@ -109,7 +135,12 @@ export function AuthGate({ children }: Props) {
   );
 
   if (isLogin || isPublicPage) {
-    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return (
+      <AuthContext.Provider value={value}>
+        {isHub && user?.is_demo ? <DemoBanner /> : null}
+        {children}
+      </AuthContext.Provider>
+    );
   }
 
   if (user === undefined) {
@@ -128,7 +159,12 @@ export function AuthGate({ children }: Props) {
     );
   }
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {user.is_demo ? <DemoBanner /> : null}
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuthLogout() {

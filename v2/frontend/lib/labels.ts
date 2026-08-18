@@ -18,7 +18,7 @@ export const HR_STAGE_LABELS: Record<string, string> = {
   rejected_candidate: "Отказ кандидата",
   rejected_client: "Отказ заказчика",
   rejected_hr: "Отказ мой",
-  rejected_vacancy_closed: "Отказ: вакансия закрыта",
+  rejected_vacancy_closed: "Отказ в связи с закрытием вакансии",
 };
 
 /** Positive funnel for stage progress UI (excludes rejects / archive). */

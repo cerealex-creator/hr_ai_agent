@@ -28,7 +28,7 @@ def interview_digest_public(token: str, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Ссылка недействительна или устарела")
     digest = digest_for_client(candidate.payload)
     if not digest or (not digest.get("summary") and not digest.get("qa")):
-        raise HTTPException(status_code=404, detail="Выжимка ещё не готова")
+        raise HTTPException(status_code=404, detail="Конспект ещё не готов")
     vacancy = db.get(models.Vacancy, candidate.vacancy_id)
     return {
         "candidate_name": candidate.name,
