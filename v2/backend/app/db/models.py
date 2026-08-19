@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     DateTime,
     ForeignKey,
@@ -90,6 +91,7 @@ class Person(Base):
     match_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     match_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     do_not_contact: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     merged_into_person_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("persons.id"), nullable=True
     )
@@ -120,6 +122,7 @@ class Candidate(Base):
     match_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
     match_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     match_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
 
     vacancy: Mapped["Vacancy"] = relationship(back_populates="candidates")
     person: Mapped["Person | None"] = relationship(back_populates="candidates")
@@ -391,3 +394,39 @@ class RefreshToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrganizationTag(Base):
+    """Per-org tag dictionary with usage counters."""
+
+    __tablename__ = "organization_tags"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "tag", name="pk_org_tags"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), primary_key=True
+    )
+    tag: Mapped[str] = mapped_column(String(128), primary_key=True)
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class CandidateSegment(Base):
+    """Saved filter / segment for candidate lists."""
+
+    __tablename__ = "candidate_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    filter: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="candidates")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

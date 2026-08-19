@@ -329,6 +329,7 @@ export type CandidateDetail = CandidateListItem & {
   talent_reserve_at?: string | null;
   talent_reserve_note?: string | null;
   talent_reserve_by?: string | null;
+  tags?: string[];
   person_id?: string | null;
   related_vacancies?: {
     candidate_id: string;
@@ -351,6 +352,34 @@ export type DupHit = {
 export type CheckDuplicateResult = {
   hard: DupHit[];
   soft: DupHit[];
+};
+
+export type StageDurationSummary = {
+  stage: string;
+  count: number;
+  avg_days: number;
+  median_days: number;
+  data_quality: string;
+};
+
+export type StageDurationsResponse = {
+  summary: StageDurationSummary[];
+  stale: {
+    candidate_id: string;
+    name: string;
+    vacancy_id: number;
+    stage: string;
+    days_on_stage: number;
+    threshold: number;
+  }[];
+};
+
+export type CandidateSegment = {
+  id: string;
+  name: string;
+  filter: Record<string, unknown>;
+  scope: string;
+  created_at?: string;
 };
 
 export type FunnelStats = {

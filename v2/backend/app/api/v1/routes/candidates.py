@@ -1106,3 +1106,155 @@ def list_candidate_messaging_posts(
     get_candidate_or_404(db, cid)
     return [MessagingPostOut.model_validate(p) for p in list_candidate_posts(db, cid)]
 
+
+# --- YAKOR PR2: stage durations + tags + segments ---
+
+from app.schemas import (
+    CandidateTagsPatchIn,
+    SegmentCopyIn,
+    SegmentIn,
+    SegmentOut,
+    StageDurationsOut,
+    StageDurationSummary,
+    TagsListOut,
+)
+
+
+@router.get("/stats/stage-durations", response_model=StageDurationsOut)
+def stage_durations_endpoint(
+    vacancy_id: int | None = Query(default=None),
+    client_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> StageDurationsOut:
+    from app.services.stage_duration import aggregate_stage_timing, stale_candidates
+    from app.services.tenancy import require_org_id
+
+    org_id = require_org_id()
+    summary = aggregate_stage_timing(
+        db, organization_id=org_id, vacancy_id=vacancy_id, client_id=client_id,
+    )
+    stale = stale_candidates(db, organization_id=org_id, vacancy_id=vacancy_id)
+    return StageDurationsOut(
+        summary=[StageDurationSummary(**s) for s in summary],
+        stale=stale,
+    )
+
+
+@router.get("/tags", response_model=TagsListOut)
+def list_tags_endpoint(
+    q: str = Query(default=""),
+    db: Session = Depends(get_db),
+) -> TagsListOut:
+    from app.services.tenancy import require_org_id
+
+    org_id = require_org_id()
+    query = select(models.OrganizationTag.tag).where(
+        models.OrganizationTag.organization_id == org_id,
+    ).order_by(models.OrganizationTag.usage_count.desc())
+    if q:
+        query = query.where(models.OrganizationTag.tag.ilike(f"%{q}%"))
+    tags = list(db.scalars(query).all())
+    return TagsListOut(tags=tags)
+
+
+@router.patch("/candidates/{candidate_id}/tags", response_model=CandidateDetail)
+def patch_candidate_tags(
+    candidate_id: str,
+    body: CandidateTagsPatchIn,
+    db: Session = Depends(get_db),
+) -> CandidateDetail:
+    from uuid import UUID
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.services.tenancy import require_org_id
+
+    try:
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    org_id = require_org_id()
+
+    new_tags = sorted(set(t.strip() for t in body.tags if t.strip()))
+    old_tags = set(candidate.tags or [])
+    candidate.tags = new_tags
+    flag_modified(candidate, "tags")
+
+    # Update person tags (union)
+    if candidate.person_id:
+        person = db.get(models.Person, candidate.person_id)
+        if person:
+            person_tags = set(person.tags or [])
+            person_tags.update(new_tags)
+            person.tags = sorted(person_tags)
+            flag_modified(person, "tags")
+
+    # Update org tag counters
+    added = set(new_tags) - old_tags
+    removed = old_tags - set(new_tags)
+    for tag in added:
+        existing = db.get(models.OrganizationTag, (org_id, tag))
+        if existing:
+            existing.usage_count = (existing.usage_count or 0) + 1
+        else:
+            db.add(models.OrganizationTag(organization_id=org_id, tag=tag, usage_count=1))
+    for tag in removed:
+        existing = db.get(models.OrganizationTag, (org_id, tag))
+        if existing:
+            existing.usage_count = max(0, (existing.usage_count or 0) - 1)
+
+    db.commit()
+    db.refresh(candidate)
+    return _candidate_detail(db, candidate)
+
+
+@router.get("/candidate-segments", response_model=list[SegmentOut])
+def list_segments(db: Session = Depends(get_db)) -> list[SegmentOut]:
+    from app.services.tenancy import current_user, require_org_id
+
+    org_id = require_org_id()
+    user = current_user()
+    q = select(models.CandidateSegment).where(
+        models.CandidateSegment.organization_id == org_id,
+    )
+    if user:
+        q = q.where(models.CandidateSegment.user_id == user.id)
+    return [SegmentOut.model_validate(s) for s in db.scalars(q).all()]
+
+
+@router.post("/candidate-segments", response_model=SegmentOut, status_code=201)
+def create_segment(body: SegmentIn, db: Session = Depends(get_db)) -> SegmentOut:
+    from app.services.tenancy import current_user, require_org_id
+    import uuid
+
+    org_id = require_org_id()
+    user = current_user()
+    if not user:
+        raise HTTPException(status_code=401, detail="Auth required")
+
+    seg = models.CandidateSegment(
+        id=uuid.uuid4(),
+        organization_id=org_id,
+        user_id=user.id,
+        name=body.name,
+        filter=body.filter,
+        scope=body.scope,
+    )
+    db.add(seg)
+    db.commit()
+    db.refresh(seg)
+    return SegmentOut.model_validate(seg)
+
+
+@router.delete("/candidate-segments/{segment_id}", status_code=204)
+def delete_segment(segment_id: str, db: Session = Depends(get_db)) -> None:
+    from uuid import UUID
+    try:
+        sid = UUID(segment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid segment id") from exc
+    seg = db.get(models.CandidateSegment, sid)
+    if not seg:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    db.delete(seg)
+    db.commit()
+

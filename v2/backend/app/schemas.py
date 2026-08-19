@@ -274,6 +274,7 @@ class CandidateDetail(BaseModel):
     talent_reserve_at: str | None = None
     talent_reserve_note: str | None = None
     talent_reserve_by: str | None = None
+    tags: list[str] = Field(default_factory=list)
     person_id: str | None = None
     related_vacancies: list[RelatedCandidateOut] = Field(default_factory=list)
     payload: dict = Field(default_factory=dict)
@@ -1077,4 +1078,59 @@ class NotifyPrefsPut(BaseModel):
     telegram_chat_id: str | None = None
     telegram_period: str | None = None
     telegram_text: str | None = None
+
+
+# --- YAKOR PR2: stage durations + tags + segments ---
+
+
+class StageDurationSummary(BaseModel):
+    stage: str
+    count: int = 0
+    avg_days: float = 0
+    median_days: float = 0
+    data_quality: str = "partial"
+
+
+class StageDurationCandidate(BaseModel):
+    candidate_id: str
+    name: str = ""
+    vacancy_id: int = 0
+    stage: str = ""
+    days_on_stage: float = 0
+    entered_at: str | None = None
+    data_quality: str = "partial"
+
+
+class StageDurationsOut(BaseModel):
+    summary: list[StageDurationSummary] = Field(default_factory=list)
+    stale: list[dict] = Field(default_factory=list)
+
+
+class TagsListOut(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class CandidateTagsPatchIn(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class SegmentIn(BaseModel):
+    name: str
+    filter: dict = Field(default_factory=dict)
+    scope: str = "candidates"
+
+
+class SegmentOut(BaseModel):
+    id: UUID
+    name: str
+    filter: dict = Field(default_factory=dict)
+    scope: str = "candidates"
+    created_at: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SegmentCopyIn(BaseModel):
+    target_vacancy_id: int
+    candidate_ids: list[UUID] | None = None
 

@@ -62,6 +62,25 @@ def attention_reason(c: models.Candidate) -> str | None:
             return "Заказчик думает"
     if stage in ("resume_screening", "primary_contact") and not str(p.get("phone") or "").strip():
         return "Нет телефона"
+
+    # V13: stale on stage
+    from app.services.stage_duration import DEFAULT_STAGE_THRESHOLDS, _parse_iso
+    from app.services.candidate_write import HR_STAGES
+    from datetime import datetime, timezone as tz
+
+    threshold = DEFAULT_STAGE_THRESHOLDS.get(stage)
+    if threshold:
+        history = p.get("hr_stage_history") or []
+        entered = None
+        for entry in reversed(history):
+            if entry.get("stage") == stage:
+                entered = _parse_iso(entry.get("at"))
+                break
+        if entered:
+            days = (datetime.now(tz.utc) - entered).total_seconds() / 86400
+            if days >= threshold:
+                return f"Завис на этапе «{HR_STAGES.get(stage, stage)}» {round(days)} дн"
+
     return None
 
 

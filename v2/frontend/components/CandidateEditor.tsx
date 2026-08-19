@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Heart } from "lucide-react";
 import { RelatedVacanciesPlaque } from "@/components/DuplicateCandidateBanner";
+import { CandidateTags } from "@/components/CandidateTags";
 import { type CandidateDetail, apiFetch } from "@/lib/api";
 import {
   HR_FUNNEL_STAGES,
@@ -1209,6 +1210,10 @@ export function CandidateEditor({ initial }: Props) {
           />
         </div>
       </div>
+
+      {!isDemo && (
+        <CandidateTags candidate={c} onUpdate={(upd) => applyCandidate(upd)} readOnly={writeLocked} />
+      )}
 
       <div className="cand-summary">
         <div className="cand-summary-row">

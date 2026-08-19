@@ -227,6 +227,7 @@ def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDeta
         payload=candidate.payload or {},
         vacancy_control_word_enabled=cw_enabled,
         vacancy_control_word=cw_word if cw_enabled else None,
+        tags=list(candidate.tags or []),
         person_id=person_id_str,
         related_vacancies=related,
         **fields,

@@ -5790,3 +5790,46 @@ button.hub-card {
 .related-list a {
   color: var(--accent);
 }
+
+/* --- Candidate tags --- */
+.cand-tags {
+  margin-top: 0.75rem;
+}
+.cand-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.cand-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #3b5998;
+  font-size: 0.78rem;
+  border: 1px solid #d0dae8;
+}
+.cand-tag-remove {
+  display: inline-flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.5;
+  padding: 0;
+}
+.cand-tag-remove:hover {
+  opacity: 1;
+}
+.cand-tag-form {
+  margin-top: 0.35rem;
+}
+.cand-tag-input {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  width: 160px;
+}

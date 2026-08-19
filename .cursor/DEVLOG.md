@@ -5,6 +5,40 @@
 
 ---
 
+## 2026-08-19 — ЯКОРЬ PR2: аналитика стадий + теги + сегменты
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция: tags (TEXT[]) на candidates и persons с GIN-индексами, organization_tags, candidate_segments.
+- `stage_duration.py`: расчёт времени на стадиях из hr_stage_history, агрегация, V13 stale detection.
+- V13 stale: attention_reason теперь показывает «Завис на этапе N дн» по порогам.
+- API: GET /stats/stage-durations, GET /tags, PATCH /candidates/{id}/tags, CRUD /candidate-segments.
+- Теги: запись в candidate.tags + union в person.tags + счётчик organization_tags.
+- Сегменты: CRUD (list/create/delete) с привязкой к org + user.
+- Frontend: CandidateTags компонент (добавление/удаление тегов), типы StageDurationsResponse, CandidateSegment.
+- CSS: стили .cand-tag, .cand-tag-form и т.д.
+
+**Файлы:**
+- `v2/backend/alembic/versions/21bc8c335735_*.py`
+- `v2/backend/app/db/models.py` (tags, OrganizationTag, CandidateSegment)
+- `v2/backend/app/services/stage_duration.py` (новый)
+- `v2/backend/app/services/candidate_query.py` (V13 stale)
+- `v2/backend/app/api/v1/routes/candidates.py` (stage-durations, tags, segments API)
+- `v2/backend/app/api/v1/common.py` (tags in detail)
+- `v2/backend/app/schemas.py` (PR2 schemas)
+- `v2/frontend/components/CandidateTags.tsx` (новый)
+- `v2/frontend/components/CandidateEditor.tsx`
+- `v2/frontend/lib/api.ts`
+- `v2/frontend/app/globals.css`
+
+**Git:** ветка `feature/kaskad-yakor-assistent-efir`
+
+**Следующий шаг:**
+- ЯКОРЬ PR3: талант-база (import, take, hh-search, UI).
+
+---
+
 ## 2026-08-19 — ЯКОРЬ PR1: persons + дедупликация
 
 **Тип:** `feature`
