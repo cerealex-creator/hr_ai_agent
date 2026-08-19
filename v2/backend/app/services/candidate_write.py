@@ -77,6 +77,12 @@ PATCHABLE_PAYLOAD_FIELDS = (
     "remote_interview",
     "office_interview",
     "meeting_link",
+    "liked",
+    "liked_at",
+    "talent_reserve",
+    "talent_reserve_at",
+    "talent_reserve_note",
+    "talent_reserve_by",
 )
 
 

@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Heart } from "lucide-react";
 import { type CandidateDetail, apiFetch } from "@/lib/api";
 import {
   HR_FUNNEL_STAGES,
@@ -436,6 +438,14 @@ export function CandidateEditor({ initial }: Props) {
   const inWorkDays = daysBetween(c.created_at);
   const waiting = useMemo(() => resolveWaiting(c), [c]);
   const nextAction = useMemo(() => resolveNextAction(c), [c]);
+  const isLiked = Boolean(c.liked ?? payloadFlag(c, "liked"));
+  const inReserve = Boolean(c.talent_reserve ?? payloadFlag(c, "talent_reserve"));
+  const LATE_STAGES = new Set([
+    "client_meeting", "offer", "internship", "started_work",
+    "rejected_candidate", "rejected_client", "rejected_hr",
+    "rejected_vacancy_closed", "archived",
+  ]);
+  const showReserveBtn = inReserve || isLiked || LATE_STAGES.has(c.hr_stage);
 
   const hasQuestionnaire = Array.isArray(c.interview_questionnaire) && c.interview_questionnaire.length > 0;
 
@@ -587,6 +597,63 @@ export function CandidateEditor({ initial }: Props) {
       router.refresh();
     } catch (e) {
       setFeedback("anketa", null, e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleLike = async (next: boolean) => {
+    if (isDemo) {
+      setFeedback("top", null, DEMO_WRITE_HINT, "warning");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ liked: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const updated: CandidateDetail = await res.json();
+      applyCandidate(updated);
+      setFeedback("top", next ? "Кандидат понравился" : "Отметка снята");
+      router.refresh();
+    } catch (e) {
+      setFeedback("top", null, e instanceof Error ? e.message : "Ошибка", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleReserve = async (next: boolean) => {
+    if (isDemo) {
+      setFeedback("top", null, DEMO_WRITE_HINT, "warning");
+      return;
+    }
+    setBusy(true);
+    setFeedback("top", null);
+    try {
+      const res = await apiFetch(`/api/v1/candidates/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ talent_reserve: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const updated: CandidateDetail = await res.json();
+      applyCandidate(updated);
+      setFeedback(
+        "top",
+        next ? "Кандидат добавлен в кадровый резерв" : "Кандидат убран из кадрового резерва",
+      );
+      router.refresh();
+    } catch (e) {
+      setFeedback(
+        "top",
+        null,
+        e instanceof Error ? e.message : "Не удалось обновить резерв",
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -1096,7 +1163,39 @@ export function CandidateEditor({ initial }: Props) {
             <span className="cand-workspace-badge">
               {clientStatusLabelForCard(c.hr_stage, c.client_status)}
             </span>
+            {inReserve ? (
+              <span className="cand-workspace-badge is-accent">Кадровый резерв</span>
+            ) : null}
           </div>
+          {!isDemo ? (
+            <div className="cand-workspace-actions">
+              <button
+                type="button"
+                className={`cand-like-btn${isLiked ? " is-liked" : ""}`}
+                disabled={writeLocked}
+                onClick={() => void toggleLike(!isLiked)}
+                title={isLiked ? "Убрать отметку" : "Нравится"}
+              >
+                <Heart size={20} fill={isLiked ? "currentColor" : "none"} strokeWidth={2} />
+                {isLiked ? "Нравится" : "Нравится"}
+              </button>
+              {showReserveBtn ? (
+                <button
+                  type="button"
+                  className={inReserve ? "chip chip-active" : "chip"}
+                  disabled={writeLocked}
+                  onClick={() => void toggleReserve(!inReserve)}
+                >
+                  {inReserve ? "Убрать из резерва" : "Добавить в резерв"}
+                </button>
+              ) : null}
+              {inReserve ? (
+                <Link href="/talent-reserve" className="chip">
+                  Открыть резерв
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
           {isDemo ? (
             <p className="muted hh-micro">
               Демо: оценка, опросник и конспект уже заполнены. Сохранить, отправить в чат или

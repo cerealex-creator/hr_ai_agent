@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Heart } from "lucide-react";
 import { CandidateAvatar } from "@/components/CandidateAvatar";
 import type { CandidateListItem } from "@/lib/api";
 import { clientStatusLabel, hrStageLabel } from "@/lib/labels";
@@ -60,6 +61,9 @@ export function CandidateCompactRow({
         {contact ? <p className="rec-row-contact">Контакт: {contact}</p> : null}
       </div>
       <div className="rec-row-aside">
+        {c.liked ? (
+          <Heart size={14} fill="currentColor" strokeWidth={0} className="rec-row-liked" aria-label="Нравится" />
+        ) : null}
         <span className={`rec-badge ${badgeTone}`}>{badgeLabel}</span>
         <span className="rec-row-client">{clientStatusLabel(c.client_status)}</span>
       </div>

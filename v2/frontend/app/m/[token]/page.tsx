@@ -14,6 +14,7 @@ type PreviewCard = {
   resume_url?: string | null;
   ai_strengths?: string[];
   ai_weaknesses?: string[];
+  hr_comment?: string | null;
   status: string;
   actionable: boolean;
   ready?: boolean;
@@ -47,6 +48,7 @@ export default function ResumePreviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [localMsg, setLocalMsg] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     const res = await previewFetch(`/api/v1/resume-preview/${encodeURIComponent(token)}`);
@@ -130,24 +132,12 @@ export default function ResumePreviewPage() {
                 <span className="cz-pill cz-pill-status">{STATUS_LABEL[c.status] || c.status}</span>
               </div>
             </div>
-            {c.ai_strengths && c.ai_strengths.length ? (
-              <ul className="rp-plus">
-                {c.ai_strengths.map((line) => (
-                  <li key={`plus-${line}`}>{line}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted hh-micro">Кратких плюсов ИИ пока нет</p>
-            )}
-            {c.ai_weaknesses && c.ai_weaknesses.length ? (
-              <ul className="rp-minus">
-                {c.ai_weaknesses.map((line) => (
-                  <li key={`minus-${line}`}>{line}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted hh-micro">Кратких минусов ИИ пока нет</p>
-            )}
+            {c.hr_comment ? (
+              <section className="rp-hr-note">
+                <h3 className="rp-hr-note-title">Комментарий рекрутера</h3>
+                <p className="cz-comment">{c.hr_comment}</p>
+              </section>
+            ) : null}
             {c.resume_url ? (
               <a
                 className="cz-tap cz-tap-primary"
@@ -160,6 +150,36 @@ export default function ResumePreviewPage() {
             ) : (
               <p className="muted hh-micro">Ссылка на PDF ещё не готова</p>
             )}
+            {c.ai_strengths?.length || c.ai_weaknesses?.length ? (
+              <div className="rp-ai">
+                <button
+                  type="button"
+                  className="cz-tap"
+                  aria-expanded={Boolean(aiOpen[c.id])}
+                  onClick={() => setAiOpen((prev) => ({ ...prev, [c.id]: !prev[c.id] }))}
+                >
+                  {aiOpen[c.id] ? "Скрыть коммент ИИ-ассистента" : "Коммент от ИИ-ассистента"}
+                </button>
+                {aiOpen[c.id] ? (
+                  <div className="rp-ai-body">
+                    {c.ai_strengths && c.ai_strengths.length ? (
+                      <ul className="rp-plus">
+                        {c.ai_strengths.map((line) => (
+                          <li key={`plus-${line}`}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {c.ai_weaknesses && c.ai_weaknesses.length ? (
+                      <ul className="rp-minus">
+                        {c.ai_weaknesses.map((line) => (
+                          <li key={`minus-${line}`}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {c.actionable ? (
               <div className="rp-actions">
                 <button

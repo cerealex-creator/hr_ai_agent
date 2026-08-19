@@ -17,6 +17,7 @@ export type PreviewPackItem = {
   gender?: string | null;
   strengths_count: number;
   weaknesses_count?: number;
+  hr_comment?: string;
   status: string;
   anonymized_resume_link: string;
   resume_url: string | null;
@@ -55,11 +56,19 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/resume-preview`);
     if (!res.ok) throw new Error(await res.text());
-    setPack((await res.json()) as PreviewPack);
+    const data = (await res.json()) as PreviewPack;
+    setPack(data);
+    const drafts: Record<string, string> = {};
+    for (const c of data.candidates || []) {
+      drafts[c.id] = c.hr_comment || "";
+    }
+    setCommentDrafts(drafts);
   }, [vacancyId]);
 
   useEffect(() => {
@@ -92,6 +101,7 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
         throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
       }
       setLinksText("");
+      setAddOpen(false);
       const extra = Array.isArray(data.messages) ? data.messages.join("\n") : "";
       setMsg(
         `Добавлено в макеты: ${data.created || 0}. Лёгкая оценка ИИ (без опросника) поставлена в очередь — плюсы появятся на карточках, когда закончится.` +
@@ -126,6 +136,29 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
         throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
       }
       setPack(data as PreviewPack);
+    });
+
+  const saveComment = (id: string) =>
+    run(async () => {
+      const next = (commentDrafts[id] ?? "").trim();
+      const prev = (pack?.candidates.find((c) => c.id === id)?.hr_comment || "").trim();
+      if (next === prev) return;
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/resume-preview/candidates/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hr_comment: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      setPack(data as PreviewPack);
+      const drafts: Record<string, string> = {};
+      for (const c of (data as PreviewPack).candidates || []) {
+        drafts[c.id] = c.hr_comment || "";
+      }
+      setCommentDrafts(drafts);
+      setMsg("Комментарий для заказчика сохранён");
     });
 
   const ensureLink = () =>
@@ -184,28 +217,46 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
       </p>
       <ActionBanner msg={msg} err={err} />
 
-      <div className="hh-field">
-        <label className="hh-label" htmlFor="preview-links">
-          Ссылки на PDF без контактов
-        </label>
-        <textarea
-          id="preview-links"
-          rows={4}
-          value={linksText}
-          onChange={(e) => setLinksText(e.target.value)}
-          disabled={busy}
-          placeholder={"https://disk.yandex.ru/i/…\nhttps://disk.yandex.ru/d/…"}
-        />
-      </div>
-      <div className="hh-row-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+      <div className="rp-add-wrap">
         <button
           type="button"
-          className="chip chip-active"
-          disabled={busy || !linksText.trim()}
-          onClick={() => void addLinks()}
+          className="chip"
+          disabled={busy}
+          aria-expanded={addOpen}
+          onClick={() => setAddOpen((v) => !v)}
         >
-          Загрузить в макеты
+          {addOpen ? "Свернуть" : "Добавить резюме"}
         </button>
+        {addOpen ? (
+          <div className="rp-add-panel">
+            <div className="hh-field">
+              <label className="hh-label" htmlFor="preview-links">
+                Ссылки на PDF без контактов
+              </label>
+              <textarea
+                id="preview-links"
+                rows={4}
+                value={linksText}
+                onChange={(e) => setLinksText(e.target.value)}
+                disabled={busy}
+                placeholder={"https://disk.yandex.ru/i/…\nhttps://disk.yandex.ru/d/…"}
+              />
+            </div>
+            <div className="hh-row-actions" style={{ justifyContent: "flex-start" }}>
+              <button
+                type="button"
+                className="chip chip-active"
+                disabled={busy || !linksText.trim()}
+                onClick={() => void addLinks()}
+              >
+                Загрузить в макеты
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="hh-row-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap", marginTop: "0.65rem" }}>
         <button type="button" className="chip" disabled={busy} onClick={() => void ensureLink()}>
           Получить ссылку
         </button>
@@ -247,7 +298,8 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
           </h4>
           <ul className="rp-hr-list">
           {pack.candidates.map((c) => (
-            <li key={c.id} className="rp-hr-row">
+            <li key={c.id} className="rp-hr-row-stack">
+              <div className="rp-hr-row">
               <div className="rp-hr-row-main">
                 <CandidateAvatar
                   name={c.name}
@@ -286,6 +338,20 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
                   Убрать
                 </button>
               </div>
+              </div>
+              <label className="hh-field rp-hr-comment">
+                <span className="hh-label">Комментарий для заказчика</span>
+                <textarea
+                  rows={2}
+                  value={commentDrafts[c.id] ?? c.hr_comment ?? ""}
+                  disabled={busy}
+                  placeholder="Коротко: почему стоит или не стоит смотреть кандидата"
+                  onChange={(e) =>
+                    setCommentDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))
+                  }
+                  onBlur={() => void saveComment(c.id)}
+                />
+              </label>
             </li>
           ))}
         </ul>

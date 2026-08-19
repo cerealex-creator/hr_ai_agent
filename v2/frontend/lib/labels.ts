@@ -14,6 +14,7 @@ export const HR_STAGE_LABELS: Record<string, string> = {
   internship: "Выход на стажировку",
   started_work: "Вышел на работу",
   rejected: "Отказ",
+  /* NOTE: order of keys here is display-only; real order is HR_FUNNEL_STAGES */
   archived: "Архив",
   rejected_candidate: "Отказ кандидата",
   rejected_client: "Отказ заказчика",
@@ -28,11 +29,11 @@ export const HR_FUNNEL_STAGES = [
   "no_response_3d",
   "interview_scheduled",
   "interview_done",
-  "offer",
   "test_task",
   "client_review",
   "client_pause",
   "client_meeting",
+  "offer",
   "internship",
   "started_work",
 ] as const;

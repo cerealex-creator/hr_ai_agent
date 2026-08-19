@@ -19,8 +19,27 @@ from app.services.yandex_public import yandex_link_for_display
 
 PREVIEW_ACTIONS = frozenset({"consider", "reject"})
 PREVIEW_ACTIONABLE = frozenset({"", "wait"})
+PREVIEW_DEFAULT_NAME = "Кандидат на рассмотрение"
+_PLACEHOLDER_NAMES = frozenset({"новый кандидат", "new candidate"})
 MAX_STRENGTHS = 6
 MAX_WEAKNESSES = 6
+
+
+def preview_display_name(name: str | None) -> str:
+    n = (name or "").strip()
+    if not n or n.casefold() in _PLACEHOLDER_NAMES:
+        return PREVIEW_DEFAULT_NAME
+    return n
+
+
+def is_preview_placeholder_name(name: str | None) -> bool:
+    n = (name or "").strip().casefold()
+    return not n or n in _PLACEHOLDER_NAMES or n == PREVIEW_DEFAULT_NAME.casefold()
+
+
+def _preview_hr_comment(payload: dict[str, Any] | None) -> str | None:
+    text = str((payload or {}).get("resume_preview_hr_comment") or "").strip()
+    return text or None
 
 
 def _now_iso() -> str:
@@ -185,12 +204,13 @@ def _card(c: models.Candidate, *, demo: bool) -> dict[str, Any]:
     actionable = status in PREVIEW_ACTIONABLE and not demo and bool(resume_url)
     return {
         "id": str(c.id),
-        "name": c.name or "Кандидат",
+        "name": preview_display_name(c.name),
         "photo_url": (str(payload.get("photo_url") or "").strip() or None),
         "gender": normalize_gender(payload.get("gender") or payload.get("sex")),
         "resume_url": resume_url,
         "ai_strengths": _strengths(payload),
         "ai_weaknesses": _weaknesses(payload),
+        "hr_comment": _preview_hr_comment(payload),
         "status": status,
         "actionable": actionable,
         "ready": bool(resume_url),
@@ -299,7 +319,7 @@ def pack_status(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
         photo = str(payload.get("photo_url") or "").strip() or None
         item = {
             "id": str(c.id),
-            "name": c.name or "Кандидат",
+            "name": preview_display_name(c.name),
             "included": included,
             "visible": visible,
             "ready": bool(url),
@@ -308,6 +328,7 @@ def pack_status(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
             "gender": normalize_gender(payload.get("gender") or payload.get("sex")),
             "strengths_count": len(_strengths(payload)),
             "weaknesses_count": len(_weaknesses(payload)),
+            "hr_comment": _preview_hr_comment(payload) or "",
             "status": str(payload.get("resume_preview_status") or "").strip() or "wait",
             "anonymized_resume_link": raw,
             "resume_url": url,
@@ -337,6 +358,7 @@ def set_included(
     included: bool | None = None,
     visible: bool | None = None,
     pdf_url: str | None = None,
+    hr_comment: str | None = None,
 ) -> dict[str, Any]:
     try:
         cid = UUID(str(candidate_id))
@@ -345,8 +367,8 @@ def set_included(
     candidate = db.get(models.Candidate, cid)
     if not candidate or candidate.vacancy_id != vacancy.id:
         raise HTTPException(status_code=404, detail="Кандидат не найден")
-    if included is None and visible is None:
-        raise HTTPException(status_code=400, detail="Нужно included или visible")
+    if included is None and visible is None and hr_comment is None:
+        raise HTTPException(status_code=400, detail="Нужно included, visible или hr_comment")
     if included is True:
         url = (pdf_url or "").strip() or str((candidate.payload or {}).get("anonymized_resume_link") or "").strip()
         if not url:
@@ -368,6 +390,11 @@ def set_included(
         payload["resume_preview_visible"] = bool(visible)
         candidate.payload = payload
         flag_modified(candidate, "payload")
+    if hr_comment is not None:
+        payload = dict(candidate.payload or {})
+        payload["resume_preview_hr_comment"] = str(hr_comment).strip()
+        candidate.payload = payload
+        flag_modified(candidate, "payload")
     db.add(candidate)
     db.commit()
     return pack_status(db, vacancy)
@@ -380,18 +407,23 @@ def _notify_preview_decision(
     action: str,
     comment: str,
 ) -> None:
-    chat_id = str(vacancy.chat_id or "").strip()
-    if not chat_id:
-        return
+    """One-shot DM to HR. Do not post into the client vacancy chat."""
+    from app.core.config import get_settings
     from app.services.messaging.telegram_provider import send_html_message
 
+    hr_chat = (get_settings().telegram_hr_user_id or "").strip()
+    if not hr_chat:
+        return
     label = "можно рассмотреть" if action == "consider" else "отказ"
+    name = preview_display_name(candidate.name)
     text = (
-        f"Макет резюме: <b>{_esc(candidate.name)}</b> — {label}."
+        f"Макет: решение заказчика\n"
+        f"Вакансия: <b>{_esc(vacancy.title)}</b>\n"
+        f"{_esc(name)} — <b>{label}</b>"
         + (f"\n{_esc(comment)}" if comment else "")
     )
     try:
-        send_html_message(chat_id, text)
+        send_html_message(hr_chat, text)
     except Exception:  # noqa: BLE001
         return
 
@@ -432,6 +464,7 @@ def send_preview_pack(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
     n = int(status["ready_count"])
     noun = "макет" if n == 1 else "макета" if n < 5 else "макетов"
     text = (
+        f"Просьба оценить возможность рассмотрения\n\n"
         f"Макеты резюме <b>без контактов</b>\n"
         f"Вакансия: {_esc(vacancy.title)}\n"
         f"{n} {noun} на согласование"

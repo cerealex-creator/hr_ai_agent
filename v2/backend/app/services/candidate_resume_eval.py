@@ -58,7 +58,8 @@ FUNNEL_EVAL_SYSTEM = """Ты — опытный HR-директор. Оцени 
 }
 
 Поля strengths и weaknesses обязательны: по 2–4 коротких пункта.
-Минусы — конкретные пробелы или риски по профилю, не общие фразы.
+Плюсы (strengths) — соответствие профилю: что закрыто из важных и из второстепенных требований (не общие качества «коммуникабельный»).
+Минусы (weaknesses) — конкретные пробелы по профилю, в том числе явно укажи, каких важных и второстепенных требований в резюме нет. Не общие фразы.
 
 Структура comment_sections обязательна. Поле "comment" не используй — только comment_sections.
 
@@ -392,6 +393,7 @@ def _incomplete_candidates(db: Session, vacancy_id: int) -> list[models.Candidat
 def _reuse_incomplete_from_resume_text(
     db: Session, vacancy: models.Vacancy, resume_text: str
 ) -> models.Candidate | None:
+    from app.services.resume_preview import is_preview_placeholder_name
     from app.services.yandex_disk_sync import person_name_in_text
 
     text = (resume_text or "").strip()
@@ -399,7 +401,7 @@ def _reuse_incomplete_from_resume_text(
         return None
     for cand in _incomplete_candidates(db, vacancy.id):
         name = (cand.name or "").strip()
-        if not name or name.casefold() in {"новый кандидат", "new candidate"}:
+        if is_preview_placeholder_name(name):
             continue
         if person_name_in_text(name, text):
             return cand
@@ -418,6 +420,7 @@ def bulk_add_from_resume_links(
     """Create candidates from PDF links. AI extract/eval is deferred (see enqueue)."""
     from app.services.candidate_write import create_candidate
     from app.services.candidate_photo import try_attach_candidate_photo_from_link
+    from app.services.resume_preview import PREVIEW_DEFAULT_NAME
 
     settings = settings or get_settings()
     created_ids: list[str] = []
@@ -430,7 +433,7 @@ def bulk_add_from_resume_links(
         if not link:
             continue
         text, err = fetch_resume_text_from_url(link)
-        name = "Новый кандидат"
+        name = PREVIEW_DEFAULT_NAME if for_resume_preview else "Новый кандидат"
         fields: dict[str, Any] = {"resume_link": link, "cold_screening": True}
         if text:
             fields["resume_text"] = text
@@ -505,8 +508,12 @@ def add_candidate_from_resume_file(
     if len(content) > 15 * 1024 * 1024:
         raise ValueError("Файл больше 15 МБ")
 
+    from app.services.resume_preview import PREVIEW_DEFAULT_NAME
+
     text = extract_text_from_bytes(name_hint, content)
-    cand_name = _name_from_filename(name_hint) or "Новый кандидат"
+    cand_name = _name_from_filename(name_hint) or (
+        PREVIEW_DEFAULT_NAME if for_resume_preview else "Новый кандидат"
+    )
     fields: dict[str, Any] = {
         "cold_screening": True,
         "resume_filename": name_hint,
@@ -527,8 +534,10 @@ def add_candidate_from_resume_file(
         cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields)
     else:
         reused = True
-        if cand_name and cand_name != "Новый кандидат" and (
-            not (cand.name or "").strip() or cand.name.startswith("Новый")
+        if cand_name and cand_name not in {"Новый кандидат", PREVIEW_DEFAULT_NAME} and (
+            not (cand.name or "").strip()
+            or cand.name.startswith("Новый")
+            or cand.name == PREVIEW_DEFAULT_NAME
         ):
             cand.name = cand_name
     payload = dict(cand.payload or {})

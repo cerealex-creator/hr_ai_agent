@@ -398,6 +398,21 @@ def patch_candidate_endpoint(
         data.pop("resume_preview_included", None)
         data.pop("resume_preview_visible", None)
     name = data.pop("name", None)
+    if "liked" in data:
+        from datetime import datetime, timezone
+
+        if data["liked"]:
+            data["liked_at"] = datetime.now(timezone.utc).astimezone().isoformat()
+        else:
+            data["liked_at"] = ""
+    if "talent_reserve" in data:
+        from datetime import datetime, timezone
+
+        if data["talent_reserve"]:
+            data["talent_reserve_at"] = datetime.now(timezone.utc).astimezone().isoformat()
+            data["talent_reserve_by"] = (
+                (user.email or user.full_name or "").strip() if user else ""
+            )
     from app.services.messaging.ops import refresh_candidate_telegram, snapshot_card_payload
 
     before = snapshot_card_payload(candidate)

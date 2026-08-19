@@ -82,4 +82,10 @@ def candidate_public_fields(payload: dict | None) -> dict[str, Any]:
         "photo_url": payload_get(p, "photo_url"),
         "gender": normalize_gender(payload_get(p, "gender", "sex")),
         "hh_resume_id": payload_get(p, "hh_resume_id"),
+        "liked": bool(p.get("liked")),
+        "liked_at": payload_get(p, "liked_at"),
+        "talent_reserve": bool(p.get("talent_reserve")),
+        "talent_reserve_at": payload_get(p, "talent_reserve_at"),
+        "talent_reserve_note": payload_get(p, "talent_reserve_note"),
+        "talent_reserve_by": payload_get(p, "talent_reserve_by"),
     }

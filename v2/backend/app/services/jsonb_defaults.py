@@ -54,6 +54,7 @@ def default_candidate_payload() -> dict[str, Any]:
         "resume_preview_included": False,
         "resume_preview_visible": True,
         "resume_preview_status": "",
+        "resume_preview_hr_comment": "",
         "hh_resume_id": "",
         "portfolio_link": "",
         "video_link": "",
@@ -119,6 +120,12 @@ def default_candidate_payload() -> dict[str, Any]:
         "hh_title_fit": None,
         "hh_office_fit": None,
         "hh_commute_ok": None,
+        "liked": False,
+        "liked_at": "",
+        "talent_reserve": False,
+        "talent_reserve_at": "",
+        "talent_reserve_note": "",
+        "talent_reserve_by": "",
     }
 
 

@@ -1091,6 +1091,50 @@ tr:last-child td {
   background: var(--accent-soft);
 }
 
+.cand-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  align-items: center;
+}
+
+.cand-like-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cand-like-btn:hover {
+  border-color: #e0607e;
+  color: #e0607e;
+}
+
+.cand-like-btn.is-liked {
+  border-color: #e0607e;
+  color: #e0607e;
+  background: #fdf0f3;
+}
+
+.rec-row-liked {
+  color: #e0607e;
+  flex-shrink: 0;
+}
+
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .cand-avatar {
   display: inline-flex;
   align-items: center;
@@ -3712,6 +3756,24 @@ button.hub-card {
   gap: 1rem;
 }
 
+.rp-add-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.rp-add-panel {
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--card) 92%, var(--line));
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
 .rp-hr-list {
   list-style: none;
   margin: 0.75rem 0 0;
@@ -3719,6 +3781,41 @@ button.hub-card {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+}
+
+.rp-hr-row-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.55rem 0 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.rp-hr-row-stack .rp-hr-row {
+  border-bottom: none;
+  padding: 0;
+}
+
+.rp-hr-comment {
+  margin: 0;
+}
+
+.rp-hr-comment textarea {
+  min-height: 3.2rem;
+  resize: vertical;
+}
+
+.rp-hr-note {
+  margin: 0;
+}
+
+.rp-hr-note-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .rp-hr-row {
@@ -3791,21 +3888,37 @@ button.hub-card {
 .rp-plus {
   margin: 0;
   padding-left: 1.1rem;
-  color: var(--ink);
+  color: var(--success);
   font-size: 0.92rem;
   line-height: 1.4;
+}
+
+.rp-plus li::marker {
+  color: var(--success);
 }
 
 .rp-minus {
   margin: 0;
   padding-left: 1.1rem;
-  color: var(--ink);
+  color: var(--danger);
   font-size: 0.92rem;
   line-height: 1.4;
 }
 
 .rp-minus li::marker {
-  color: color-mix(in srgb, var(--warn, #b45309) 85%, var(--ink));
+  color: var(--danger);
+}
+
+.rp-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.rp-ai-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
 }
 
 .rp-actions {

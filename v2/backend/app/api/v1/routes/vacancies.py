@@ -940,5 +940,6 @@ def vacancy_resume_preview_include(
         included=body.included,
         visible=body.visible,
         pdf_url=body.pdf_url,
+        hr_comment=body.hr_comment,
     )
 

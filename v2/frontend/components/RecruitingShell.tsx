@@ -13,6 +13,7 @@ import {
   Share2,
   User,
   Wrench,
+  Bookmark,
 } from "lucide-react";
 import { useAuth, useAuthLogout } from "@/components/AuthGate";
 import { JobsLiveBadge } from "@/components/JobsLive";
@@ -26,6 +27,7 @@ const PRIMARY_NAV = [
 ] as const;
 
 const EXTRA_NAV = [
+  { href: "/talent-reserve", label: "Кадровый резерв", icon: Bookmark, ownerOnly: false },
   { href: "/templates", label: "Шаблоны", icon: LayoutTemplate, ownerOnly: false },
   { href: "/settings/yandex-disk", label: "Импорт", icon: HardDriveDownload, ownerOnly: false },
   { href: "/jobs", label: "Задачи", icon: Wrench, ownerOnly: true },

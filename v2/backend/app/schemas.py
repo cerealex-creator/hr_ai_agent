@@ -217,6 +217,10 @@ class CandidateListItem(BaseModel):
     attention_reason: str | None = None
     photo_url: str | None = None
     gender: str | None = None
+    liked: bool = False
+    talent_reserve: bool = False
+    talent_reserve_at: str | None = None
+    ai_score: int | float | None = None
 
 
 class CandidateDetail(BaseModel):
@@ -264,6 +268,12 @@ class CandidateDetail(BaseModel):
     photo_url: str | None = None
     gender: str | None = None
     hh_resume_id: str | None = None
+    liked: bool = False
+    liked_at: str | None = None
+    talent_reserve: bool = False
+    talent_reserve_at: str | None = None
+    talent_reserve_note: str | None = None
+    talent_reserve_by: str | None = None
     payload: dict = Field(default_factory=dict)
 
 
@@ -291,6 +301,9 @@ class CandidatePatchIn(BaseModel):
     office_interview_time: str | None = None
     remote_interview: bool | None = None
     meeting_link: str | None = None
+    liked: bool | None = None
+    talent_reserve: bool | None = None
+    talent_reserve_note: str | None = None
 
 
 class CandidateStageIn(BaseModel):
@@ -795,6 +808,7 @@ class ResumePreviewIncludeIn(BaseModel):
     included: bool | None = None
     visible: bool | None = None
     pdf_url: str | None = None
+    hr_comment: str | None = None
 
 
 class BulkLinksOut(BaseModel):

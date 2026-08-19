@@ -276,6 +276,10 @@ export type CandidateListItem = {
   gender?: string | null;
   last_contact_at?: string | null;
   attention_reason?: string | null;
+  liked?: boolean;
+  talent_reserve?: boolean;
+  talent_reserve_at?: string | null;
+  ai_score?: number | null;
 };
 
 export type CandidateDetail = CandidateListItem & {
@@ -319,6 +323,12 @@ export type CandidateDetail = CandidateListItem & {
   photo_url: string | null;
   gender?: string | null;
   hh_resume_id?: string | null;
+  liked?: boolean;
+  liked_at?: string | null;
+  talent_reserve?: boolean;
+  talent_reserve_at?: string | null;
+  talent_reserve_note?: string | null;
+  talent_reserve_by?: string | null;
   payload: Record<string, unknown>;
 };
 
