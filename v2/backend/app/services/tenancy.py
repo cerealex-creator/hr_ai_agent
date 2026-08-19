@@ -53,6 +53,18 @@ def require_org_id() -> uuid.UUID:
     return require_current_user().org_id
 
 
+def current_org_integrations() -> dict:
+    """Return current org's integrations JSONB (features, tokens, etc.)."""
+    from app.db.session import SessionLocal
+    org_id = require_org_id()
+    db = SessionLocal()
+    try:
+        org = db.get(models.Organization, org_id)
+        return dict(org.integrations or {}) if org else {}
+    finally:
+        db.close()
+
+
 def org_client_ids(db: Session, org_id: uuid.UUID) -> set[int]:
     rows = db.scalars(
         select(models.Client.id).where(models.Client.organization_id == org_id)

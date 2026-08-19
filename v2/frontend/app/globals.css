@@ -5833,3 +5833,26 @@ button.hub-card {
   font-size: 0.8rem;
   width: 160px;
 }
+
+/* Talent pool */
+.pool-row {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.pool-row-name {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+.pool-row-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: var(--secondary);
+  flex-wrap: wrap;
+}
+.pool-row-tags {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}

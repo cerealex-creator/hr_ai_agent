@@ -28,6 +28,7 @@ const PRIMARY_NAV = [
 
 const EXTRA_NAV = [
   { href: "/talent-reserve", label: "Кадровый резерв", icon: Bookmark, ownerOnly: false },
+  { href: "/talent-pool", label: "Талант-база", icon: Bookmark, ownerOnly: true },
   { href: "/templates", label: "Шаблоны", icon: LayoutTemplate, ownerOnly: false },
   { href: "/settings/yandex-disk", label: "Импорт", icon: HardDriveDownload, ownerOnly: false },
   { href: "/jobs", label: "Задачи", icon: Wrench, ownerOnly: true },

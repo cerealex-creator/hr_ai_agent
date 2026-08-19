@@ -382,6 +382,21 @@ export type CandidateSegment = {
   created_at?: string;
 };
 
+export type TalentPoolEntry = {
+  id: string;
+  organization_id: string;
+  person_id?: string | null;
+  display_name: string;
+  match_phone?: string | null;
+  match_email?: string | null;
+  resume_year?: number | null;
+  source_filename?: string | null;
+  mime_type?: string | null;
+  tags: string[];
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+};
+
 export type FunnelStats = {
   vacancies_active: number;
   vacancies_archive: number;

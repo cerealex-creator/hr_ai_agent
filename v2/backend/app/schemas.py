@@ -1134,3 +1134,27 @@ class SegmentCopyIn(BaseModel):
     target_vacancy_id: int
     candidate_ids: list[UUID] | None = None
 
+
+# --- YAKOR PR3: talent pool ---
+
+
+class TalentPoolEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    person_id: UUID | None = None
+    display_name: str = ""
+    match_phone: str | None = None
+    match_email: str | None = None
+    resume_year: int | None = None
+    source_filename: str | None = None
+    mime_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    payload: dict = Field(default_factory=dict)
+    created_at: str | None = None
+
+
+class TalentPoolTakeIn(BaseModel):
+    vacancy_id: int
+

@@ -430,3 +430,53 @@ class CandidateSegment(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class TalentPoolEntry(Base):
+    """Resume in the talent pool — not tied to a vacancy, tied to a person."""
+
+    __tablename__ = "talent_pool_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("persons.id"), nullable=True
+    )
+    display_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    match_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    match_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    match_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    resume_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    s3_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    hh_revival: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ResumeArtifact(Base):
+    """Parsed resume artifact linked to a person (future use)."""
+
+    __tablename__ = "resume_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("persons.id"), nullable=False
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    s3_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    resume_link: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    resume_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resume_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

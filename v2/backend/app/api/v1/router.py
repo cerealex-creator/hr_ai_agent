@@ -16,6 +16,7 @@ from app.api.v1.routes import (
     resume_preview,
     settings,
     stats_history,
+    talent_pool,
     vacancies,
 )
 from app.core.auth import require_auth
@@ -42,5 +43,6 @@ protected.include_router(jobs.router)
 protected.include_router(messaging.router)
 protected.include_router(settings.router)
 protected.include_router(stats_history.router)
+protected.include_router(talent_pool.router)
 protected.include_router(vacancies.router)
 router.include_router(protected)

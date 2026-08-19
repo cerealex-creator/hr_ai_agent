@@ -3,6 +3,26 @@
 Журнал разработки для восстановления контекста между сессиями AI/разработчика.  
 Только факты: код, git, `data/`, `deploy/`.
 
+## 2026-08-19 — YAKOR PR3: talent pool tables + CRUD + UI
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `a5dcc48e3506`: таблицы `talent_pool_entries` и `resume_artifacts`.
+- Модели `TalentPoolEntry`, `ResumeArtifact` в `models.py`.
+- Сервис `talent_pool.py`: CRUD, `take_to_vacancy` (создание кандидата из записи пула).
+- Роуты `/talent-pool` (list, get, take) в `talent_pool.py`.
+- Схемы `TalentPoolEntryOut`, `TalentPoolTakeIn`.
+- Feature-flag `talent_pool` через `current_org_integrations()` в `tenancy.py`.
+- Фронтенд: страница `/talent-pool`, навигация, CSS, тип `TalentPoolEntry`.
+
+**Файлы:** `models.py`, `talent_pool.py` (service + routes), `schemas.py`, `tenancy.py`, `router.py`, `RecruitingShell.tsx`, `talent-pool/page.tsx`, `globals.css`, `api.ts`
+
+**Git:** ветка `feature/kaskad-yakor-assistent-efir`
+
+**Следующий шаг:**
+- Добавить импорт резюме (PDF/DOCX) и HH-поиск в талант-базу.
+
 ---
 
 ## 2026-08-19 — ЯКОРЬ PR2: аналитика стадий + теги + сегменты
