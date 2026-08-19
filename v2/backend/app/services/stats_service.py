@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.services.candidate_fields import normalize_gender, payload_get
+from app.services.hh_seen import REASON_AI_LOW, REASON_IN_FUNNEL, REASON_RECRUITER
 from app.services.vacancy_outcome import HIRE_STAGES, close_reason_from_payload, soft_vacancy_outcome
 
 CLIENT_ZONE_STAGES = (
