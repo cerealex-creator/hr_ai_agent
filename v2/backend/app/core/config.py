@@ -55,6 +55,10 @@ class Settings(BaseSettings):
 
     # Messaging Gateway (Telegram). Inbound off by default — do not steal polling from Streamlit.
     telegram_bot_token: str = ""
+    # Optional socks5/http proxy when api.telegram.org is blocked (see v1 TELEGRAM_PROXY).
+    telegram_proxy: str = ""
+    # Force Bot API IPv4 when DNS returns unreachable addresses (Timeweb and similar VPS).
+    telegram_api_ipv4: str = ""
     messaging_outbound_enabled: bool = True
     messaging_inbound_enabled: bool = False
     # Local/dev: long-poll getUpdates (python -m app.workers.telegram_poller). Off when using HTTPS webhook.

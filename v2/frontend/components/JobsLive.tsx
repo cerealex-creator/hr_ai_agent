@@ -71,6 +71,8 @@ export function JobsLiveProvider({ children }: { children: ReactNode }) {
     pathname?.startsWith("/login/") ||
     pathname === "/c" ||
     pathname?.startsWith("/c/") ||
+    pathname === "/m" ||
+    pathname?.startsWith("/m/") ||
     pathname === "/i" ||
     pathname?.startsWith("/i/");
 

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.demo import DEMO_ORG_SLUG, DEMO_SESSION_HOURS
 from app.db import models
 from app.db.session import get_db
 
@@ -31,6 +32,7 @@ PUBLIC_API_PATHS = frozenset(
     {
         "/api/v1/health",
         "/api/v1/auth/login",
+        "/api/v1/auth/demo",
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
     }
@@ -47,6 +49,7 @@ class AuthUser:
     auth_disabled: bool = False
     bitrix_responsible_id: str = ""
     org_name: str = ""
+    is_demo: bool = False
 
 
 def auth_is_disabled(settings: Settings | None = None) -> bool:
@@ -80,16 +83,19 @@ def create_access_token(
     org_id: uuid.UUID,
     roles: list[str],
     settings: Settings | None = None,
+    demo: bool = False,
 ) -> str:
     s = settings or get_settings()
     now = datetime.now(timezone.utc)
+    ttl_minutes = DEMO_SESSION_HOURS * 60 if demo else max(1, s.jwt_access_ttl_minutes)
     payload = {
         "typ": "access",
         "sub": str(user_id),
         "org_id": str(org_id),
         "roles": list(roles),
+        "demo": bool(demo),
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=max(1, s.jwt_access_ttl_minutes))).timestamp()),
+        "exp": int((now + timedelta(minutes=ttl_minutes)).timestamp()),
     }
     return jwt.encode(payload, s.jwt_secret, algorithm="HS256")
 
@@ -134,19 +140,22 @@ def set_auth_cookies(
     access_token: str,
     refresh_token: str,
     settings: Settings | None = None,
+    demo: bool = False,
 ) -> None:
     s = settings or get_settings()
     base = cookie_kwargs(s)
+    access_age = DEMO_SESSION_HOURS * 3600 if demo else max(60, s.jwt_access_ttl_minutes * 60)
+    refresh_age = DEMO_SESSION_HOURS * 3600 if demo else max(3600, s.jwt_refresh_ttl_days * 86400)
     response.set_cookie(
         ACCESS_COOKIE,
         access_token,
-        max_age=max(60, s.jwt_access_ttl_minutes * 60),
+        max_age=access_age,
         **base,
     )
     response.set_cookie(
         REFRESH_COOKIE,
         refresh_token,
-        max_age=max(3600, s.jwt_refresh_ttl_days * 86400),
+        max_age=refresh_age,
         **base,
     )
 
@@ -162,10 +171,12 @@ def issue_refresh_row(
     *,
     user_id: uuid.UUID,
     settings: Settings | None = None,
+    demo: bool = False,
 ) -> str:
     s = settings or get_settings()
     raw = create_refresh_token_value()
-    expires = datetime.now(timezone.utc) + timedelta(days=max(1, s.jwt_refresh_ttl_days))
+    ttl = timedelta(hours=DEMO_SESSION_HOURS) if demo else timedelta(days=max(1, s.jwt_refresh_ttl_days))
+    expires = datetime.now(timezone.utc) + ttl
     db.add(
         models.RefreshToken(
             user_id=user_id,
@@ -228,6 +239,13 @@ def auth_user_from_membership(user: models.User, member: models.OrganizationMemb
             org_name = str(org.name or "")
     except Exception:  # noqa: BLE001
         org_name = ""
+    is_demo = False
+    try:
+        org = getattr(member, "organization", None)
+        if org is not None:
+            is_demo = str(getattr(org, "slug", "") or "") == DEMO_ORG_SLUG
+    except Exception:  # noqa: BLE001
+        is_demo = False
     return AuthUser(
         id=user.id,
         email=user.email,
@@ -236,6 +254,7 @@ def auth_user_from_membership(user: models.User, member: models.OrganizationMemb
         roles=(member.role,),
         bitrix_responsible_id=str(getattr(user, "bitrix_responsible_id", None) or "").strip(),
         org_name=org_name,
+        is_demo=is_demo,
     )
 
 

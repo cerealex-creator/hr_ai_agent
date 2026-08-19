@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { InfoTip } from "@/components/InfoTip";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 type StageItem = {
   id: string;
@@ -22,6 +24,7 @@ type Schema = {
 type Props = { vacancyId: number };
 
 export function VacancyStageSchemaPanel({ vacancyId }: Props) {
+  const { isDemo } = useAuth();
   const [schema, setSchema] = useState<Schema | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -128,9 +131,10 @@ export function VacancyStageSchemaPanel({ vacancyId }: Props) {
       </ul>
 
       <div className="hh-footer-actions" style={{ justifyContent: "flex-start" }}>
-        <button type="button" className="chip chip-active" disabled={busy} onClick={save}>
+        <button type="button" className="chip chip-active" disabled={busy || isDemo} onClick={save}>
           Сохранить схему
         </button>
+        {isDemo ? <p className="muted hh-micro">{DEMO_WRITE_HINT}</p> : null}
       </div>
     </div>
   );

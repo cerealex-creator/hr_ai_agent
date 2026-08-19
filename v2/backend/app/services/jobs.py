@@ -261,6 +261,76 @@ def find_active_job_for_candidate(
     return None
 
 
+async def enqueue_candidate_resume_evals(
+    db: Session,
+    candidate_ids: list[str],
+    *,
+    skip_questionnaire: bool = False,
+    pool=None,
+    raise_on_pool_error: bool = True,
+) -> list[str]:
+    """Create candidate_evaluate_resume jobs and put them on the ARQ queue."""
+    from uuid import UUID
+
+    job_ids: list[str] = []
+    if not candidate_ids:
+        return job_ids
+    if pool is None:
+        try:
+            from app.workers.redis_pool import get_arq_pool
+
+            pool = await get_arq_pool()
+        except Exception:
+            if raise_on_pool_error:
+                raise
+            return job_ids
+
+    for raw_id in candidate_ids:
+        try:
+            cid = UUID(str(raw_id))
+        except ValueError:
+            continue
+        cand = db.get(models.Candidate, cid)
+        if not cand:
+            continue
+        existing = find_active_job_for_candidate(
+            db,
+            job_type="candidate_evaluate_resume",
+            candidate_id=str(cand.id),
+        )
+        if existing:
+            job_ids.append(str(existing.id))
+            continue
+        payload: dict[str, str | bool] = {
+            "candidate_id": str(cand.id),
+            "candidate_name": cand.name,
+        }
+        if skip_questionnaire:
+            payload["skip_questionnaire"] = True
+        job = create_job_row(
+            db,
+            job_type="candidate_evaluate_resume",
+            vacancy_id=cand.vacancy_id,
+            payload=payload,
+        )
+        try:
+            await pool.enqueue_job(
+                "candidate_evaluate_resume", str(job.id), _job_id=str(job.id)
+            )
+            job_ids.append(str(job.id))
+        except Exception as exc:  # noqa: BLE001
+            update_job(
+                db,
+                job.id,
+                status="failed",
+                progress_label="Не удалось поставить в очередь",
+                error=str(exc),
+            )
+            if raise_on_pool_error:
+                raise
+    return job_ids
+
+
 def find_active_job_for_vacancy(
     db: Session,
     *,

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { InfoTip } from "@/components/InfoTip";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 export type CandidateIntakeFlags = {
   manual?: boolean;
@@ -19,6 +20,7 @@ type Props = {
 type Tab = "manual" | "links" | "file";
 
 export function AddCandidateForm({ vacancyId, intake }: Props) {
+  const { isDemo, isOwner } = useAuth();
   const router = useRouter();
   const showManual = intake?.manual !== false;
   const showFile = intake?.file_upload !== false;
@@ -34,6 +36,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
   const [linksText, setLinksText] = useState("");
   const [evaluate, setEvaluate] = useState(true);
   const [file, setFile] = useState<File | null>(null);
+  const [forPreview, setForPreview] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -47,6 +50,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
     setLinksText("");
     setFile(null);
     setEvaluate(true);
+    setForPreview(false);
     setErr(null);
     setMsg(null);
     setLog([]);
@@ -92,7 +96,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
       const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/candidates/bulk-links`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: linksText, evaluate }),
+        body: JSON.stringify({ text: linksText, evaluate, for_resume_preview: Boolean(isOwner && forPreview) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -106,7 +110,11 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
           `Добавлено: ${data.created || 0}. Оценка ИИ запущена в фоне (смотрите значок задач).`,
         );
       }
+      const id = data.candidate_id || (data.candidate_ids && data.candidate_ids[0]);
       router.refresh();
+      if (id && !forPreview) {
+        router.push(`/candidates/${id}`);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -127,6 +135,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
       const body = new FormData();
       body.append("file", file);
       body.append("evaluate", evaluate ? "true" : "false");
+      body.append("for_resume_preview", isOwner && forPreview ? "true" : "false");
       const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/candidates/from-file`, {
         method: "POST",
         body,
@@ -140,7 +149,7 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
       setFile(null);
       const id = data.candidate_id || (data.candidate_ids && data.candidate_ids[0]);
       router.refresh();
-      if (id) {
+      if (id && !forPreview) {
         router.push(`/candidates/${id}`);
       }
     } catch (e) {
@@ -149,6 +158,10 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
       setBusy(false);
     }
   };
+
+  if (isDemo) {
+    return null;
+  }
 
   if (!showManual && !showFile && !showLinks) {
     return null;
@@ -269,6 +282,18 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
             Сразу оценить по резюме
             <InfoTip text="Дольше: после добавления ИИ выставит оценку соответствия вакансии." />
           </label>
+          {isOwner ? (
+          <label className="hh-check">
+            <input
+              type="checkbox"
+              checked={forPreview}
+              onChange={(e) => setForPreview(e.target.checked)}
+              disabled={busy}
+            />
+            Это макеты для заказчика (PDF без контактов)
+            <InfoTip text="Карточки попадут в отдельную зону макетов. Заказчик увидит фото, плюсы ИИ и кнопку открыть PDF." />
+          </label>
+          ) : null}
           <div className="hh-row-actions" style={{ justifyContent: "flex-start" }}>
             <button
               type="button"
@@ -310,6 +335,18 @@ export function AddCandidateForm({ vacancyId, intake }: Props) {
             Сразу оценить по резюме
             <InfoTip text="После создания карточки ИИ оценит резюме относительно этой вакансии." />
           </label>
+          {isOwner ? (
+          <label className="hh-check">
+            <input
+              type="checkbox"
+              checked={forPreview}
+              onChange={(e) => setForPreview(e.target.checked)}
+              disabled={busy}
+            />
+            Это макет для заказчика (PDF без контактов)
+            <InfoTip text="Карточка попадёт в зону макетов. Для кнопки «Посмотреть резюме» всё равно нужна публичная ссылка Я.Диска." />
+          </label>
+          ) : null}
           <div className="hh-row-actions" style={{ justifyContent: "flex-start" }}>
             <button
               type="button"

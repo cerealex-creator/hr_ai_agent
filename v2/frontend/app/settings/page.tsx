@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RecruitingShell } from "@/components/RecruitingShell";
 import { useAuth } from "@/components/AuthGate";
+import { useUiPrefs } from "@/components/UiPrefsProvider";
 import { apiFetch } from "@/lib/api";
 import { companyModeLabel, type CompanyNode } from "@/lib/companies";
-import { useUiPrefs } from "@/components/UiPrefsProvider";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 type HubCard = {
   href: string;
@@ -50,7 +51,8 @@ function diskStatusLabel(sync: boolean, inbox: boolean): string {
 
 export default function SettingsHubPage() {
   const { theme, fontScale } = useUiPrefs();
-  const { isOwner } = useAuth();
+  const { isOwner, isDemo } = useAuth();
+  const [demoHint, setDemoHint] = useState<string | null>(null);
   const [botHint, setBotHint] = useState<string>("…");
   const [warrantyHint, setWarrantyHint] = useState<string>("…");
   const [intake, setIntake] = useState<IntakeFlags>({
@@ -96,6 +98,35 @@ export default function SettingsHubPage() {
         ]);
         if (cancelled) return;
         const items = (companies.items || []) as CompanyNode[];
+        if (isDemo) {
+          setBotHint("демо");
+          setWarrantyHint("демо");
+          setIntake({
+            file_link: true,
+            disk_public_sync: true,
+            disk_inbox: false,
+          });
+          setInteraction({
+            bitrixOn: false,
+            bitrixLabel: "демо",
+            telegramOn: false,
+            telegramLabel: "демо",
+            companiesLabel: items.length
+              ? `${items.length} · ${items.map((c) => c.name).slice(0, 2).join(", ")}${
+                  items.length > 2 ? "…" : ""
+                }`
+              : "пока нет",
+          });
+          setNotifications({
+            calendarOn: false,
+            calendarLabel: "демо",
+            zoomOn: false,
+            zoomLabel: "демо",
+            telegramOn: false,
+            telegramLabel: "демо",
+          });
+          return;
+        }
         setBotHint(
           status.bot_ok
             ? `@${status.bot?.username || "bot"} · ${status.inbound_enabled ? "inbound on" : "inbound off"}`
@@ -165,7 +196,7 @@ export default function SettingsHubPage() {
     return () => {
       cancelled = true;
     };
-  }, [isOwner]);
+    }, [isOwner, isDemo]);
 
   const themeLabel =
     theme === "dark"
@@ -249,13 +280,17 @@ export default function SettingsHubPage() {
   return (
     <RecruitingShell activePath="/settings" title="Настройки">
       <p className="muted" style={{ marginTop: 0 }}>
-        Выберите раздел. Детали открываются на отдельных страницах.
+        {isDemo
+          ? "В демо видно состав разделов. Открыть настройку внутри нельзя."
+          : "Выберите раздел. Детали открываются на отдельных страницах."}
       </p>
+      {demoHint ? <p className="warn cz-banner">{demoHint}</p> : null}
       <div className="hub-grid settings-hub rec-settings-hub">
-        {visible.map((card) => (
-          <Link key={card.href} href={card.href} className="hub-card rec-settings-card">
-            <h2>{card.title}</h2>
-            {card.special === "candidate-intake" ? (
+        {visible.map((card) => {
+          const inner = (
+            <>
+              <h2>{card.title}</h2>
+              {card.special === "candidate-intake" ? (
               <ul className="hub-intake-list">
                 <li>
                   <span>Вручную</span>
@@ -343,8 +378,26 @@ export default function SettingsHubPage() {
                 {card.hint ? <p className="hub-card-hint">{card.hint}</p> : null}
               </>
             )}
-          </Link>
-        ))}
+            </>
+          );
+          if (isDemo) {
+            return (
+              <button
+                key={card.href}
+                type="button"
+                className="hub-card rec-settings-card"
+                onClick={() => setDemoHint(DEMO_WRITE_HINT)}
+              >
+                {inner}
+              </button>
+            );
+          }
+          return (
+            <Link key={card.href} href={card.href} className="hub-card rec-settings-card">
+              {inner}
+            </Link>
+          );
+        })}
       </div>
     </RecruitingShell>
   );

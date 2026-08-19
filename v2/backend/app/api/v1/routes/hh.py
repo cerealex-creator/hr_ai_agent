@@ -134,13 +134,16 @@ def vacancy_hh_search_defaults(vacancy_id: int, db: Session = Depends(get_db)) -
     from sqlalchemy.orm.attributes import flag_modified
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
-    if mark_plan_stale_if_needed(vacancy):
+    from app.services.tenancy import is_demo_user
+
+    demo = is_demo_user()
+    if not demo and mark_plan_stale_if_needed(vacancy):
         db.commit()
         db.refresh(vacancy)
     criteria = criteria_from_vacancy_documents(vacancy.documents, title=vacancy.title)
     preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
     # Persist migration so UI and worker share one SoT
-    if not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
+    if not demo and not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
         vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
         flag_modified(vacancy, "documents")
         db.add(vacancy)
@@ -174,7 +177,9 @@ def get_hh_preset(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
     preset = preset_from_vacancy_documents(vacancy.documents, title=vacancy.title)
-    if not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
+    from app.services.tenancy import is_demo_user
+
+    if not is_demo_user() and not isinstance((vacancy.documents or {}).get("hh_preset"), dict):
         vacancy.documents = save_preset_to_documents(vacancy.documents, preset)
         flag_modified(vacancy, "documents")
         db.add(vacancy)
@@ -227,7 +232,9 @@ def get_hh_search_plan(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
     from app.services.hh_search_plan import get_plan_from_vacancy, mark_plan_stale_if_needed
 
     vacancy = get_vacancy_or_404(db, vacancy_id)
-    if mark_plan_stale_if_needed(vacancy):
+    from app.services.tenancy import is_demo_user
+
+    if not is_demo_user() and mark_plan_stale_if_needed(vacancy):
         db.commit()
         db.refresh(vacancy)
     return {"vacancy_id": vacancy.id, "plan": get_plan_from_vacancy(vacancy)}

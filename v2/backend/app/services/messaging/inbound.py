@@ -379,8 +379,42 @@ def refresh_card_message(
         return False, "channel missing"
     layout = str((post.payload or {}).get("card_layout") or "").strip()
     if layout == "minimal":
-        # Experiment: do not rewrite short Telegram cards (status lives in client zone).
-        return True, "minimal"
+        from app.services.candidate_fields import candidate_public_fields
+        from app.services.client_zone import (
+            client_zone_candidate_public_url,
+            ensure_zone_token_for_vacancy,
+        )
+        from app.services.messaging.card_html import build_candidate_card_html_minimal
+        from app.services.messaging.keyboards import build_view_candidate_keyboard
+
+        vacancy = db.get(models.Vacancy, candidate.vacancy_id)
+        fields = candidate_public_fields(candidate.payload)
+        view = candidate_view_dict(candidate)
+        text = build_candidate_card_html_minimal(
+            name=candidate.name,
+            vacancy_title=(vacancy.title if vacancy else "") or "",
+            resume_link=fields.get("resume_link"),
+            hh_resume_link=fields.get("hh_resume_link"),
+            status_key=candidate.client_status,
+            client_comment=view.get("client_comment"),
+            office_interview_date=view.get("office_interview_date"),
+            office_interview_time=view.get("office_interview_time"),
+            remote_interview=bool(view.get("remote_interview")),
+            office_interview=bool(view.get("office_interview")),
+        )
+        zone_url = ""
+        if vacancy:
+            zone_token = ensure_zone_token_for_vacancy(db, vacancy)
+            if zone_token:
+                zone_url = client_zone_candidate_public_url(zone_token, candidate.id)
+        kb = build_view_candidate_keyboard(zone_url)
+        ok, msg = edit_html_message(
+            ch.external_id, post.external_message_id, text, reply_markup=kb
+        )
+        if ok:
+            post.text_snapshot = text
+            flag_modified(post, "payload")
+        return ok, msg
     locked = mode not in ("initial", "change") and (candidate.client_status or "wait") not in (
         "",
         "wait",

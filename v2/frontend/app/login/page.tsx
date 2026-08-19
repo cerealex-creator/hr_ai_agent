@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
-import { authLogin } from "@/lib/api";
+import { authDemo, authLogin } from "@/lib/api";
 
 function LoginForm() {
   const router = useRouter();
@@ -63,6 +63,23 @@ function LoginForm() {
         {error ? <p className="form-error">{error}</p> : null}
         <button type="submit" className="chip chip-active login-submit" disabled={busy}>
           {busy ? "Вход…" : "Войти"}
+        </button>
+        <button
+          type="button"
+          className="chip login-demo"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setError(null);
+            void authDemo()
+              .then(() => router.replace("/"))
+              .catch((err) => {
+                setError(err instanceof Error ? err.message : "Не удалось открыть демо");
+                setBusy(false);
+              });
+          }}
+        >
+          {busy ? "Открываем…" : "Посмотреть демо без регистрации"}
         </button>
       </form>
     </div>

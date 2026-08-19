@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 /** Страницы без входа: хаб модулей, вход, клиентские ссылки, превью дизайна. */
 const PUBLIC_PATHS = new Set(["/", "/login"]);
-const PUBLIC_PREFIXES = ["/login/", "/c/", "/i/", "/design-preview"];
+const PUBLIC_PREFIXES = ["/login/", "/c/", "/i/", "/m/", "/design-preview"];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;
@@ -22,7 +22,12 @@ export function middleware(req: NextRequest) {
 
   const host = req.headers.get("host") || req.nextUrl.host;
   const proto = req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "");
-  return NextResponse.redirect(new URL(`${proto}://${host}/login`));
+  const login = new URL(`${proto}://${host}/login`);
+  const next = `${pathname}${req.nextUrl.search || ""}`;
+  if (next && next !== "/" && !next.startsWith("/login")) {
+    login.searchParams.set("next", next);
+  }
+  return NextResponse.redirect(login);
 }
 
 export const config = {

@@ -9,6 +9,13 @@ export const CZ_STATUS_LABELS: Record<string, string> = {
   started: "Вышел",
 };
 
+/** Same keys as backend ZONE_DECISION_ROLES */
+export const CZ_DECISION_ROLES = [
+  { id: "unit_head", label: "Руководитель подразделения" },
+  { id: "director", label: "Директор" },
+  { id: "owner", label: "Собственник" },
+] as const;
+
 export type ZoneDigest = {
   summary: string;
   qa: { q: string; a: string }[];
@@ -19,6 +26,8 @@ export type ZoneCandidateListItem = {
   name: string;
   vacancy_title: string;
   client_name: string | null;
+  company_name?: string | null;
+  department_name?: string | null;
   client_status: string;
   ai_score: number | null;
   ai_comment: string | null;
@@ -29,6 +38,8 @@ export type ZoneCandidateListItem = {
   has_resume?: boolean;
   has_video?: boolean;
   has_digest?: boolean;
+  photo_url?: string | null;
+  gender?: string | null;
 };
 
 export type ZoneCandidateDetail = ZoneCandidateListItem & {
@@ -42,14 +53,27 @@ export type ZoneCandidateDetail = ZoneCandidateListItem & {
 };
 
 export type ZoneListData = {
-  company: { id: number; name: string };
+  company: { id: number; name: string; department_name?: string | null };
   candidates: ZoneCandidateListItem[];
+  demo?: boolean;
 };
 
 export type ZoneDetailData = {
-  company: { id: number; name: string };
+  company: { id: number; name: string; department_name?: string | null };
   candidate: ZoneCandidateDetail;
+  demo?: boolean;
 };
+
+export function zonePlaceLabel(c: {
+  company_name?: string | null;
+  department_name?: string | null;
+  client_name?: string | null;
+}): string {
+  const company = (c.company_name || "").trim();
+  const dept = (c.department_name || "").trim() || (c.client_name || "").trim();
+  if (company && dept && company !== dept) return `${company} · ${dept}`;
+  return company || dept;
+}
 
 export async function zoneFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${getApiBase()}${path}`, {

@@ -217,6 +217,10 @@ class CandidateListItem(BaseModel):
     attention_reason: str | None = None
     photo_url: str | None = None
     gender: str | None = None
+    liked: bool = False
+    talent_reserve: bool = False
+    talent_reserve_at: str | None = None
+    ai_score: int | float | None = None
 
 
 class CandidateDetail(BaseModel):
@@ -264,6 +268,12 @@ class CandidateDetail(BaseModel):
     photo_url: str | None = None
     gender: str | None = None
     hh_resume_id: str | None = None
+    liked: bool = False
+    liked_at: str | None = None
+    talent_reserve: bool = False
+    talent_reserve_at: str | None = None
+    talent_reserve_note: str | None = None
+    talent_reserve_by: str | None = None
     payload: dict = Field(default_factory=dict)
 
 
@@ -277,6 +287,9 @@ class CandidatePatchIn(BaseModel):
     salary_expected: str | None = None
     resume_link: str | None = None
     hh_resume_link: str | None = None
+    anonymized_resume_link: str | None = None
+    resume_preview_included: bool | None = None
+    resume_preview_visible: bool | None = None
     portfolio_link: str | None = None
     video_link: str | None = None
     task_link: str | None = None
@@ -288,6 +301,9 @@ class CandidatePatchIn(BaseModel):
     office_interview_time: str | None = None
     remote_interview: bool | None = None
     meeting_link: str | None = None
+    liked: bool | None = None
+    talent_reserve: bool | None = None
+    talent_reserve_note: str | None = None
 
 
 class CandidateStageIn(BaseModel):
@@ -763,6 +779,8 @@ class YandexDiskSyncOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
     changed: bool = False
     last_sync_at: str | None = None
+    evaluate_candidate_ids: list[str] = Field(default_factory=list)
+    evaluate_job_ids: list[str] = Field(default_factory=list)
 
 
 class CandidateEvaluateOut(BaseModel):
@@ -783,6 +801,14 @@ class BulkLinksIn(BaseModel):
     links: list[str] = Field(default_factory=list)
     text: str | None = None  # newline-separated alternative to links[]
     evaluate: bool = False
+    for_resume_preview: bool = False
+
+
+class ResumePreviewIncludeIn(BaseModel):
+    included: bool | None = None
+    visible: bool | None = None
+    pdf_url: str | None = None
+    hr_comment: str | None = None
 
 
 class BulkLinksOut(BaseModel):
@@ -974,6 +1000,7 @@ class AuthMeOut(BaseModel):
     auth_disabled: bool = False
     bitrix_responsible_id: str = ""
     telegram_available: bool = True
+    is_demo: bool = False
 
 
 class AuthOkOut(BaseModel):

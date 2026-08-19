@@ -10,9 +10,11 @@ import { VacancyDigestButton } from "@/components/VacancyDigestButton";
 import { VacancyCloseButton } from "@/components/VacancyCloseButton";
 import { VacancyLifecycle } from "@/components/VacancyLifecycle";
 import { VacancySettingsPanel } from "@/components/VacancySettingsPanel";
+import { ResumePreviewPanel } from "@/components/ResumePreviewPanel";
 import { VacancyAvatar } from "@/components/VacancyAvatar";
 import {
   apiGet,
+  authMe,
   docLabel,
   outcomeLabel,
   type CandidateListItem,
@@ -34,11 +36,15 @@ type YandexDiskConfig = {
   seen_count: number;
 };
 
-type VacView = "candidates" | "docs" | "hh" | "disk" | "settings";
+type VacView = "candidates" | "docs" | "hh" | "disk" | "settings" | "resume-preview";
 
 export default async function VacancyPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { section, candidate } = await searchParams;
+  const viewer = await authMe().catch(() => null);
+  const canUseResumePreview = Boolean(
+    viewer && (viewer.auth_disabled || (viewer.roles || []).includes("platform_owner")),
+  );
 
   let hhSearchEnabled = true;
   let intake = {
@@ -83,9 +89,14 @@ export default async function VacancyPage({ params, searchParams }: Props) {
           ? "disk"
           : section === "settings"
             ? "settings"
+            : section === "resume-preview"
+              ? "resume-preview"
             : "candidates";
   let view: VacView = viewFromSection === "hh" && !hhSearchEnabled ? "candidates" : viewFromSection;
   if (view === "disk" && !intake.disk_public_sync) {
+    view = "candidates";
+  }
+  if (view === "resume-preview" && !canUseResumePreview) {
     view = "candidates";
   }
 
@@ -93,6 +104,7 @@ export default async function VacancyPage({ params, searchParams }: Props) {
   let candidates: CandidateListItem[] = [];
   let diskConfig: YandexDiskConfig | null = null;
   let error: string | null = null;
+  let previewCount = 0;
 
   try {
     vacancy = await apiGet<VacancyDetail>(`/api/v1/vacancies/${id}`);
@@ -112,6 +124,16 @@ export default async function VacancyPage({ params, searchParams }: Props) {
         last_sync_at: null,
         seen_count: 0,
       };
+    }
+  }
+  if (vacancy && canUseResumePreview) {
+    try {
+      const pack = await apiGet<{ included_count?: number }>(
+        `/api/v1/vacancies/${id}/resume-preview`,
+      );
+      previewCount = Number(pack.included_count) || 0;
+    } catch {
+      previewCount = 0;
     }
   }
 
@@ -232,25 +254,38 @@ export default async function VacancyPage({ params, searchParams }: Props) {
             >
               Настройки
             </Link>
+            {canUseResumePreview ? (
+              <Link
+                href={`/vacancies/${id}?section=resume-preview`}
+                className={`cand-tab${view === "resume-preview" ? " is-active" : ""}`}
+                role="tab"
+                aria-selected={view === "resume-preview"}
+              >
+                Макеты резюме
+                <span className="tab-count">{previewCount}</span>
+              </Link>
+            ) : null}
           </nav>
 
           {view === "candidates" ? (
-            <div className="rec-card">
-              <AddCandidateForm vacancyId={vacancy.id} intake={intake} />
-              {candidates.length ? (
-                <div className="vac-cand-list">
-                  {candidates.map((c) => (
-                    <CandidateCompactRow
-                      key={c.id}
-                      candidate={c}
-                      subtitle={[c.city, c.phone].filter(Boolean).join(" · ") || "—"}
-                      compact
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="rec-empty">Нет кандидатов по этой вакансии</p>
-              )}
+            <div className="vac-cand-stack">
+              <div className="rec-card">
+                <AddCandidateForm vacancyId={vacancy.id} intake={intake} />
+                {candidates.length ? (
+                  <div className="vac-cand-list">
+                    {candidates.map((c) => (
+                      <CandidateCompactRow
+                        key={c.id}
+                        candidate={c}
+                        subtitle={[c.city, c.phone].filter(Boolean).join(" · ") || "—"}
+                        compact
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rec-empty">Нет кандидатов по этой вакансии</p>
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -295,6 +330,13 @@ export default async function VacancyPage({ params, searchParams }: Props) {
               <VacancySettingsPanel vacancy={vacancy} />
               <VacancyLifecycle vacancy={vacancy} />
             </div>
+          ) : null}
+
+          {view === "resume-preview" && canUseResumePreview ? (
+            <ResumePreviewPanel
+              vacancyId={vacancy.id}
+              hasChatId={Boolean((vacancy.chat_id || "").trim())}
+            />
           ) : null}
         </>
       ) : null}

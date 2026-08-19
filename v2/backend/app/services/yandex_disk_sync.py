@@ -69,6 +69,7 @@ class YandexSyncResult:
     skipped: int = 0
     messages: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    evaluate_candidate_ids: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +79,7 @@ class YandexSyncResult:
             "messages": self.messages[:40],
             "errors": self.errors[:20],
             "changed": self.created > 0 or self.updated > 0,
+            "evaluate_candidate_ids": list(self.evaluate_candidate_ids),
         }
 
 
@@ -173,6 +175,23 @@ def _name_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def person_name_in_text(name: str, text: str) -> bool:
+    """True if candidate ФИО looks present in resume text (for de-dupe)."""
+    cand_name = _normalize_name(name)
+    hay = _normalize_name((text or "")[:8000])
+    if cand_name and len(cand_name) >= 5 and cand_name in hay:
+        return True
+    tokens = _name_tokens(name)
+    if not tokens:
+        return False
+    surname = tokens[0]
+    if len(surname) < 3 or surname not in hay:
+        return False
+    if len(tokens) == 1:
+        return True
+    return any(len(t) >= 3 and t in hay for t in tokens[1:])
+
+
 def file_matches_candidate(filename: str, candidate_name: str) -> bool:
     stem = _normalize_name(_filename_stem(filename))
     file_tokens = _name_tokens(_filename_stem(filename))
@@ -238,6 +257,15 @@ def _payload_set(cand: models.Candidate, key: str, value: str) -> None:
     payload[key] = value
     cand.payload = payload
     flag_modified(cand, "payload")
+
+
+def _queue_resume_eval(result: YandexSyncResult, cand: models.Candidate) -> None:
+    cid = str(cand.id)
+    if cid in result.evaluate_candidate_ids:
+        return
+    if (cand.payload or {}).get("ai_score") is not None:
+        return
+    result.evaluate_candidate_ids.append(cid)
 
 
 def _normalize_disk_path(path: str) -> str:
@@ -379,7 +407,13 @@ def _ingest_resume(
     for existing in candidates:
         if _payload_get(existing, "resume_link") == link:
             if file_matches_candidate(name, existing.name or ""):
-                result.skipped += 1
+                if (existing.payload or {}).get("ai_score") is None:
+                    _queue_resume_eval(result, existing)
+                    result.messages.append(
+                        f"Оценка резюме в очереди: {existing.name or name}"
+                    )
+                else:
+                    result.skipped += 1
                 return True
             _payload_set(existing, "resume_link", "")
 
@@ -388,12 +422,15 @@ def _ingest_resume(
         cand = None
 
     if cand:
-        if _payload_get(cand, "resume_link") == link:
+        if _payload_get(cand, "resume_link") != link:
+            _payload_set(cand, "resume_link", link)
+            result.updated += 1
+            result.messages.append(f"Резюме → {cand.name or name}")
+        else:
             result.skipped += 1
-            return True
-        _payload_set(cand, "resume_link", link)
-        result.updated += 1
-        result.messages.append(f"Резюме → {cand.name or name}")
+        if (cand.payload or {}).get("ai_score") is None:
+            _queue_resume_eval(result, cand)
+            result.messages.append(f"Оценка резюме в очереди: {cand.name or name}")
         return True
 
     if not ingest_new:
@@ -415,7 +452,8 @@ def _ingest_resume(
     db.commit()
     candidates.append(created)
     result.created += 1
-    result.messages.append(f"Новый кандидат из {name}")
+    _queue_resume_eval(result, created)
+    result.messages.append(f"Новый кандидат из {name} — оценка в очереди")
     return True
 
 

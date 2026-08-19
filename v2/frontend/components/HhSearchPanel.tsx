@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 import { HhManualEvalBlock } from "@/components/HhManualEvalBlock";
 import { HhPresetBlock, type HhPreset } from "@/components/HhPresetBlock";
 import { HhSearchPlanBlock, type SearchPlan } from "@/components/HhSearchPlanBlock";
@@ -272,6 +274,7 @@ function buildWarnings(c: Criteria): Warning[] {
 }
 
 export function HhSearchPanel({ vacancyId }: Props) {
+  const { isDemo } = useAuth();
   const [criteria, setCriteria] = useState<Criteria | null>(null);
   const [scheduleOptions, setScheduleOptions] = useState<{ id: string; label: string }[]>([]);
   const [areaPresets, setAreaPresets] = useState<{ id: number; name: string }[]>([]);
@@ -728,6 +731,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
 
   return (
     <div className="hh-panel">
+      {isDemo ? <p className="warn cz-banner">{DEMO_WRITE_HINT}</p> : null}
       <div className="hh-status">
         <span className="muted">
           {HH_ADVANCED_UI
@@ -1357,7 +1361,7 @@ export function HhSearchPanel({ vacancyId }: Props) {
                       <button
                         type="button"
                         className="chip chip-active"
-                        disabled={toFunnelBusy === s.id}
+                        disabled={isDemo || toFunnelBusy === s.id}
                         onClick={() => toFunnel(s)}
                       >
                         {toFunnelBusy === s.id ? "…" : "В воронку"}
@@ -1430,7 +1434,8 @@ export function HhSearchPanel({ vacancyId }: Props) {
             <button
               type="button"
               className="chip chip-active"
-              disabled={busy || prefilling}
+              disabled={busy || prefilling || isDemo}
+              title={isDemo ? DEMO_WRITE_HINT : undefined}
               onClick={() => {
                 void onStart();
               }}

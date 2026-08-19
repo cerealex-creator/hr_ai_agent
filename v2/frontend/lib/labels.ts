@@ -14,11 +14,12 @@ export const HR_STAGE_LABELS: Record<string, string> = {
   internship: "Выход на стажировку",
   started_work: "Вышел на работу",
   rejected: "Отказ",
+  /* NOTE: order of keys here is display-only; real order is HR_FUNNEL_STAGES */
   archived: "Архив",
   rejected_candidate: "Отказ кандидата",
   rejected_client: "Отказ заказчика",
   rejected_hr: "Отказ мой",
-  rejected_vacancy_closed: "Отказ: вакансия закрыта",
+  rejected_vacancy_closed: "Отказ в связи с закрытием вакансии",
 };
 
 /** Positive funnel for stage progress UI (excludes rejects / archive). */
@@ -28,11 +29,11 @@ export const HR_FUNNEL_STAGES = [
   "no_response_3d",
   "interview_scheduled",
   "interview_done",
-  "offer",
   "test_task",
   "client_review",
   "client_pause",
   "client_meeting",
+  "offer",
   "internship",
   "started_work",
 ] as const;

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.db.session import SessionLocal
 from app.db import models
-from app.services.pdf_extract import download_url_bytes
+from app.services.pdf_extract import download_resume_bytes
 from app.services.candidate_photo import try_attach_candidate_photo
 
 
@@ -34,8 +34,8 @@ def main():
 
             print(f"[{i}/{total}] {cand.name or cand.id} — downloading...", end=" ", flush=True)
             try:
-                blob = download_url_bytes(resume_link)
-                if not blob or not blob.lstrip().startswith(b"%PDF"):
+                blob, err = download_resume_bytes(resume_link)
+                if err or not blob or not blob.lstrip().startswith(b"%PDF"):
                     print("not a PDF, skip")
                     skipped += 1
                     continue

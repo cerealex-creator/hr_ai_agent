@@ -16,20 +16,9 @@ type Props = {
   showEmpty?: boolean;
   /** Extra UI above content (AI generate controls etc.) */
   actions?: ReactNode;
-  /** Hide title/mode chrome — only body (when wrapped externally) */
+  /** Hide title chrome — only body (when wrapped externally) */
   hideChrome?: boolean;
 };
-
-function tryParseJson(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
-}
 
 function isReqItem(item: unknown): item is Record<string, unknown> {
   return !!item && typeof item === "object" && !Array.isArray(item);
@@ -146,19 +135,8 @@ export function DocumentBlock({
   actions,
   hideChrome = false,
 }: Props) {
-  const [mode, setMode] = useState<"readable" | "json">("readable");
   const [open, setOpen] = useState(defaultOpen);
   const normalized = useMemo(() => normalizeDocumentValue(docKey, value), [docKey, value]);
-  const raw = useMemo(() => {
-    if (typeof value === "string") {
-      const parsed = tryParseJson(value);
-      if (typeof parsed !== "string") {
-        return JSON.stringify(parsed, null, 2);
-      }
-      return value;
-    }
-    return JSON.stringify(value ?? null, null, 2);
-  }, [value]);
 
   const empty =
     value == null ||
@@ -171,43 +149,10 @@ export function DocumentBlock({
 
   if (empty && !showEmpty && !collapsible) return null;
 
-  const headControls = !empty ? (
-    <div className="doc-mode" role="group" aria-label="Формат документа">
-      <button
-        type="button"
-        className={mode === "readable" ? "doc-mode-btn doc-mode-active" : "doc-mode-btn"}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setMode("readable");
-        }}
-      >
-        Читаемый
-      </button>
-      <button
-        type="button"
-        className={mode === "json" ? "doc-mode-btn doc-mode-active" : "doc-mode-btn"}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setMode("json");
-        }}
-      >
-        JSON
-      </button>
-    </div>
-  ) : null;
-
   const body = (
     <>
       {actions}
-      {empty ? (
-        <p className="doc-empty">—</p>
-      ) : mode === "readable" ? (
-        <ReadableNode value={normalized} />
-      ) : (
-        <pre className="doc-pre">{raw}</pre>
-      )}
+      {empty ? <p className="doc-empty">—</p> : <ReadableNode value={normalized} />}
     </>
   );
 
@@ -227,7 +172,6 @@ export function DocumentBlock({
             <span className="doc-summary-title">{title}</span>
             <span className="doc-summary-hint">{empty ? "пусто" : "есть данные"}</span>
           </span>
-          {headControls}
         </summary>
         <div className="doc-block-body">{body}</div>
       </details>
@@ -238,7 +182,6 @@ export function DocumentBlock({
     <section className="doc-block">
       <div className="doc-block-head">
         <h2>{title}</h2>
-        {headControls}
       </div>
       {body}
     </section>

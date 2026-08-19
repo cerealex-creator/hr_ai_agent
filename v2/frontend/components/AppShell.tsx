@@ -17,7 +17,7 @@ const SEARCH_NAV = [
   { href: "/stats", label: "Статистика", ready: true, ownerOnly: false },
   { href: "/jobs", label: "Задачи", ready: true, ownerOnly: true },
   { href: "/history", label: "История", ready: true, ownerOnly: true },
-  { href: "/client-zone", label: "Клиентская зона", ready: true, ownerOnly: false },
+  { href: "/client-zone", label: "Зона заказчика вакансии", ready: true, ownerOnly: false },
 ] as const;
 
 export type ShellVariant = "home" | "search" | "settings";

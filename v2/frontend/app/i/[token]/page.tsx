@@ -30,7 +30,7 @@ export default function InterviewDigestPublicPage() {
     if (!res.ok) {
       setError(
         res.status === 404
-          ? "Ссылка недействительна или выжимка ещё не готова"
+          ? "Ссылка недействительна или конспект ещё не готов"
           : `Ошибка ${res.status}`,
       );
       setData(null);
@@ -50,7 +50,7 @@ export default function InterviewDigestPublicPage() {
   return (
     <div className="cz-page">
       <header className="cz-header">
-        <p className="cz-kicker">Выжимка собеседования</p>
+        <p className="cz-kicker">Конспект собеседования</p>
         <h1 className="cz-title">{data?.candidate_name || "Загрузка…"}</h1>
         {data?.vacancy_title ? (
           <p className="muted">{data.vacancy_title}</p>

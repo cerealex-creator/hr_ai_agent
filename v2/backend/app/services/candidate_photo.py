@@ -122,3 +122,27 @@ def try_attach_candidate_photo(
         except Exception:  # noqa: BLE001
             pass
         return False
+
+
+def try_attach_candidate_photo_from_link(
+    db: Session,
+    candidate: models.Candidate,
+    link: str,
+    *,
+    settings: Settings | None = None,
+) -> bool:
+    """Download resume (including Yandex Disk public links) and attach portrait. Never raises."""
+    try:
+        if str((candidate.payload or {}).get("photo_url") or "").strip():
+            return False
+        from app.services.pdf_extract import download_resume_bytes
+
+        blob, _err = download_resume_bytes(link)
+        if not blob or not blob.lstrip().startswith(b"%PDF"):
+            return False
+        return try_attach_candidate_photo(db, candidate, pdf_bytes=blob, settings=settings)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "candidate photo from link failed for %s", getattr(candidate, "id", "?")
+        )
+        return False

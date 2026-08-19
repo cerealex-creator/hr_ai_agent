@@ -126,7 +126,10 @@ router = APIRouter()
 @router.get("/settings/test-chat", response_model=TestChatOut)
 def get_test_chat(db: Session = Depends(get_db)) -> TestChatOut:
     from app.services import clients_write as cw
+    from app.services.tenancy import is_demo_user
 
+    if is_demo_user():
+        return TestChatOut()
     cw.ensure_client_schema(db)
     client = cw.get_test_client(db)
     if not client:
@@ -174,6 +177,29 @@ def get_settings_app(
         get_user_candidate_intake,
         normalize_candidate_intake,
     )
+
+    if user.is_demo:
+        stored = normalize_candidate_intake(DEFAULT_CANDIDATE_INTAKE)
+        return {
+            "default_warranty_months": 3,
+            "ai_model": "",
+            "ai_provider": {},
+            "provider_links": [],
+            "candidate_comms": {},
+            "functions": {},
+            "client_notify": {},
+            "messaging_providers": [],
+            "bitrix": {"enabled": False, "decide_secret_set": False, "decide_secret": ""},
+            "yandex_disk_root": "",
+            "yandex_disk_inbox": "",
+            "yandex_disk_client_id": "",
+            "path": "",
+            "candidate_intake": stored,
+            "candidate_intake_effective": effective_candidate_intake(
+                is_owner=False, stored=stored
+            ),
+            "is_platform_owner": False,
+        }
 
     out = get_app_settings()
     owner = user_is_platform_owner(user)

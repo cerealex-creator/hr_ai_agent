@@ -30,7 +30,7 @@ HR_STAGES: dict[str, str] = {
     "rejected_candidate": "Отказ кандидата",
     "rejected_client": "Отказ заказчика",
     "rejected_hr": "Отказ мой",
-    "rejected_vacancy_closed": "Отказ: вакансия закрыта",
+    "rejected_vacancy_closed": "Отказ в связи с закрытием вакансии",
 }
 
 CLIENT_ZONE_ENTRY_STAGE = "client_review"
@@ -62,6 +62,9 @@ PATCHABLE_PAYLOAD_FIELDS = (
     "salary_expected",
     "resume_link",  # Yandex PDF (opened resume)
     "hh_resume_link",  # HH link (often without contacts until opened manually)
+    "anonymized_resume_link",  # PDF without contacts for mockup zone
+    "resume_preview_included",
+    "resume_preview_visible",
     "portfolio_link",
     "video_link",
     "task_link",
@@ -74,6 +77,12 @@ PATCHABLE_PAYLOAD_FIELDS = (
     "remote_interview",
     "office_interview",
     "meeting_link",
+    "liked",
+    "liked_at",
+    "talent_reserve",
+    "talent_reserve_at",
+    "talent_reserve_note",
+    "talent_reserve_by",
 )
 
 
@@ -175,6 +184,21 @@ def patch_candidate(
     from app.services.meeting_links import maybe_attach_meeting_link
 
     payload = maybe_attach_meeting_link(payload)
+    anon = str(payload.get("anonymized_resume_link") or "").strip()
+    if anon:
+        payload["anonymized_resume_link"] = anon
+        if "resume_preview_included" not in fields:
+            payload["resume_preview_included"] = True
+        if not str(payload.get("resume_preview_status") or "").strip():
+            payload["resume_preview_status"] = "wait"
+        if "resume_preview_visible" not in fields:
+            payload["resume_preview_visible"] = True
+    if "resume_preview_included" in fields:
+        payload["resume_preview_included"] = bool(fields.get("resume_preview_included"))
+        if payload["resume_preview_included"] and "resume_preview_visible" not in fields:
+            payload["resume_preview_visible"] = True
+    if "resume_preview_visible" in fields:
+        payload["resume_preview_visible"] = bool(fields.get("resume_preview_visible"))
     candidate.payload = payload
     flag_modified(candidate, "payload")
     return candidate

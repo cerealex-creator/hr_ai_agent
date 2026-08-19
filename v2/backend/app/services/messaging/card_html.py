@@ -53,6 +53,21 @@ def _split_client_comments(raw: str) -> tuple[list[str], list[str]]:
     return status_lines, free_lines
 
 
+def _append_client_comment_lines(lines: list[str], client_comment: str | None) -> None:
+    client_c = (client_comment or "").strip()
+    if not client_c:
+        return
+    status_lines, free_lines = _split_client_comments(client_c)
+    if status_lines:
+        lines.extend(["", "<b>Комментарий к статусу:</b>"])
+        lines.extend(_esc(line) for line in status_lines)
+    if free_lines:
+        lines.extend(["", "<b>Комментарий:</b>"])
+        lines.extend(_esc(line) for line in free_lines)
+    if not status_lines and not free_lines:
+        lines.extend(["", f"<b>Комментарий:</b> {_esc(client_c)}"])
+
+
 def build_candidate_card_html(
     *,
     name: str,
@@ -91,7 +106,7 @@ def build_candidate_card_html(
         if hh_row:
             lines.extend(["", f"📄 {hh_row}"])
     digest_url = (interview_digest_url or "").strip()
-    digest_row = _link(digest_url, "Выжимка собеседования") if digest_url else None
+    digest_row = _link(digest_url, "Конспект собеседования") if digest_url else None
     if digest_row:
         lines.extend(["", f"📝 {digest_row}"])
     video = (video_link or "").strip()
@@ -124,17 +139,7 @@ def build_candidate_card_html(
                 lines.append("✅ Встреча подтверждена HR")
             else:
                 lines.append("⏳ Ожидает подтверждения HR")
-        client_c = (client_comment or "").strip()
-        if client_c:
-            status_lines, free_lines = _split_client_comments(client_c)
-            if status_lines:
-                lines.extend(["", "<b>Комментарий к статусу:</b>"])
-                lines.extend(_esc(line) for line in status_lines)
-            if free_lines:
-                lines.extend(["", "<b>Комментарий:</b>"])
-                lines.extend(_esc(line) for line in free_lines)
-            if not status_lines and not free_lines:
-                lines.extend(["", f"<b>Комментарий:</b> {_esc(client_c)}"])
+        _append_client_comment_lines(lines, client_comment)
         if interview_prompt:
             lines.extend(["", interview_prompt])
     elif not locked:
@@ -150,8 +155,14 @@ def build_candidate_card_html_minimal(
     vacancy_title: str,
     resume_link: str | None = None,
     hh_resume_link: str | None = None,
+    status_key: str | None = None,
+    client_comment: str | None = None,
+    office_interview_date: str | None = None,
+    office_interview_time: str | None = None,
+    remote_interview: bool = False,
+    office_interview: bool = False,
 ) -> str:
-    """Short Telegram card: clickable FIO (resume) + vacancy. Status lives in client zone."""
+    """Short Telegram card: clickable FIO (resume) + vacancy + status + client comment."""
     display_name = _esc(name) or "Кандидат"
     resume = _client_https_url(resume_link or "")
     if not resume:
@@ -167,6 +178,20 @@ def build_candidate_card_html_minimal(
         "",
         f"<b>Вакансия:</b> {_esc(vacancy_title)}",
     ]
+    key = (status_key or "").strip()
+    if key and key not in ("", "wait"):
+        meta = CLIENT_STATUS_META.get(key) or CLIENT_STATUS_META["wait"]
+        lines.extend(
+            ["", f"<b>Статус:</b> {meta['icon']} {_esc(meta['label'])}"]
+        )
+        date_str = (office_interview_date or "").strip()
+        time_str = (office_interview_time or "").strip()
+        if date_str and time_str and key in ("ready", "offer", "started"):
+            fmt = _format_label(remote_interview, office_interview)
+            when = f"{date_str} {time_str}"
+            fmt_part = f" ({fmt})" if fmt else ""
+            lines.append(f"<b>Встреча:</b> {when}{fmt_part}")
+        _append_client_comment_lines(lines, client_comment)
     return "\n".join(lines)
 
 

@@ -215,9 +215,22 @@ def create_warranty_search_vacancy(db: Session, source: models.Vacancy) -> model
     return new_v
 
 
-def collect_warranty_registry(db: Session, *, today: date | None = None) -> list[dict[str, Any]]:
+def collect_warranty_registry(
+    db: Session,
+    *,
+    today: date | None = None,
+    organization_id=None,
+) -> list[dict[str, Any]]:
+    q = select(models.Vacancy)
+    if organization_id is not None:
+        from app.services.tenancy import org_vacancy_ids
+
+        vac_ids = org_vacancy_ids(db, organization_id)
+        if not vac_ids:
+            return []
+        q = q.where(models.Vacancy.id.in_(vac_ids))
     rows: list[dict[str, Any]] = []
-    for vac in db.scalars(select(models.Vacancy)).all():
+    for vac in db.scalars(q).all():
         view = vacancy_as_dict(vac)
         if not is_warranty_active_dict(view, today=today):
             continue

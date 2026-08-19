@@ -5,10 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { ClientZoneLink } from "@/components/ClientZoneLink";
 import { InfoTip } from "@/components/InfoTip";
 import { RecruitingShell } from "@/components/RecruitingShell";
+import { useAuth } from "@/components/AuthGate";
 import { apiFetch } from "@/lib/api";
 import { type CompanyNode } from "@/lib/companies";
 
 export default function ClientZoneHubPage() {
+  const { isOwner } = useAuth();
   const [items, setItems] = useState<CompanyNode[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +29,7 @@ export default function ClientZoneHubPage() {
   }, [load]);
 
   return (
-    <RecruitingShell activePath="/client-zone" title="Клиентская зона">
+    <RecruitingShell activePath="/client-zone" title="Зона заказчика вакансии">
       <p className="muted rec-page-lead">
         Отдельная страница для заказчика: он видит кандидатов на оценке и может выбрать «Встреча»,
         «Подумать» или «Отказ» — без входа в HR-помогатор.
@@ -41,19 +43,25 @@ export default function ClientZoneHubPage() {
         <ol className="cz-hub-steps">
           <li>
             В{" "}
-            <Link href="/settings/companies">настройках компании</Link> создайте ссылку клиентской
-            зоны для компании или нужного подразделения (или ссылка появится при первой отправке
-            кандидата).
+            <Link href="/settings/companies">настройках компании</Link> создайте ссылку зоны
+            заказчика вакансии для компании или нужного подразделения (или ссылка появится при
+            первой отправке кандидата).
           </li>
           <li>Отправьте ссылку заказчику — полный адрес с доменом, не только <code>/c/…</code>.</li>
           <li>
             В карточке кандидата на вкладке «Заказчик» нажмите «Отправить заказчику» — кандидат
             попадёт в список по ссылке.
           </li>
+          {isOwner ? (
           <li>
-            Ссылка вида <code>/i/…</code> — это выжимка собеседования для заказчика, это другой
-            раздел.
+            Ссылка вида <code>/i/…</code> — конспект собеседования. Ссылка <code>/m/…</code> — макеты
+            резюме без контактов (создаётся на вакансии, блок «Макеты резюме»).
           </li>
+          ) : (
+          <li>
+            Ссылка вида <code>/i/…</code> — конспект собеседования.
+          </li>
+          )}
         </ol>
       </div>
 

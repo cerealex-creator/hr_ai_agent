@@ -1,3 +1,6 @@
+KEYWORD_DOC_KEYS = frozenset({"keywords", "ключевые_слова", "ключевые слова"})
+
+
 def history_preview(snapshot: dict | None, limit: int = 140) -> str | None:
     if not isinstance(snapshot, dict):
         return None
@@ -9,6 +12,13 @@ def history_preview(snapshot: dict | None, limit: int = 140) -> str | None:
                 return text
             return text[: limit - 1] + "…"
     return None
+
+
+def strip_keyword_docs(documents: dict | None) -> dict:
+    """Drop vacancy-document «keywords» block (demo UI)."""
+    if not isinstance(documents, dict):
+        return {}
+    return {k: v for k, v in documents.items() if k not in KEYWORD_DOC_KEYS}
 
 
 def nonempty_document_keys(documents: dict | None) -> list[str]:

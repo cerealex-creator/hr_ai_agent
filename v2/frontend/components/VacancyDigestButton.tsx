@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { ActionBanner } from "@/components/ActionBanner";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
+import { DEMO_WRITE_HINT } from "@/lib/demo";
 
 type Props = {
   vacancyId: number;
@@ -10,6 +12,7 @@ type Props = {
 };
 
 export function VacancyDigestButton({ vacancyId, hasChatId }: Props) {
+  const { isDemo } = useAuth();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -42,8 +45,14 @@ export function VacancyDigestButton({ vacancyId, hasChatId }: Props) {
       <button
         type="button"
         className="chip chip-active"
-        disabled={busy || !hasChatId}
-        title={hasChatId ? "Отправить сводку по вакансии в Telegram-чат" : "Укажите chat_id в параметрах вакансии"}
+        disabled={busy || !hasChatId || isDemo}
+        title={
+          isDemo
+            ? DEMO_WRITE_HINT
+            : hasChatId
+              ? "Отправить сводку по вакансии в Telegram-чат"
+              : "Укажите chat_id в параметрах вакансии"
+        }
         onClick={() => void send()}
       >
         {busy ? "Отправка…" : "Сводка в чат"}

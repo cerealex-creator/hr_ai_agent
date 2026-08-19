@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import AuthUser, require_platform_owner
+from app.core.auth import AuthUser, require_auth, require_platform_owner
 from app.db import models
 from app.db.session import get_db
 from app.api.v1.common import (
@@ -128,8 +128,23 @@ public_router = APIRouter()
 
 @router.get("/integrations/yandex-disk/status")
 def yandex_disk_oauth_status() -> dict:
+    from app.services.tenancy import is_demo_user
     from app.services.yandex_disk_oauth import disk_status
 
+    if is_demo_user():
+        return {
+            "connected": False,
+            "token_path": "",
+            "token_from_env": False,
+            "client_id": "",
+            "client_id_configured": False,
+            "authorize_url": None,
+            "create_app_url": "",
+            "root": "",
+            "inbox_path": "",
+            "login": None,
+            "message": "В демо Диск не подключается",
+        }
     return disk_status()
 
 @router.post("/integrations/yandex-disk/token")
@@ -174,8 +189,18 @@ def yandex_disk_ensure_root() -> dict:
 @router.get("/integrations/yandex-disk/inbox")
 def yandex_disk_inbox(db: Session = Depends(get_db)) -> dict:
     from app.services.disk_inbox_router import inbox_settings, list_inbox_db
+    from app.services.tenancy import is_demo_user
     from app.services.yandex_disk_oauth import DiskApiError, suggest_inbox_routes
 
+    if is_demo_user():
+        return {
+            "items": [],
+            "message": "В демо Диск не подключается",
+            "inbox_path": "",
+            "db_items": [],
+            "unsorted": [],
+            "settings": {"auto": False, "confidence": 0.75, "evaluate_on_route": False},
+        }
     try:
         live = suggest_inbox_routes(db)
     except DiskApiError as exc:
@@ -229,20 +254,32 @@ def yandex_disk_inbox_settings_patch(body: InboxSettingsPatchIn) -> dict:
     )
 
 @router.get("/integrations/google-calendar/status")
-def google_calendar_status() -> dict:
+def google_calendar_status(user: AuthUser = Depends(require_auth)) -> dict:
+    from app.core.auth import user_is_platform_owner
     from app.services.google_calendar import (
         get_calendar_status,
         get_credentials_path,
         get_token_path,
     )
 
+    if user.is_demo:
+        return {
+            "status": "demo",
+            "message": "В демо календарь не подключается",
+            "credentials_path": "",
+            "token_path": "",
+        }
     status, message = get_calendar_status()
-    return {
+    out = {
         "status": status,
         "message": message,
-        "credentials_path": get_credentials_path(),
-        "token_path": get_token_path(),
+        "credentials_path": "",
+        "token_path": "",
     }
+    if user_is_platform_owner(user):
+        out["credentials_path"] = get_credentials_path()
+        out["token_path"] = get_token_path()
+    return out
 
 @router.post("/integrations/google-calendar/oauth/start")
 def google_calendar_oauth_start() -> dict:

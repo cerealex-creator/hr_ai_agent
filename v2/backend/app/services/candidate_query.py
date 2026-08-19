@@ -12,21 +12,30 @@ from sqlalchemy.orm import Session
 from app.db import models
 from app.services.stats_service import (
     CLIENT_ZONE_STAGES,
+    REJECT_STAGES,
     _candidates_for_vacancies,
     _filter_vacancies,
     _reached_client_review,
 )
 from app.services.vacancy_outcome import HIRE_STAGES
 
-CANDIDATE_PRESETS = frozenset({"sent_to_client", "in_client_zone", "hires", "attention"})
+CANDIDATE_PRESETS = frozenset(
+    {"sent_to_client", "in_client_zone", "hires", "attention", "talent_reserve"}
+)
+
+
+def is_talent_reserve(payload: dict | None) -> bool:
+    return bool((payload or {}).get("talent_reserve"))
 
 
 def attention_reason(c: models.Candidate) -> str | None:
     """Why this candidate needs HR attention (inbox). None = skip."""
     stage = c.hr_stage or ""
-    if stage in ("rejected",) or stage in HIRE_STAGES:
+    if stage in REJECT_STAGES or stage in HIRE_STAGES:
         return None
     p = c.payload or {}
+    if bool(p.get("resume_preview_included")):
+        return None
     meeting_date = str(p.get("office_interview_date") or "").strip()
     meeting_time = str(p.get("office_interview_time") or "").strip()
     meeting_set = bool(meeting_date and meeting_time)
@@ -80,6 +89,9 @@ def list_candidates_filtered(
     )
     vac_ids = [v.id for v in vacancies]
     candidates = _candidates_for_vacancies(db, vac_ids)
+    from app.services.resume_preview import is_resume_preview_included
+
+    candidates = [c for c in candidates if not is_resume_preview_included(c.payload)]
 
     label = "Все кандидаты"
     if preset and preset not in CANDIDATE_PRESETS:
@@ -116,6 +128,17 @@ def list_candidates_filtered(
             kept.append(c)
         candidates = kept
         label = "Требуют внимания"
+    elif preset == "talent_reserve":
+        candidates = [c for c in candidates if is_talent_reserve(c.payload)]
+        label = "Кадровый резерв"
+        candidates.sort(
+            key=lambda c: (
+                str((c.payload or {}).get("talent_reserve_at") or ""),
+                c.created_at or "",
+            ),
+            reverse=True,
+        )
+        return candidates, vacancies, label
 
     candidates.sort(
         key=lambda c: (
@@ -164,6 +187,10 @@ def serialize_list_item(
         "attention_reason": getattr(c, "_attention_reason", None),
         "photo_url": (p.get("photo_url") or "").strip() or None,
         "gender": normalize_gender(p.get("gender") or p.get("sex")),
+        "liked": bool(p.get("liked")),
+        "talent_reserve": is_talent_reserve(p),
+        "talent_reserve_at": (p.get("talent_reserve_at") or None),
+        "ai_score": p.get("ai_score"),
     }
 
 

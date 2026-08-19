@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ChatSelect } from "@/components/ChatSelect";
 import { type ClientItem, type VacancyListItem, apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthGate";
 
 type Props = {
   clients: ClientItem[];
@@ -25,6 +26,7 @@ export function CreateVacancyForm({
   defaultClientId = null,
 }: Props) {
   const router = useRouter();
+  const { isDemo } = useAuth();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("scratch");
   const [sourceId, setSourceId] = useState("");
@@ -95,6 +97,10 @@ export function CreateVacancyForm({
       setBusy(false);
     }
   };
+
+  if (isDemo) {
+    return null;
+  }
 
   if (!open) {
     return (

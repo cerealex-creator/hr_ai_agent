@@ -390,7 +390,29 @@ def patch_candidate_endpoint(
         raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
     candidate = get_candidate_or_404(db, cid)
     data = body.model_dump(exclude_unset=True)
+    from app.core.auth import user_is_platform_owner
+    from app.services.tenancy import current_user
+
+    user = current_user()
+    if not user or not user_is_platform_owner(user):
+        data.pop("resume_preview_included", None)
+        data.pop("resume_preview_visible", None)
     name = data.pop("name", None)
+    if "liked" in data:
+        from datetime import datetime, timezone
+
+        if data["liked"]:
+            data["liked_at"] = datetime.now(timezone.utc).astimezone().isoformat()
+        else:
+            data["liked_at"] = ""
+    if "talent_reserve" in data:
+        from datetime import datetime, timezone
+
+        if data["talent_reserve"]:
+            data["talent_reserve_at"] = datetime.now(timezone.utc).astimezone().isoformat()
+            data["talent_reserve_by"] = (
+                (user.email or user.full_name or "").strip() if user else ""
+            )
     from app.services.messaging.ops import refresh_candidate_telegram, snapshot_card_payload
 
     before = snapshot_card_payload(candidate)
