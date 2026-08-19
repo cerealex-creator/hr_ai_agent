@@ -274,6 +274,8 @@ class CandidateDetail(BaseModel):
     talent_reserve_at: str | None = None
     talent_reserve_note: str | None = None
     talent_reserve_by: str | None = None
+    person_id: str | None = None
+    related_vacancies: list[RelatedCandidateOut] = Field(default_factory=list)
     payload: dict = Field(default_factory=dict)
 
 
@@ -304,6 +306,41 @@ class CandidatePatchIn(BaseModel):
     liked: bool | None = None
     talent_reserve: bool | None = None
     talent_reserve_note: str | None = None
+    force_duplicate: bool = False
+
+
+class CheckDuplicateIn(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    candidate_id: UUID | None = None
+    vacancy_id: int | None = None
+
+
+class DupHitOut(BaseModel):
+    candidate_id: UUID
+    person_id: UUID
+    name: str
+    vacancy_id: int
+    vacancy_title: str
+    match_kind: str
+
+
+class CheckDuplicateOut(BaseModel):
+    hard: list[DupHitOut] = Field(default_factory=list)
+    soft: list[DupHitOut] = Field(default_factory=list)
+
+
+class RelatedCandidateOut(BaseModel):
+    candidate_id: str
+    vacancy_id: int
+    vacancy_title: str
+    hr_stage: str
+
+
+class RelatedVacanciesOut(BaseModel):
+    person_id: str | None = None
+    siblings: list[RelatedCandidateOut] = Field(default_factory=list)
 
 
 class CandidateStageIn(BaseModel):
@@ -380,6 +417,8 @@ class CandidateCreateIn(BaseModel):
     resume_link: str | None = None
     hh_resume_link: str | None = None
     hr_comment: str | None = None
+    email: str | None = None
+    force_duplicate: bool = False
 
 
 class StageOptionOut(BaseModel):

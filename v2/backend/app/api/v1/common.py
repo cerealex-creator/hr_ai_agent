@@ -203,6 +203,16 @@ def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDeta
     vac_payload = dict(vacancy.payload or {}) if vacancy else {}
     cw_enabled = bool(vac_payload.get("control_word_enabled"))
     cw_word = str(vac_payload.get("control_word") or "").strip() or None
+    related: list[dict] = []
+    person_id_str: str | None = None
+    if candidate.person_id:
+        person_id_str = str(candidate.person_id)
+        try:
+            from app.services.person_match import get_related_candidates
+            related = get_related_candidates(db, candidate)
+        except Exception:  # noqa: BLE001
+            pass
+
     return CandidateDetail(
         id=candidate.id,
         vacancy_id=candidate.vacancy_id,
@@ -217,6 +227,8 @@ def _candidate_detail(db: Session, candidate: models.Candidate) -> CandidateDeta
         payload=candidate.payload or {},
         vacancy_control_word_enabled=cw_enabled,
         vacancy_control_word=cw_word if cw_enabled else None,
+        person_id=person_id_str,
+        related_vacancies=related,
         **fields,
     )
 

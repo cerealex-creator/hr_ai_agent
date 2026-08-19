@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Heart } from "lucide-react";
+import { RelatedVacanciesPlaque } from "@/components/DuplicateCandidateBanner";
 import { type CandidateDetail, apiFetch } from "@/lib/api";
 import {
   HR_FUNNEL_STAGES,
@@ -1202,6 +1203,10 @@ export function CandidateEditor({ initial }: Props) {
               запустить ИИ нельзя.
             </p>
           ) : null}
+          <RelatedVacanciesPlaque
+            personId={c.person_id}
+            siblings={c.related_vacancies}
+          />
         </div>
       </div>
 

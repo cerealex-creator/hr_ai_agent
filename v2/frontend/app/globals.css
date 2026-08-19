@@ -5733,3 +5733,60 @@ button.hub-card {
   font-weight: 700;
   color: #1b2a4a;
 }
+
+/* --- Duplicate banner --- */
+.dup-banner {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
+.dup-banner-hard {
+  background: #fff3f3;
+  border: 1px solid #e0607e;
+}
+.dup-banner-soft {
+  background: #fffbe6;
+  border: 1px solid #d4b106;
+}
+.dup-title {
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+}
+.dup-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.dup-list li {
+  margin-bottom: 0.2rem;
+}
+.dup-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* --- Related vacancies plaque --- */
+.related-vacancies {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  background: #f0f4ff;
+  border: 1px solid #c8d6f0;
+  font-size: 0.82rem;
+}
+.related-title {
+  margin: 0 0 0.3rem;
+  font-weight: 600;
+  color: #3b5998;
+}
+.related-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.related-list li {
+  margin-bottom: 0.15rem;
+}
+.related-list a {
+  color: var(--accent);
+}

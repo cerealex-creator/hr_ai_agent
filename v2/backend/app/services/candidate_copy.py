@@ -128,6 +128,22 @@ def copy_candidate_to_vacancy(
         raise ValueError("Выберите другую вакансию")
     cand = prepare_candidate_copy(source, target_vacancy_id=target_vacancy_id)
     db.add(cand)
+
+    if source.person_id and source.organization_id:
+        from app.services.person_match import refresh_person_keys
+
+        p = source.payload or {}
+        refresh_person_keys(
+            db,
+            candidate=cand,
+            name=source.name or "",
+            phone=str(p.get("phone") or ""),
+            email=str(p.get("email") or ""),
+            org_id=source.organization_id,
+            mode="copy",
+            source_person_id=source.person_id,
+        )
+
     db.commit()
     db.refresh(cand)
     return cand

@@ -202,6 +202,13 @@ def _anketa_fields_from_route(
     return fields
 
 
+def _resolve_vacancy_org_id(db: Session, vacancy: models.Vacancy) -> UUID | None:
+    if not vacancy.client_id:
+        return None
+    client = db.get(models.Client, vacancy.client_id)
+    return client.organization_id if client else None
+
+
 def _find_duplicate(db: Session, vacancy_id: int, name: str, phone: str) -> models.Candidate | None:
     name_n = (name or "").strip().lower()
     phone_n = "".join(ch for ch in (phone or "") if ch.isdigit())
@@ -435,6 +442,7 @@ def process_inbox(db: Session, *, limit: int = 20) -> dict[str, Any]:
                             str(row.extracted.get("phone") or ""),
                         )
                         if not dup:
+                            _oid = _resolve_vacancy_org_id(db, vac)
                             cand = create_candidate(
                                 db,
                                 vacancy_id=vac.id,
@@ -443,6 +451,7 @@ def process_inbox(db: Session, *, limit: int = 20) -> dict[str, Any]:
                                     routed,
                                     resume_link=f"yadisk-app:{dest}",
                                 ),
+                                org_id=_oid,
                             )
                             payload = dict(cand.payload or {})
                             payload["source"] = "yandex_inbox"
@@ -557,6 +566,7 @@ def bind_unsorted(
             str(extracted.get("phone") or ""),
         )
         if not dup:
+            _oid = _resolve_vacancy_org_id(db, vac)
             c = create_candidate(
                 db,
                 vacancy_id=vac.id,
@@ -565,6 +575,7 @@ def bind_unsorted(
                     extracted if isinstance(extracted, dict) else {},
                     resume_link=f"yadisk-app:{dest}",
                 ),
+                org_id=_oid,
             )
             cand_id = str(c.id)
         else:

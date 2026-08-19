@@ -77,6 +77,28 @@ class Vacancy(Base):
     candidates: Mapped[list["Candidate"]] = relationship(back_populates="vacancy")
 
 
+class Person(Base):
+    """Identity hub — one real person may have many Candidate cards across vacancies."""
+
+    __tablename__ = "persons"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    match_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    match_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    match_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    do_not_contact: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    merged_into_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("persons.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    candidates: Mapped[list["Candidate"]] = relationship(back_populates="person")
+
+
 class Candidate(Base):
     __tablename__ = "candidates"
 
@@ -89,7 +111,18 @@ class Candidate(Base):
     status_updated_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
+    person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("persons.id"), nullable=True, index=True
+    )
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True
+    )
+    match_phone: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    match_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    match_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     vacancy: Mapped["Vacancy"] = relationship(back_populates="candidates")
+    person: Mapped["Person | None"] = relationship(back_populates="candidates")
 
 
 class DocumentGeneration(Base):

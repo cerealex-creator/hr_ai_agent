@@ -16,6 +16,16 @@ from app.services.candidate_fields import normalize_gender
 from app.services.pdf_extract import fetch_resume_text_from_url
 from app.services.vacancy_docs import extract_profile_text
 
+import uuid as _uuid
+
+
+def _vacancy_org_id(db: Session, vacancy: models.Vacancy) -> _uuid.UUID | None:
+    """Resolve organization_id from vacancy → client → organization."""
+    if not vacancy.client_id:
+        return None
+    client = db.get(models.Client, vacancy.client_id)
+    return client.organization_id if client else None
+
 RESUME_EXTRACT_SYSTEM = """Ты — HR-ассистент. Извлеки из текста резюме поля карточки кандидата.
 Верни ТОЛЬКО JSON:
 {
@@ -443,7 +453,7 @@ def bulk_add_from_resume_links(
         cand = _reuse_incomplete_from_resume_text(db, vacancy, text or "")
         reused = cand is not None
         if cand is None:
-            cand = create_candidate(db, vacancy_id=vacancy.id, name=name, fields=fields)
+            cand = create_candidate(db, vacancy_id=vacancy.id, name=name, fields=fields, org_id=_vacancy_org_id(db, vacancy))
         payload = dict(cand.payload or {})
         payload["source"] = payload.get("source") or "bulk_links"
         payload["cold_screening"] = True
@@ -531,7 +541,7 @@ def add_candidate_from_resume_file(
     if cand is None:
         cand = _reuse_incomplete_from_resume_text(db, vacancy, text)
     if cand is None:
-        cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields)
+        cand = create_candidate(db, vacancy_id=vacancy.id, name=cand_name, fields=fields, org_id=_vacancy_org_id(db, vacancy))
     else:
         reused = True
         if cand_name and cand_name not in {"Новый кандидат", PREVIEW_DEFAULT_NAME} and (

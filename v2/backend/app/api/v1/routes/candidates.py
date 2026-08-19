@@ -43,6 +43,11 @@ from app.schemas import (
     CandidateDetail,
     CandidateListItem,
     CandidatePatchIn,
+    CheckDuplicateIn,
+    CheckDuplicateOut,
+    DupHitOut,
+    RelatedCandidateOut,
+    RelatedVacanciesOut,
     CandidateStageIn,
     CandidateOfferDraftIn,
     CandidateOfferDraftOut,
@@ -127,6 +132,50 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+@router.post("/candidates/check-duplicate", response_model=CheckDuplicateOut)
+def check_duplicate_endpoint(
+    body: CheckDuplicateIn,
+    db: Session = Depends(get_db),
+) -> CheckDuplicateOut:
+    from app.services.person_match import check_duplicates
+    from app.services.tenancy import require_org_id
+
+    org_id = require_org_id()
+    result = check_duplicates(
+        db,
+        org_id=org_id,
+        phone=body.phone,
+        email=body.email,
+        name=body.name,
+        exclude_candidate_id=body.candidate_id,
+    )
+    return CheckDuplicateOut(
+        hard=[DupHitOut(**vars(h)) for h in result["hard"]],
+        soft=[DupHitOut(**vars(h)) for h in result["soft"]],
+    )
+
+
+@router.get("/candidates/{candidate_id}/related", response_model=RelatedVacanciesOut)
+def get_candidate_related(
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> RelatedVacanciesOut:
+    from app.services.person_match import get_related_candidates
+
+    try:
+        from uuid import UUID
+        cid = UUID(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid candidate id") from exc
+    candidate = get_candidate_or_404(db, cid)
+    siblings = get_related_candidates(db, candidate)
+    return RelatedVacanciesOut(
+        person_id=str(candidate.person_id) if candidate.person_id else None,
+        siblings=[RelatedCandidateOut(**s) for s in siblings],
+    )
+
 
 @router.get("/candidates", response_model=list[CandidateListItem])
 def list_candidates(
@@ -415,8 +464,35 @@ def patch_candidate_endpoint(
             )
     from app.services.messaging.ops import refresh_candidate_telegram, snapshot_card_payload
 
+    from app.services.tenancy import require_org_id
+
     before = snapshot_card_payload(candidate)
-    patch_candidate(candidate, name=name, fields=data)
+    force_dup = data.pop("force_duplicate", False)
+
+    if not force_dup and any(k in data for k in ("phone", "email")):
+        from app.services.person_match import check_duplicates
+
+        dups = check_duplicates(
+            db,
+            org_id=require_org_id(),
+            phone=data.get("phone") or str((candidate.payload or {}).get("phone") or ""),
+            email=data.get("email") or str((candidate.payload or {}).get("email") or ""),
+            name=name or candidate.name,
+            exclude_candidate_id=candidate.id,
+        )
+        if dups["hard"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_hard",
+                    "duplicates": {
+                        "hard": [vars(h) for h in dups["hard"]],
+                        "soft": [vars(s) for s in dups["soft"]],
+                    },
+                },
+            )
+
+    patch_candidate(candidate, name=name, fields=data, db=db, org_id=require_org_id())
     db.add(candidate)
     db.commit()
     db.refresh(candidate)

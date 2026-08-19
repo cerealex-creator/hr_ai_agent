@@ -439,11 +439,16 @@ def _ingest_resume(
         return False
 
     new_name = _guess_name_from_filename(name)
+    _oid = None
+    if vacancy.client_id:
+        _cl = db.get(models.Client, vacancy.client_id)
+        _oid = _cl.organization_id if _cl else None
     created = create_candidate(
         db,
         vacancy_id=vacancy.id,
         name=new_name,
         fields={"resume_link": link},
+        org_id=_oid,
     )
     payload = dict(created.payload or {})
     payload["source"] = "yandex_disk"

@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-08-19 — ЯКОРЬ PR1: persons + дедупликация
+
+**Тип:** `feature`
+
+**Сделано:**
+- Таблица `persons` (identity hub): match_phone, match_email, match_name, do_not_contact, merged_into_person_id.
+- Колонки candidates: person_id, organization_id, match_phone, match_email, match_name + partial indexes.
+- `person_match.py`: normalize_phone/email/name, refresh_person_keys (choke-point), check_duplicates, get_related_candidates.
+- `candidate_write.py`: create_candidate / patch_candidate → вызов refresh_person_keys (org_id опционален).
+- `candidate_copy.py`: copy → reuse source person_id (mode="copy").
+- API: `POST /candidates/check-duplicate`, `GET /candidates/{id}/related`, 409 на дубли в PATCH и manual create.
+- 5 каналов intake получают org_id → person linkage (manual, bulk, file, inbox, yandex_disk).
+- Скрипты: backfill_persons, verify_person_coverage, find_duplicate_groups.
+- Schemas: CandidateDetail + person_id + related_vacancies, CheckDuplicateIn/Out, CandidateCreateIn + email + force_duplicate.
+- Frontend: DuplicateCandidateBanner, RelatedVacanciesPlaque в CandidateEditor, типы в api.ts.
+- CSS: стили для dup-banner, related-vacancies.
+
+**Файлы:**
+- `v2/backend/alembic/versions/ac47a81a7a38_*.py` (миграция)
+- `v2/backend/app/db/models.py` (Person + Candidate extend)
+- `v2/backend/app/services/person_match.py` (новый)
+- `v2/backend/app/services/candidate_write.py`
+- `v2/backend/app/services/candidate_copy.py`
+- `v2/backend/app/services/candidate_resume_eval.py`
+- `v2/backend/app/services/disk_inbox_router.py`
+- `v2/backend/app/services/yandex_disk_sync.py`
+- `v2/backend/app/api/v1/routes/candidates.py`
+- `v2/backend/app/api/v1/routes/vacancies.py`
+- `v2/backend/app/api/v1/common.py`
+- `v2/backend/app/schemas.py`
+- `v2/backend/app/scripts/backfill_persons.py` (новый)
+- `v2/backend/app/scripts/verify_person_coverage.py` (новый)
+- `v2/backend/app/scripts/find_duplicate_groups.py` (новый)
+- `v2/frontend/components/DuplicateCandidateBanner.tsx` (новый)
+- `v2/frontend/components/CandidateEditor.tsx`
+- `v2/frontend/lib/api.ts`
+- `v2/frontend/app/globals.css`
+
+**Git:** ветка `feature/kaskad-yakor-assistent-efir`
+
+**Следующий шаг:**
+- ЯКОРЬ PR2: аналитика стадий + теги + сегменты.
+
+---
+
 ## 2026-08-18 — Ветка docs: планы КАСКАД / ЯКОРЬ / АССИСТЕНТ / ЭФИР
 
 **Тип:** `docs`

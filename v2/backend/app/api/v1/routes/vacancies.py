@@ -756,10 +756,32 @@ def create_vacancy_candidate(
 ) -> CandidateDetail:
     from app.services.candidate_write import create_candidate
 
+    from app.services.tenancy import require_org_id
+
     require_intake_channel("manual")
     get_vacancy_or_404(db, vacancy_id)
-    fields = body.model_dump(exclude={"name"}, exclude_none=True)
-    cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields)
+    fields = body.model_dump(exclude={"name", "force_duplicate"}, exclude_none=True)
+    org_id = require_org_id()
+
+    if not body.force_duplicate:
+        from app.services.person_match import check_duplicates
+        dups = check_duplicates(
+            db, org_id=org_id,
+            phone=body.phone, email=body.email, name=body.name,
+        )
+        if dups["hard"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_hard",
+                    "duplicates": {
+                        "hard": [vars(h) for h in dups["hard"]],
+                        "soft": [vars(s) for s in dups["soft"]],
+                    },
+                },
+            )
+
+    cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields, org_id=org_id)
     return _candidate_detail(db, cand)
 
 @router.post(

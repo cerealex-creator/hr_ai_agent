@@ -329,7 +329,28 @@ export type CandidateDetail = CandidateListItem & {
   talent_reserve_at?: string | null;
   talent_reserve_note?: string | null;
   talent_reserve_by?: string | null;
+  person_id?: string | null;
+  related_vacancies?: {
+    candidate_id: string;
+    vacancy_id: number;
+    vacancy_title: string;
+    hr_stage: string;
+  }[];
   payload: Record<string, unknown>;
+};
+
+export type DupHit = {
+  candidate_id: string;
+  person_id: string;
+  name: string;
+  vacancy_id: number;
+  vacancy_title: string;
+  match_kind: string;
+};
+
+export type CheckDuplicateResult = {
+  hard: DupHit[];
+  soft: DupHit[];
 };
 
 export type FunnelStats = {

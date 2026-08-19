@@ -166,6 +166,8 @@ def patch_candidate(
     *,
     name: str | None = None,
     fields: dict[str, Any] | None = None,
+    db: Session | None = None,
+    org_id: uuid.UUID | None = None,
 ) -> models.Candidate:
     payload = dict(candidate.payload or {})
     fields = fields or {}
@@ -201,6 +203,21 @@ def patch_candidate(
         payload["resume_preview_visible"] = bool(fields.get("resume_preview_visible"))
     candidate.payload = payload
     flag_modified(candidate, "payload")
+
+    identity_touched = any(k in (fields or {}) for k in ("phone", "email")) or name is not None
+    if db and org_id and identity_touched:
+        from app.services.person_match import refresh_person_keys
+
+        refresh_person_keys(
+            db,
+            candidate=candidate,
+            name=candidate.name,
+            phone=str(payload.get("phone") or ""),
+            email=str(payload.get("email") or ""),
+            org_id=org_id,
+            mode="patch",
+        )
+
     return candidate
 
 
@@ -210,6 +227,8 @@ def create_candidate(
     vacancy_id: int,
     name: str = "",
     fields: dict[str, Any] | None = None,
+    org_id: uuid.UUID | None = None,
+    force_duplicate: bool = False,
 ) -> models.Candidate:
     now = _now_iso()
     fields = fields or {}
@@ -255,6 +274,20 @@ def create_candidate(
         payload=payload,
     )
     db.add(cand)
+
+    if org_id:
+        from app.services.person_match import refresh_person_keys
+
+        refresh_person_keys(
+            db,
+            candidate=cand,
+            name=display,
+            phone=str(fields.get("phone") or ""),
+            email=str(fields.get("email") or ""),
+            org_id=org_id,
+            mode="create",
+        )
+
     db.commit()
     db.refresh(cand)
     return cand
