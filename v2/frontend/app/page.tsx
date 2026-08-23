@@ -19,10 +19,10 @@ const HUB: HubCard[] = [
     featured: true,
   },
   {
+    href: "/management-system",
     title: "Настройки управления персоналом",
     text: "Создаёт и внедряет систему управления:\n— цели компании и собственника, задачи и показатели;\n— описания процессов и оргсхемы;\n— должностные инструкции, регламенты, KPI, чек-листы.",
     tone: "mgmt",
-    soon: true,
   },
   {
     title: "Кадровое делопроизводство",
@@ -54,8 +54,8 @@ export default function HomePage() {
         <BrandLogo size={80} className="home-v3-logo" />
         <h1 className="home-v3-title">HR-помогатор</h1>
         <p className="home-v3-lead">
-          Рабочее пространство рекрутера и HR-команды. Сейчас доступен поиск сотрудников —
-          остальные модули портала появятся по мере развития.
+          Рабочее пространство рекрутера и HR-команды. Доступны поиск сотрудников и модуль
+          «Настройки управления персоналом» — остальные блоки портала появятся по мере развития.
         </p>
       </header>
 
@@ -73,19 +73,33 @@ export default function HomePage() {
         ))}
 
         <div className="home-v3-grid">
-          {modules.map((item) => (
-            <div
-              key={item.title}
-              className={`home-v3-card home-v3-card-soon home-v3-tone-${item.tone}`}
-              aria-disabled
-            >
-              <div className="home-v3-card-head">
-                <h2>{item.title}</h2>
-                <span className="home-v3-soon">В разработке</span>
+          {modules.map((item) =>
+            item.href ? (
+              <Link
+                key={item.title}
+                href={item.href}
+                className={`home-v3-card home-v3-tone-${item.tone}`}
+              >
+                <div className="home-v3-card-head">
+                  <h2>{item.title}</h2>
+                </div>
+                <p>{item.text}</p>
+                <span className="home-v3-card-go">Открыть →</span>
+              </Link>
+            ) : (
+              <div
+                key={item.title}
+                className={`home-v3-card home-v3-card-soon home-v3-tone-${item.tone}`}
+                aria-disabled
+              >
+                <div className="home-v3-card-head">
+                  <h2>{item.title}</h2>
+                  <span className="home-v3-soon">В разработке</span>
+                </div>
+                <p>{item.text}</p>
               </div>
-              <p>{item.text}</p>
-            </div>
-          ))}
+            )
+          )}
         </div>
       </div>
     </div>

@@ -1,4 +1,6 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -1157,4 +1159,168 @@ class TalentPoolEntryOut(BaseModel):
 
 class TalentPoolTakeIn(BaseModel):
     vacancy_id: int
+
+
+# --- СИСТЕМА U1: management system ---
+
+
+class MgmtSystemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    status: str
+    industry_pack_id: str | None = None
+    draft_revision_id: UUID | None = None
+    published_revision_id: UUID | None = None
+
+
+class MgmtGoalDimensionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    code: str
+    pack_id: str | None = None
+    title: str
+    icon: str | None = None
+    default_weight_hint: float | None = None
+    sort_order: int
+
+
+class MgmtGoalDimensionLinkOut(BaseModel):
+    dimension_id: UUID
+    code: str
+    title: str
+    icon: str | None = None
+    is_primary: bool = False
+
+
+class MgmtGoalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    title: str
+    weight: float | None = None
+    metric_unit: str | None = None
+    baseline_value: float | None = None
+    baseline_date: date | None = None
+    target_value: float | None = None
+    target_date: date | None = None
+    metric_source: str | None = None
+    numeric_gap: float | None = None
+    dimensions: list[MgmtGoalDimensionLinkOut] = Field(default_factory=list)
+    status: str
+    stale: bool
+    cited_answer_ids: list[str] = Field(default_factory=list)
+    sort_order: int
+
+
+class MgmtGoalIn(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    weight: float | None = None
+    metric_unit: str | None = Field(default=None, max_length=64)
+    baseline_value: float | None = None
+    baseline_date: date | None = None
+    target_value: float | None = None
+    target_date: date | None = None
+    metric_source: str | None = Field(default=None, pattern="^(owner|pack_hint)$")
+    dimension_codes: list[str] = Field(default_factory=list)
+    primary_dimension_code: str | None = None
+    cited_answer_ids: list[str] = Field(default_factory=list)
+
+
+class MgmtTaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    title: str
+    deadline: date | None = None
+    metric_target: float | None = None
+    metric_unit: str | None = None
+    status: str
+    stale: bool
+    sort_order: int
+
+
+class MgmtTaskIn(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    deadline: date | None = None
+    metric_target: float | None = None
+    metric_unit: str | None = None
+
+
+class MgmtEntityLinkIn(BaseModel):
+    source_type: str
+    source_id: UUID
+    target_type: str
+    target_id: UUID
+    link_kind: str
+    meta: dict = Field(default_factory=dict)
+
+
+class MgmtEntityLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    source_type: str
+    source_id: UUID
+    target_type: str
+    target_id: UUID
+    link_kind: str
+    meta: dict = Field(default_factory=dict)
+
+
+class MgmtCurrentPositionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    title: str
+    headcount: int
+    stale: bool
+    sort_order: int
+
+
+class MgmtCurrentPositionIn(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    headcount: int = Field(default=1, ge=0)
+
+
+class MgmtTraceLinkOut(BaseModel):
+    source_type: str
+    source_id: UUID
+    target_type: str
+    target_id: UUID
+    link_kind: str
+    depth: int
+
+
+class MgmtFlowGraphOut(BaseModel):
+    nodes: list[dict]
+    edges: list[dict]
+
+
+class MgmtWizardSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    revision_id: UUID | None = None
+    step: int
+    payload: dict = Field(default_factory=dict)
+    status: str
+    updated_at: datetime
+
+
+class MgmtOverviewOut(BaseModel):
+    system: MgmtSystemOut
+    goals: list[MgmtGoalOut]
+    tasks: list[MgmtTaskOut]
+    links: list[MgmtEntityLinkOut]
+    current_positions: list[MgmtCurrentPositionOut]
+    wizard: MgmtWizardSessionOut | None = None
+    warnings: list[str] = Field(default_factory=list)
 

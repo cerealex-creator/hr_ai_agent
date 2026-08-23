@@ -480,3 +480,25 @@ class ResumeArtifact(Base):
     resume_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# СУП — система управления (СИСТЕМА U1)
+from app.db.management_models import (  # noqa: E402, F401
+    MgmtCurrentPosition,
+    MgmtCurrentPositionDuty,
+    MgmtEntityLink,
+    MgmtGoal,
+    MgmtGoalDimension,
+    MgmtGoalDimensionLink,
+    MgmtNodeLayout,
+    MgmtOrgNode,
+    MgmtProcessMap,
+    MgmtProcessStep,
+    MgmtRevision,
+    MgmtRole,
+    MgmtRoleAssignment,
+    MgmtStepIoItem,
+    MgmtSystem,
+    MgmtTask,
+    MgmtWizardSession,
+)

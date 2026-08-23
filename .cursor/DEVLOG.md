@@ -3,6 +3,265 @@
 Журнал разработки для восстановления контекста между сессиями AI/разработчика.  
 Только факты: код, git, `data/`, `deploy/`.
 
+## 2026-08-23 — СИСТЕМА: ревью №5 — BSC-измерения + baseline/target (U1)
+
+**Тип:** `feature` / `docs`
+
+**Сделано:**
+- План и BACKLOG: ревью №5 (F1–F2), оценки **~44–57 eng**; ProductivityGap **не MVP**.
+- Миграция `i9j0k1l2m3n4`: `mgmt_goal_dimensions` (seed finance/customers/processes/people), `mgmt_goal_dimension_links`, поля baseline/target на `mgmt_goals`.
+- API: `GET /goal-dimensions`, расширенный `POST /goals`, `overview.warnings` с `DIMENSION_BALANCE`.
+- Экспертная форма: чекбоксы измерений + baseline/target + разрыв в списке целей.
+
+**Файлы:** `i9j0k1l2m3n4_*.py`, `management_models.py`, `management_system.py`, routes `management_system.py`, `schemas.py`, `ManagementExpertPanel.tsx`, `lib/management.ts`, `IMPLEMENTATION_PLAN_SISTEMA.md`, `BACKLOG.md`
+
+**Git:** незакоммичено
+
+**Риски:** warning `DIMENSION_BALANCE` — только UI, не блокирует сохранение.
+
+**Следующий шаг:**
+- U2: мастер + интервью с вопросами про текущие цифры и измерения.
+
+---
+
+## 2026-08-24 — СИСТЕМА U1: скелет модуля «Настройки управления персоналом»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Backend: таблицы `mgmt_*` (миграция `h8i9j0k1l2m3`), Graph Checker, CTE traceability, API `/api/v1/management/*`.
+- Frontend: блок на главной → `/management-system` (Карта React Flow + экспертный CRUD).
+- `ManagementShell`, цели/задачи/as-is/связи вручную; wizard_sessions модель (UI мастера — U2).
+
+**Файлы:** `management_models.py`, `management_graph.py`, `management_system.py` (service+routes), `schemas/management.py`, `h8i9j0k1l2m3_*.py`, `app/management-system/**`, `Management*.tsx`, `lib/management.ts`, `page.tsx`, `globals.css`
+
+**Git:** незакоммичено
+
+**Риски:** feature flag `integrations.features.management_system` (platform_owner — без флага); миграция `alembic upgrade head`.
+
+**Следующий шаг:**
+- U2: мастер шаги 1–2 + интервью + prompt-инварианты.
+
+---
+
+## 2026-08-24 — СИСТЕМА: ревью №4 — онбординг-мастер (W)
+
+**Тип:** `docs` / `decision`
+
+**Сделано:**
+- §3 «Онбординг-мастер»: 5 шагов, resumable `wizard_sessions`, экспертный режим отдельно; L3 preview в мастере, approve — вне.
+- Анти-глюки: prompt-инварианты ≤5 целей/задач; `node_layout` per revision_id.
+- Оценки eng **41–54**; контент «стройка» **6–10 дн**, старт ∥ U1.
+
+**Файлы:** `IMPLEMENTATION_PLAN_SISTEMA.md`, `BACKLOG.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Финальное подтверждение архитектором → **`СИСТЕМА U1`**.
+
+---
+
+## 2026-08-23 — СИСТЕМА: план утверждён (ревью №3, E1–E6)
+
+**Тип:** `docs` / `decision`
+
+**Сделано:**
+- План `IMPLEMENTATION_PLAN_SISTEMA.md` — статус **утверждён**; дельты E1–E6 (Graph Checker, BPMN steps, React Flow, CTE impact, KPI invariant, bottom-up fixtures).
+- Поля `goal.weight`, `task.deadline`; оценки eng **36–49** чел·дн.
+- BACKLOG **B-SISTEMA-001** обновлён — готов к планированию волн.
+
+**Файлы:** `v2/docs/IMPLEMENTATION_PLAN_SISTEMA.md`, `v2/docs/BACKLOG.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Старт по **`СИСТЕМА U1`**.
+
+---
+
+## 2026-08-23 — СИСТЕМА: план СУП + D1–D3 в бэклог
+
+**Тип:** `docs` / `decision`
+
+**Сделано:**
+- Создан план `IMPLEMENTATION_PLAN_SISTEMA.md`: граф связей, L2a/L2b, анти-глюки, фазы U1–U5, дельты D1 (as-is/to-be), D2 (контент-пакеты), D3 (MVP + gap).
+- Правки к брифу зафиксированы: D1 разнесён по фазам; duties atomic; gap детерминированный; seeds пакета = `suggested`; Person не в MVP.
+- Оценки eng: **34–47 чел·дн**; контент SME+стройка отдельно 4–7 дн методолог.
+- В `BACKLOG.md` добавлен **B-SISTEMA-001**; кодовое слово **`СИСТЕМА`**.
+
+**Файлы:** `v2/docs/IMPLEMENTATION_PLAN_SISTEMA.md`, `v2/docs/BACKLOG.md`, `.cursor/DEVLOG.md`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Финальное ревью архитектора → статус плана `approved` → старт по **`СИСТЕМА U1`**.
+
+---
+
+## 2026-08-20 — TG отчёт: без голых URL, кнопка primary, ссылка зоны в UI
+
+**Тип:** `fix` / `ux`
+
+**Сделано:**
+- В Telegram-тексте отчёта убраны строки со ссылками на зону и отчёт — только цифры + кнопка «Посмотреть отчёт» (`style=primary`).
+- В настройках вакансии у «Отчёт заказчику» — копируемая общая ссылка на зону (`ClientZoneLink`).
+
+**Файлы:** `client_report.py`, `keyboards.py`, `VacancyReportButton.tsx`, `vacancies/[id]/page.tsx`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Выкат api+web на timeweb.
+
+---
+
+## 2026-08-20 — Отчёт заказчику: viewer в /c/ + кнопка в Telegram
+
+**Тип:** `feature`
+
+**Сделано:**
+- API отчёта: `GET /client-zone/{token}/reports…` + cohort/candidate read-only; метрики воронки из `hr_stage_history`.
+- UI: вкладки «Решения / Отчёты» в `/c/{token}`; страница `/c/{token}/report/{vacancyId}` (клик по цифрам → список → карточка без решений).
+- Кнопка HR «Отчёт заказчику» → `POST /vacancies/{id}/report-to-chat` (цифры + кнопка «Открыть отчёт» + URL зоны для закрепления).
+- Старая «Сводка в чат» оставлена рядом.
+
+**Файлы:** `client_report.py`, `routes/client_zone.py`, `routes/vacancies.py`, `app/c/[token]/…`, `VacancyReportButton.tsx`, `vacancies/[id]/page.tsx`
+
+**Git:** незакоммичено · **Deploy:** timeweb api+worker+web
+
+**Следующий шаг:**
+- Проверить на вакансии: «Отчёт заказчику» в настройках → открыть ссылку в Telegram; закрепить `/c/…` в чате вручную.
+
+---
+
+## 2026-08-20 — Отключены автосводки в Telegram (до отчёта в зоне)
+
+**Тип:** `ops` / `decision`
+
+**Сделано:**
+- `DIGEST_SCHEDULE = ()` в v2 `reminders.py` и Streamlit `telegram_reminders.py` — больше нет автоотправки по вт/пт.
+- Ручная «Сводка в чат» и остальной messaging без изменений.
+- Решение: новый отчёт в TG + кнопка «Отчёт заказчику» + viewer в `/c/` — когда страница отчёта будет готова; в чате закрепится общая ссылка на зону.
+
+**Файлы:** `v2/backend/app/services/messaging/reminders.py`, `telegram_reminders.py`, `notify_prefs.py`
+
+**Git:** незакоммичено · **Deploy:** timeweb api+worker выкачены, `DIGEST_SCHEDULE=()` на проде, health 200
+
+**Следующий шаг:**
+- Боевой viewer отчёта в зоне заказчика → затем текст TG с цифрами воронки и кнопка отправки.
+
+---
+
+## 2026-08-20 — Макет: кликабельные цифры (standalone из‑за зависшего Next)
+
+**Тип:** `ui` / `ops`
+
+**Сделано:**
+- В Next-макете цифры уже были кнопками, но локальный `next dev` на :3000/:3001 завис (не убивается из агента, EMFILE) и отдавал старую страницу без кликов.
+- Добавлен рабочий standalone: `v2/frontend/public/client-report-mock.html` — воронка и отказы кликабельны → список → карточка только просмотр.
+- Раздача: `python3 -m http.server 8765` в `public/` → http://127.0.0.1:8765/client-report-mock.html
+
+**Файлы:** `public/client-report-mock.html`, `design-preview/client-report/page.tsx` (+ клики по полоске воронки)
+
+**Следующий шаг:**
+- У себя перезапустить Next: `kill -9` на PID :3000/:3001, `ulimit -n 65536`, `npm run dev`.
+
+---
+
+## 2026-08-20 — Макет viewer: клик по цифрам + разбивка отказов
+
+**Тип:** `ui` / `mock`
+
+**Сделано:**
+- Отказы в макете: 17 заказчиком / 17 рекрутером / 6 отказались (кликабельно).
+- Цифры воронки → срез списка → карточка как в /c/… без форм решения (прототип боевого viewer).
+- Подсказки в UI: read-only API, без PATCH; контакты пока видны.
+
+**Файлы:** `v2/frontend/app/design-preview/client-report/page.tsx`, `report.module.css`
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Согласовать макет; затем отдельный read-only endpoint + экран в зоне заказчика.
+
+---
+
+## 2026-08-20 — Макет отчёта заказчика: этапы + цифры с архива
+
+**Тип:** `ui` / `mock`
+
+**Сделано:**
+- Воронка в макете: 6 основных этапов + 2 исхода «особняком» (линия + отдельный блок).
+- Цифры с закрытой вакансии прод `id=3` «Графический дизайнер» (история этапов): 41 / 39 / 30 / 18 / 4 / 1; без ответа 0; отказов 40.
+- История: «Отсеяны HR до вашей оценки» вместо «скрининга»; контакты в макете пока не скрываем.
+
+**Файлы:** `v2/frontend/app/design-preview/client-report/page.tsx`, `report.module.css`
+
+**Данные / конфиг:** только чтение прод БД для цифр макета
+
+**Git:** незакоммичено
+
+**Следующий шаг:**
+- Показать макет заказчику / согласовать подписи этапов.
+
+---
+
+## 2026-08-20 — Прод: 500 на /vacancies/15/candidates (миграции ЯКОРЬ)
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Причина: код с `candidates.person_id` выложен, миграции `ac47…`–`a5dcc…` на прод не были — `UndefinedColumn: person_id`.
+- Частичная схема на проде (таблицы `persons`, `candidate_segments` уже были) — миграция `21bc…` падала на `DuplicateTable`, API в restart-loop.
+- Миграции `21bc8c335735` и `a5dcc48e3506` сделаны идемпотентными (проверка существующих таблиц/колонок).
+- Rsync миграций на timeweb, rebuild api+worker; alembic head `a5dcc48e3506`, health 200.
+
+**Файлы:** `alembic/versions/21bc8c335735_*.py`, `a5dcc48e3506_*.py`, `deploy/backend-only.sh` (+ rsync alembic)
+
+**Git:** незакоммичено · **Deploy:** timeweb, api + worker
+
+**Риски:** на проде была рассинхронизация app vs alembic — `backend-only.sh` теперь синхронизирует и migrations.
+
+**Следующий шаг:**
+- Проверить список кандидатов в вакансии 15 в UI.
+
+---
+
+## 2026-08-20 — Прод: вход 500, API не стартовал
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Причина: `NameError: RelatedCandidateOut is not defined` в `schemas.py` — API в crash-loop.
+- Фикс: `from __future__ import annotations` в `schemas.py`.
+- Deploy: `./deploy/backend-only.sh timeweb` — health 200, login отвечает 401 (не 500).
+
+**Файлы:** `v2/backend/app/schemas.py`
+
+**Git:** незакоммичено · **Deploy:** timeweb, api + worker
+
+**Следующий шаг:**
+- Проверить вход под своим аккаунтом; для DM по макетам — /start у бота вакансии.
+
+---
+
+## 2026-08-19 — Макеты: подсветка решения HR + deploy/backend-only.sh
+
+**Тип:** `fix` / `ops`
+
+**Сделано:**
+- Скрипт `deploy/backend-only.sh`: rsync всего `v2/backend/app/` + rebuild api/worker.
+- Решение в `/m/…`: лог ошибки Telegram DM (раньше молча глоталось).
+- Вкладка «Макеты резюме»: пилюля статуса, подсветка строки, время решения; решённые внизу.
+- На проде DM падает: `bot can't initiate conversation` — нужен /start у бота вакансии.
+
+**Файлы:** `deploy/backend-only.sh`, `resume_preview.py`, `ResumePreviewPanel.tsx`, `globals.css`
+
+**Git:** незакоммичено · **Deploy:** локально, на прод не выложено (ожидает `./deploy/backend-only.sh`)
+
+---
+
 ## 2026-08-19 — YAKOR PR3: talent pool tables + CRUD + UI
 
 **Тип:** `feature`
