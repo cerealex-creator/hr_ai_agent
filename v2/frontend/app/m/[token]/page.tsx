@@ -12,6 +12,7 @@ type PreviewCard = {
   photo_url?: string | null;
   gender?: string | null;
   resume_url?: string | null;
+  ai_score?: number | null;
   ai_strengths?: string[];
   ai_weaknesses?: string[];
   hr_comment?: string | null;
@@ -129,7 +130,10 @@ export default function ResumePreviewPage() {
               />
               <div>
                 <h2 className="rp-card-name">{c.name}</h2>
-                <span className="cz-pill cz-pill-status">{STATUS_LABEL[c.status] || c.status}</span>
+                <div className="cz-pills">
+                  <span className="cz-pill cz-pill-status">{STATUS_LABEL[c.status] || c.status}</span>
+                  {c.ai_score != null ? <span className="cz-pill">ИИ {c.ai_score}</span> : null}
+                </div>
               </div>
             </div>
             {c.hr_comment ? (
@@ -158,7 +162,7 @@ export default function ResumePreviewPage() {
                   aria-expanded={Boolean(aiOpen[c.id])}
                   onClick={() => setAiOpen((prev) => ({ ...prev, [c.id]: !prev[c.id] }))}
                 >
-                  {aiOpen[c.id] ? "Скрыть коммент ИИ-ассистента" : "Коммент от ИИ-ассистента"}
+                  {aiOpen[c.id] ? "Скрыть оценку ИИ" : "Оценка ИИ"}
                 </button>
                 {aiOpen[c.id] ? (
                   <div className="rp-ai-body">

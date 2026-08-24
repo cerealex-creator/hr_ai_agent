@@ -7,6 +7,7 @@ import { HhSearchPanel } from "@/components/HhSearchPanel";
 import { YandexDiskPanel } from "@/components/YandexDiskPanel";
 import { VacancyTitleEditor } from "@/components/VacancyTitleEditor";
 import { VacancyDigestButton } from "@/components/VacancyDigestButton";
+import { VacancyReportButton } from "@/components/VacancyReportButton";
 import { VacancyCloseButton } from "@/components/VacancyCloseButton";
 import { VacancyLifecycle } from "@/components/VacancyLifecycle";
 import { VacancySettingsPanel } from "@/components/VacancySettingsPanel";
@@ -321,7 +322,15 @@ export default async function VacancyPage({ params, searchParams }: Props) {
           {view === "settings" ? (
             <div className="vac-settings-stack">
               <div className="rec-card">
-                <h3 className="rec-card-title">Сводка</h3>
+                <h3 className="rec-card-title">Отчёт заказчику</h3>
+                <VacancyReportButton
+                  vacancyId={vacancy.id}
+                  clientId={vacancy.client_id}
+                  hasChatId={Boolean((vacancy.chat_id || "").trim())}
+                />
+              </div>
+              <div className="rec-card">
+                <h3 className="rec-card-title">Сводка (старая)</h3>
                 <VacancyDigestButton
                   vacancyId={vacancy.id}
                   hasChatId={Boolean((vacancy.chat_id || "").trim())}

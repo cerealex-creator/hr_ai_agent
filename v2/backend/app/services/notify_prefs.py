@@ -10,13 +10,12 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
 
-# Align with admin digest: Tue 18:00, Fri 15:00 (Europe/Moscow) — see reminders.DIGEST_SCHEDULE
+# Автодайджест бота отключён (см. reminders.DIGEST_SCHEDULE = ()).
 DEFAULT_TELEGRAM_PERIOD = "digest_admin"
 DEFAULT_TELEGRAM_TEXT = (
     "📊 Сводка по вакансиям\n\n"
     "Краткая сводка по активным вакансиям и статусам кандидатов у заказчика "
-    "(ждёт / подумать / встреча). Расписание по умолчанию — как у дайджеста бота: "
-    "вторник 18:00 и пятница 15:00 (Europe/Moscow)."
+    "(ждёт / подумать / встреча). Авторасписание бота отключено — сводка только вручную."
 )
 
 DEFAULT_NOTIFY_PREFS: dict[str, Any] = {

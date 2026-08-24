@@ -261,8 +261,17 @@ def create_department_endpoint(
 
 @router.get("/companies/{company_id}/client-zone")
 def get_company_client_zone(company_id: int, db: Session = Depends(get_db)) -> dict:
+    from app.services.tenancy import generate_client_zone_token
+
     owner = get_client_or_404(db, company_id)
-    token = owner.client_zone_token or ""
+    token = (owner.client_zone_token or "").strip()
+    if not token:
+        token = generate_client_zone_token(db)
+        owner.client_zone_token = token
+        db.add(owner)
+        db.commit()
+        db.refresh(owner)
+        token = str(owner.client_zone_token or "").strip()
     return {
         "company_id": owner.id,
         "company_name": owner.name,

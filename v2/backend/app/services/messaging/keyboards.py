@@ -45,12 +45,22 @@ def has_meeting_schedule(date_str: str | None, time_str: str | None) -> bool:
     return bool((date_str or "").strip() and (time_str or "").strip())
 
 
-def build_url_button_keyboard(url: str, label: str = "Смотреть кандидата") -> dict[str, Any]:
+def build_url_button_keyboard(
+    url: str,
+    label: str = "Смотреть кандидата",
+    *,
+    style: str | None = None,
+) -> dict[str, Any]:
     href = (url or "").strip()
     if not href.startswith(("http://", "https://")):
         return {"inline_keyboard": []}
     text = (label or "Открыть").strip() or "Открыть"
-    return {"inline_keyboard": [[{"text": text, "url": href}]]}
+    btn: dict[str, Any] = {"text": text, "url": href}
+    # Bot API 9.4+: primary | success | danger (старые клиенты просто без цвета)
+    st = (style or "").strip().lower()
+    if st in ("primary", "success", "danger"):
+        btn["style"] = st
+    return {"inline_keyboard": [[btn]]}
 
 
 def build_view_candidate_keyboard(url: str) -> dict[str, Any]:

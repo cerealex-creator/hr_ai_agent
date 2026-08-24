@@ -15,10 +15,14 @@ export type PreviewPackItem = {
   has_photo: boolean;
   photo_url?: string | null;
   gender?: string | null;
+  ai_score?: number | null;
+  ai_strengths?: string[];
+  ai_weaknesses?: string[];
   strengths_count: number;
   weaknesses_count?: number;
   hr_comment?: string;
   status: string;
+  decided_at?: string | null;
   anonymized_resume_link: string;
   resume_url: string | null;
 };
@@ -34,10 +38,34 @@ export type PreviewPack = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  wait: "ждёт решения",
-  consider: "можно рассмотреть",
-  reject: "отказ",
+  wait: "Ждёт решения",
+  consider: "Можно рассмотреть",
+  reject: "Отказ",
 };
+
+function statusRowClass(status: string): string {
+  if (status === "consider") return " rp-hr-decided-consider";
+  if (status === "reject") return " rp-hr-decided-reject";
+  return "";
+}
+
+function statusPillClass(status: string): string {
+  if (status === "consider") return "cz-pill rp-pill-consider";
+  if (status === "reject") return "cz-pill rp-pill-reject";
+  return "cz-pill cz-pill-muted";
+}
+
+function formatDecidedAt(raw: string | null | undefined): string | null {
+  const s = (raw || "").trim();
+  if (!s) return null;
+  try {
+    const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return null;
+  }
+}
 
 function packHref(pack: PreviewPack | null): string {
   if (!pack) return "";
@@ -58,6 +86,7 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
   const [copied, setCopied] = useState(false);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [addOpen, setAddOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/resume-preview`);
@@ -136,6 +165,19 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
         throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
       }
       setPack(data as PreviewPack);
+    });
+
+  const deletePreview = (id: string) =>
+    run(async () => {
+      const res = await apiFetch(`/api/v1/vacancies/${vacancyId}/resume-preview/candidates/${id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`);
+      }
+      setPack(data as PreviewPack);
+      setMsg("Макет удалён");
     });
 
   const saveComment = (id: string) =>
@@ -298,7 +340,7 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
           </h4>
           <ul className="rp-hr-list">
           {pack.candidates.map((c) => (
-            <li key={c.id} className="rp-hr-row-stack">
+            <li key={c.id} className={`rp-hr-row-stack${statusRowClass(c.status)}`}>
               <div className="rp-hr-row">
               <div className="rp-hr-row-main">
                 <CandidateAvatar
@@ -310,12 +352,22 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
                 />
                 <div>
                   <a href={`/candidates/${c.id}`}>{c.name}</a>
+                  {c.ai_score != null ? (
+                    <span className="cz-pill" style={{ marginLeft: "0.35rem" }}>
+                      ИИ {c.ai_score}
+                    </span>
+                  ) : null}
+                  <div className="cz-pills" style={{ marginTop: "0.25rem" }}>
+                    <span className={statusPillClass(c.status)}>
+                      {STATUS_LABEL[c.status] || c.status}
+                    </span>
+                  </div>
                   <span className="muted hh-micro">
                     {" "}
                     {c.ready ? "PDF готов" : "нужна ссылка Диска"}
                     {c.strengths_count ? ` · плюсы ИИ: ${c.strengths_count}` : ""}
                     {c.weaknesses_count ? ` · минусы ИИ: ${c.weaknesses_count}` : ""}
-                    {c.status && c.status !== "wait" ? ` · ${STATUS_LABEL[c.status] || c.status}` : ""}
+                    {formatDecidedAt(c.decided_at) ? ` · решение ${formatDecidedAt(c.decided_at)}` : ""}
                   </span>
                 </div>
               </div>
@@ -337,8 +389,50 @@ export function ResumePreviewPanel({ vacancyId, hasChatId }: { vacancyId: number
                 >
                   Убрать
                 </button>
+                <button
+                  type="button"
+                  className="chip chip-danger"
+                  disabled={busy}
+                  onClick={() => {
+                    if (confirm("Удалить макет безвозвратно? Кандидат не попадёт в общий список.")) {
+                      void deletePreview(c.id);
+                    }
+                  }}
+                >
+                  Удалить
+                </button>
               </div>
               </div>
+              {c.ai_strengths?.length || c.ai_weaknesses?.length ? (
+                <div className="rp-ai rp-hr-ai">
+                  <button
+                    type="button"
+                    className="chip"
+                    aria-expanded={Boolean(aiOpen[c.id])}
+                    onClick={() => setAiOpen((prev) => ({ ...prev, [c.id]: !prev[c.id] }))}
+                  >
+                    {aiOpen[c.id] ? "Скрыть оценку ИИ" : "Оценка ИИ"}
+                  </button>
+                  {aiOpen[c.id] ? (
+                    <div className="rp-ai-body">
+                      {c.ai_strengths && c.ai_strengths.length ? (
+                        <ul className="rp-plus">
+                          {c.ai_strengths.map((line) => (
+                            <li key={`plus-${c.id}-${line}`}>{line}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {c.ai_weaknesses && c.ai_weaknesses.length ? (
+                        <ul className="rp-minus">
+                          {c.ai_weaknesses.map((line) => (
+                            <li key={`minus-${c.id}-${line}`}>{line}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <label className="hh-field rp-hr-comment">
                 <span className="hh-label">Комментарий для заказчика</span>
                 <textarea

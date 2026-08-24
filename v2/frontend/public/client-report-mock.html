@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Макет · отчёт заказчика (viewer)</title>
+  <style>
+    :root {
+      --bg: #f3ebe0;
+      --card: #fffaf3;
+      --ink: #2a241c;
+      --muted: #7a6f63;
+      --line: #e2d6c6;
+      --accent: #c45c26;
+      --accent-deep: #8f3f14;
+      --accent-soft: #f3d7c4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.45 Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        repeating-linear-gradient(90deg, rgba(120,90,50,.035) 0 1px, transparent 1px 14px),
+        var(--bg);
+    }
+    .page { max-width: 420px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+    .kicker { text-align: center; text-transform: uppercase; letter-spacing: .08em; font-size: .72rem; color: var(--muted); margin: 0; }
+    h1 { text-align: center; margin: .35rem 0 1rem; font-size: 2rem; }
+    h2 { margin: 0 0 .35rem; font-size: 1.15rem; }
+    .muted { color: var(--muted); font-size: .9rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: .75rem;
+      padding: 1rem;
+      margin: 0 0 1rem;
+    }
+    .funnel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .55rem;
+    }
+    .stat {
+      appearance: none;
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: .55rem;
+      background: #fff;
+      padding: .55rem .6rem;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+    }
+    .stat:hover, .stat:focus-visible {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent-soft) 45%, white);
+      outline: none;
+    }
+    .stat .n { display: block; font-size: 1.4rem; font-weight: 700; line-height: 1.1; }
+    .stat .l { display: block; font-size: .78rem; color: var(--muted); margin-top: .15rem; }
+    .stat .a { display: block; margin-top: .25rem; font-size: .72rem; font-weight: 700; color: var(--accent-deep); }
+    .aside { margin-top: .9rem; padding-top: .85rem; border-top: 1px dashed var(--line); }
+    .aside-title { margin: 0 0 .5rem; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .reject {
+      appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 2.4rem 1fr auto;
+      gap: .4rem;
+      align-items: center;
+      margin: 0 0 .35rem;
+      padding: .55rem .65rem;
+      border: 1px solid var(--line);
+      border-radius: .55rem;
+      background: color-mix(in srgb, #c4a0a0 12%, white);
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+    .reject:hover { border-color: #c4a0a0; }
+    .reject .n { font-size: 1.2rem; font-weight: 700; color: #9a5b5b; }
+    .list button.row {
+      appearance: none;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      gap: .75rem;
+      align-items: center;
+      margin: 0 0 .5rem;
+      padding: .85rem .9rem;
+      border: 1px solid var(--line);
+      border-radius: .65rem;
+      background: #fff;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+    }
+    .list button.row:hover { border-color: var(--accent); }
+    .pill {
+      display: inline-block;
+      padding: .15rem .45rem;
+      border-radius: 999px;
+      background: #eee6da;
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .back {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--accent-deep);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0;
+      margin: 0 0 .75rem;
+    }
+    .badge {
+      display: inline-block;
+      margin: 0 0 .75rem;
+      padding: .25rem .55rem;
+      border-radius: 999px;
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      background: #eee6da;
+      color: var(--muted);
+    }
+    .hint {
+      margin: .65rem 0 0;
+      padding: .7rem .8rem;
+      border: 1px dashed var(--line);
+      border-radius: .55rem;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+    .banner {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: #2a241c; color: #fff;
+      text-align: center; padding: .45rem;
+      font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 700;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <p class="kicker">Зона заказчика · режим просмотра</p>
+    <h1>Маркетинг</h1>
+
+    <div id="view-hub">
+      <div class="card" style="cursor:pointer" onclick="showReport()">
+        <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center">
+          <div>
+            <h2>Графический дизайнер</h2>
+            <p class="muted" style="margin:0">5 июня — 3 августа 2026 · закрыта</p>
+          </div>
+          <strong style="color:var(--accent-deep)">Открыть →</strong>
+        </div>
+      </div>
+      <p class="hint">Откройте вакансию, затем нажмите на любую цифру воронки.</p>
+    </div>
+
+    <div id="view-report" class="hidden">
+      <button class="back" type="button" onclick="showHub()">← Все отчёты</button>
+      <h2>Графический дизайнер</h2>
+      <p class="muted">5 июня — 3 августа 2026 · архив</p>
+      <p class="hint">Нажмите на цифру — откроется список кандидатов. Карточки только на просмотр.</p>
+
+      <div class="card">
+        <h2 style="margin-bottom:.75rem">Картина работы</h2>
+        <div class="funnel-grid" id="funnel-main"></div>
+        <div class="aside">
+          <p class="aside-title">Исходы вне воронки</p>
+          <p style="margin:.35rem 0 .55rem"><strong>40</strong> получили отказ:</p>
+          <div id="funnel-rejects"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-cohort" class="hidden">
+      <button class="back" type="button" onclick="showReport()">← К картине работы</button>
+      <h2 id="cohort-title"></h2>
+      <p class="muted" id="cohort-meta"></p>
+      <div class="list" id="cohort-list"></div>
+    </div>
+
+    <div id="view-detail" class="hidden">
+      <button class="back" type="button" onclick="showCohort()">← К списку среза</button>
+      <div class="badge">Только просмотр · без права менять статусы</div>
+      <h2 id="detail-name"></h2>
+      <p class="muted">Графический дизайнер</p>
+      <p><span class="pill" id="detail-status"></span></p>
+      <div class="card" style="margin-top:.85rem">
+        <h2>Комментарий HR</h2>
+        <p id="detail-comment" style="margin:0"></p>
+      </div>
+      <p class="hint">Решение менять нельзя — это viewer отчёта, не рабочая зона /c/…</p>
+    </div>
+  </div>
+  <div class="banner">Макет · будущий viewer · цифры кликабельны</div>
+
+  <script>
+    const MAIN = [
+      { key: "selected", label: "Отобрано из базы и откликов", value: 41 },
+      { key: "contact", label: "Вышли на контакт", value: 39 },
+      { key: "interview", label: "Первое собеседование", value: 30 },
+      { key: "to_client", label: "Направлено на оценку", value: 18 },
+      { key: "meeting", label: "Встреча с заказчиком", value: 4 },
+      { key: "offer", label: "Получили оффер", value: 1 },
+    ];
+    const REJECTS = [
+      { key: "rej_client", label: "отклонены заказчиком", value: 17 },
+      { key: "rej_hr", label: "отклонены рекрутером", value: 17 },
+      { key: "rej_cand", label: "отказались сами", value: 6 },
+    ];
+    const TITLES = {
+      selected: "Отобрано из базы и откликов",
+      contact: "Вышли на контакт",
+      interview: "Первое собеседование",
+      to_client: "Направлено на оценку",
+      meeting: "Встреча с заказчиком",
+      offer: "Получили оффер",
+      rej_client: "Отклонены заказчиком",
+      rej_hr: "Отклонены рекрутером",
+      rej_cand: "Отказались сами",
+    };
+    const SAMPLES = {
+      selected: [
+        { id: "1", name: "Анна К.", status: "В чат не отправлен", comment: "Портфолио слабое под карточки MP." },
+        { id: "2", name: "Елизавета Е.", status: "Вышла на работу", comment: "Финальный кандидат — оффер принят." },
+      ],
+      contact: [
+        { id: "3", name: "Мария П.", status: "Отказ HR", comment: "Зарплатные ожидания выше вилки." },
+        { id: "4", name: "Сергей Л.", status: "Отказ HR", comment: "Созвонились: вилка не сходится." },
+      ],
+      interview: [
+        { id: "5", name: "Изабелла Т.", status: "Отказ кандидата", comment: "Пропала после собеседования." },
+        { id: "6", name: "Ольга А.", status: "Отказ заказчика", comment: "Стиль не совпал с брендом." },
+      ],
+      to_client: [
+        { id: "7", name: "Анастасия С.", status: "Отказ заказчика", comment: "Стиль не совпал с брендом." },
+        { id: "8", name: "Дарья З.", status: "Отказ заказчика", comment: "Отказ в клиентской зоне." },
+      ],
+      meeting: [
+        { id: "9", name: "Елизавета Е.", status: "Вышла на работу", comment: "После встречи — оффер и выход." },
+      ],
+      offer: [
+        { id: "10", name: "Елизавета Е.", status: "Вышла на работу", comment: "Оффер принят, вышла на работу." },
+      ],
+      rej_client: [
+        { id: "11", name: "Анастасия С.", status: "Отказ заказчика", comment: "Стиль не совпал с брендом." },
+        { id: "12", name: "Дарья З.", status: "Отказ заказчика", comment: "Отказ в клиентской зоне (Telegram)." },
+      ],
+      rej_hr: [
+        { id: "13", name: "Мария П.", status: "Отказ HR", comment: "Портфолио не под маркетплейсы." },
+        { id: "14", name: "Игорь Н.", status: "Отказ HR", comment: "Слабая презентация кейсов." },
+      ],
+      rej_cand: [
+        { id: "15", name: "Изабелла Т.", status: "Отказ кандидата", comment: "Кандидат пропал." },
+        { id: "16", name: "Пелагея Р.", status: "Отказ кандидата", comment: "Выбрала другое место." },
+      ],
+    };
+    const TOTALS = { selected:41, contact:39, interview:30, to_client:18, meeting:4, offer:1, rej_client:17, rej_hr:17, rej_cand:6 };
+
+    let cohortKey = null;
+    let detail = null;
+
+    function hideAll() {
+      ["hub","report","cohort","detail"].forEach((k) => {
+        document.getElementById("view-" + k).classList.add("hidden");
+      });
+    }
+    function showHub() { hideAll(); document.getElementById("view-hub").classList.remove("hidden"); }
+    function showReport() { hideAll(); document.getElementById("view-report").classList.remove("hidden"); }
+    function showCohort() {
+      hideAll();
+      document.getElementById("view-cohort").classList.remove("hidden");
+    }
+    function openCohort(key) {
+      cohortKey = key;
+      const list = SAMPLES[key] || [];
+      document.getElementById("cohort-title").textContent = TITLES[key];
+      document.getElementById("cohort-meta").textContent =
+        list.length + " из " + TOTALS[key] + " · только просмотр (в макете примеры)";
+      document.getElementById("cohort-list").innerHTML = list.map((c) => `
+        <button class="row" type="button" onclick='openDetail(${JSON.stringify(c)})'>
+          <div>
+            <strong>${c.name}</strong>
+            <div class="muted" style="margin-top:.2rem">${c.comment}</div>
+          </div>
+          <span class="pill">${c.status}</span>
+        </button>
+      `).join("");
+      showCohort();
+    }
+    function openDetail(c) {
+      detail = c;
+      document.getElementById("detail-name").textContent = c.name;
+      document.getElementById("detail-status").textContent = c.status;
+      document.getElementById("detail-comment").textContent = c.comment;
+      hideAll();
+      document.getElementById("view-detail").classList.remove("hidden");
+    }
+
+    document.getElementById("funnel-main").innerHTML = MAIN.map((s) => `
+      <button class="stat" type="button" onclick="openCohort('${s.key}')">
+        <span class="n">${s.value}</span>
+        <span class="l">${s.label}</span>
+        <span class="a">Смотреть список →</span>
+      </button>
+    `).join("");
+
+    document.getElementById("funnel-rejects").innerHTML = REJECTS.map((s) => `
+      <button class="reject" type="button" onclick="openCohort('${s.key}')">
+        <span class="n">${s.value}</span>
+        <span>${s.label}</span>
+        <span class="a">→</span>
+      </button>
+    `).join("");
+  </script>
+</body>
+</html>

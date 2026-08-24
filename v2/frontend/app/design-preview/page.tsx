@@ -180,6 +180,10 @@ export default function DesignPreviewPage() {
           <a href="/design-preview/plan" style={{ color: "#2e6fd6", fontWeight: 600 }}>
             Сравнить с изначальным планом A+C →
           </a>
+          {" · "}
+          <a href="/design-preview/client-report" style={{ color: "#2e6fd6", fontWeight: 600 }}>
+            Макет отчёта для заказчика →
+          </a>
         </p>
 
         <div className={styles.compactWrap}>

@@ -1,6 +1,7 @@
 """Vacancy-scoped resume mockup zone: PDFs without contacts for client screening."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,7 @@ from app.services.demo_showcase import client_org_is_demo
 from app.services.tenancy import generate_client_zone_token
 from app.services.yandex_public import yandex_link_for_display
 
+logger = logging.getLogger(__name__)
 PREVIEW_ACTIONS = frozenset({"consider", "reject"})
 PREVIEW_ACTIONABLE = frozenset({"", "wait"})
 PREVIEW_DEFAULT_NAME = "Кандидат на рассмотрение"
@@ -202,12 +204,20 @@ def _card(c: models.Candidate, *, demo: bool) -> dict[str, Any]:
     status = str(payload.get("resume_preview_status") or "wait").strip() or "wait"
     resume_url = anonymized_pdf_url(payload)
     actionable = status in PREVIEW_ACTIONABLE and not demo and bool(resume_url)
+    raw_score = payload.get("ai_score")
+    ai_score: int | None = None
+    if raw_score is not None:
+        try:
+            ai_score = int(raw_score)
+        except (TypeError, ValueError):
+            pass
     return {
         "id": str(c.id),
         "name": preview_display_name(c.name),
         "photo_url": (str(payload.get("photo_url") or "").strip() or None),
         "gender": normalize_gender(payload.get("gender") or payload.get("sex")),
         "resume_url": resume_url,
+        "ai_score": ai_score,
         "ai_strengths": _strengths(payload),
         "ai_weaknesses": _weaknesses(payload),
         "hr_comment": _preview_hr_comment(payload),
@@ -282,6 +292,7 @@ def apply_preview_decision(
         raise HTTPException(status_code=400, detail="Нет ссылки на PDF макета")
 
     payload["resume_preview_status"] = key
+    payload["resume_preview_decided_at"] = _now_iso()
     note = (comment or "").strip()
     if note:
         prev = str(payload.get("client_comment") or "").strip()
@@ -317,6 +328,13 @@ def pack_status(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
         url = anonymized_pdf_url(payload)
         raw = str(payload.get("anonymized_resume_link") or "").strip()
         photo = str(payload.get("photo_url") or "").strip() or None
+        raw_score = payload.get("ai_score")
+        ai_score: int | None = None
+        if raw_score is not None:
+            try:
+                ai_score = int(raw_score)
+            except (TypeError, ValueError):
+                pass
         item = {
             "id": str(c.id),
             "name": preview_display_name(c.name),
@@ -326,10 +344,14 @@ def pack_status(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
             "has_photo": bool(photo),
             "photo_url": photo,
             "gender": normalize_gender(payload.get("gender") or payload.get("sex")),
+            "ai_score": ai_score,
+            "ai_strengths": _strengths(payload),
+            "ai_weaknesses": _weaknesses(payload),
             "strengths_count": len(_strengths(payload)),
             "weaknesses_count": len(_weaknesses(payload)),
             "hr_comment": _preview_hr_comment(payload) or "",
             "status": str(payload.get("resume_preview_status") or "").strip() or "wait",
+            "decided_at": str(payload.get("resume_preview_decided_at") or "").strip() or None,
             "anonymized_resume_link": raw,
             "resume_url": url,
         }
@@ -337,7 +359,13 @@ def pack_status(db: Session, vacancy: models.Vacancy) -> dict[str, Any]:
             items.append(item)
             if url and visible:
                 ready_n += 1
-    items.sort(key=lambda x: (not x["ready"], (x["name"] or "").casefold()))
+    items.sort(
+        key=lambda x: (
+            0 if (x.get("status") or "wait") in ("", "wait") else 1,
+            not x["ready"],
+            (x["name"] or "").casefold(),
+        )
+    )
     public_url = resume_preview_public_url(token) if token else ""
     return {
         "token": token or None,
@@ -400,6 +428,33 @@ def set_included(
     return pack_status(db, vacancy)
 
 
+def delete_preview_candidate(
+    db: Session, vacancy: models.Vacancy, candidate_id: str
+) -> dict[str, Any]:
+    """Полностью удаляет кандидата-макет из БД (без переноса в общий список)."""
+    try:
+        cid = UUID(str(candidate_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Некорректный id") from exc
+    candidate = db.get(models.Candidate, cid)
+    if not candidate or candidate.vacancy_id != vacancy.id:
+        raise HTTPException(status_code=404, detail="Кандидат не найден")
+    payload = candidate.payload or {}
+    if not bool(payload.get("resume_preview_included")):
+        raise HTTPException(
+            status_code=400,
+            detail="Кандидат не является макетом — удаление через эту точку запрещено",
+        )
+    # Удалить связанные messaging posts
+    for post in db.scalars(
+        select(models.MessagingPost).where(models.MessagingPost.candidate_id == cid)
+    ).all():
+        db.delete(post)
+    db.delete(candidate)
+    db.commit()
+    return pack_status(db, vacancy)
+
+
 def _notify_preview_decision(
     db: Session,
     vacancy: models.Vacancy,
@@ -423,9 +478,21 @@ def _notify_preview_decision(
         + (f"\n{_esc(comment)}" if comment else "")
     )
     try:
-        send_html_message(hr_chat, text)
-    except Exception:  # noqa: BLE001
-        return
+        ok, msg, _mid = send_html_message(hr_chat, text)
+        if not ok:
+            logger.warning(
+                "preview_decision DM to HR failed vacancy=%s candidate=%s: %s",
+                vacancy.id,
+                candidate.id,
+                msg,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "preview_decision DM to HR error vacancy=%s candidate=%s: %s",
+            vacancy.id,
+            candidate.id,
+            exc,
+        )
 
 
 def _esc(text: Any) -> str:

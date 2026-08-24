@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.services import client_report as cr
 from app.services import client_zone as cz
 
 router = APIRouter(prefix="/client-zone", tags=["client-zone"])
@@ -24,7 +25,38 @@ class ClientZoneDecideIn(BaseModel):
 
 @router.get("/{token}")
 def client_zone_home(token: str, db: Session = Depends(get_db)) -> dict:
-    return cz.list_zone_candidates(db, token)
+    home = cz.list_zone_candidates(db, token)
+    return cr.enrich_zone_home_with_reports(db, token, home)
+
+
+@router.get("/{token}/reports")
+def client_zone_reports(token: str, db: Session = Depends(get_db)) -> dict:
+    return cr.list_zone_reports(db, token)
+
+
+@router.get("/{token}/reports/{vacancy_id}")
+def client_zone_report(token: str, vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    return cr.get_zone_report(db, token, vacancy_id)
+
+
+@router.get("/{token}/reports/{vacancy_id}/cohorts/{cohort}")
+def client_zone_report_cohort(
+    token: str,
+    vacancy_id: int,
+    cohort: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    return cr.list_zone_report_cohort(db, token, vacancy_id, cohort)
+
+
+@router.get("/{token}/reports/{vacancy_id}/candidates/{candidate_id}")
+def client_zone_report_candidate(
+    token: str,
+    vacancy_id: int,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    return cr.get_zone_report_candidate(db, token, vacancy_id, candidate_id)
 
 
 @router.get("/{token}/candidates/{candidate_id}")

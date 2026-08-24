@@ -25,10 +25,9 @@ FEEDBACK_OVERDUE_MIN = timedelta(hours=24)
 FEEDBACK_REPEAT_MIN = timedelta(hours=24)
 THINK_LONG_MIN = timedelta(days=5)
 
-DIGEST_SCHEDULE = (
-    ("tuesday", 1, 18, 0),
-    ("friday", 4, 15, 0),
-)
+# Автосводки в Telegram отключены (2026-08-20): пока нет отчётной страницы в зоне заказчика.
+# Раньше: вторник 18:00 и пятница 15:00 (Europe/Moscow). Ручная «Сводка в чат» пока без изменений.
+DIGEST_SCHEDULE: tuple[tuple[str, int, int, int], ...] = ()
 DIGEST_TIME_TOLERANCE_MIN = 12
 MONDAY_CATCHUP_HOUR = 10
 MONDAY_CATCHUP_MINUTE = 0

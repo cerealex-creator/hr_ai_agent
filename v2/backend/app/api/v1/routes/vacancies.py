@@ -756,10 +756,32 @@ def create_vacancy_candidate(
 ) -> CandidateDetail:
     from app.services.candidate_write import create_candidate
 
+    from app.services.tenancy import require_org_id
+
     require_intake_channel("manual")
     get_vacancy_or_404(db, vacancy_id)
-    fields = body.model_dump(exclude={"name"}, exclude_none=True)
-    cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields)
+    fields = body.model_dump(exclude={"name", "force_duplicate"}, exclude_none=True)
+    org_id = require_org_id()
+
+    if not body.force_duplicate:
+        from app.services.person_match import check_duplicates
+        dups = check_duplicates(
+            db, org_id=org_id,
+            phone=body.phone, email=body.email, name=body.name,
+        )
+        if dups["hard"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duplicate_hard",
+                    "duplicates": {
+                        "hard": [vars(h) for h in dups["hard"]],
+                        "soft": [vars(s) for s in dups["soft"]],
+                    },
+                },
+            )
+
+    cand = create_candidate(db, vacancy_id=vacancy_id, name=body.name, fields=fields, org_id=org_id)
     return _candidate_detail(db, cand)
 
 @router.post(
@@ -881,6 +903,19 @@ def vacancy_digest_to_chat(vacancy_id: int, db: Session = Depends(get_db)) -> di
     return {"ok": True, "message": msg}
 
 
+@router.post("/vacancies/{vacancy_id}/report-to-chat")
+def vacancy_report_to_chat(vacancy_id: int, db: Session = Depends(get_db)) -> dict:
+    """Отчёт заказчику: цифры воронки + ссылка на отчёт в зоне /c/…/report/…"""
+    from app.services.client_report import send_client_report_to_chat
+    from app.services.messaging.gateway import MessagingError
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    try:
+        return send_client_report_to_chat(db, vacancy)
+    except MessagingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
 @router.get("/vacancies/{vacancy_id}/resume-preview")
 def vacancy_resume_preview(
     vacancy_id: int,
@@ -942,4 +977,18 @@ def vacancy_resume_preview_include(
         pdf_url=body.pdf_url,
         hr_comment=body.hr_comment,
     )
+
+
+@router.delete("/vacancies/{vacancy_id}/resume-preview/candidates/{candidate_id}")
+def vacancy_resume_preview_delete(
+    vacancy_id: int,
+    candidate_id: str,
+    db: Session = Depends(get_db),
+    _user: AuthUser = Depends(require_platform_owner),
+) -> dict:
+    """Полностью удаляет макет-кандидата из БД (не переносит в общий список)."""
+    from app.services.resume_preview import delete_preview_candidate
+
+    vacancy = get_vacancy_or_404(db, vacancy_id)
+    return delete_preview_candidate(db, vacancy, candidate_id)
 

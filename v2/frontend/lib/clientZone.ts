@@ -55,7 +55,19 @@ export type ZoneCandidateDetail = ZoneCandidateListItem & {
 export type ZoneListData = {
   company: { id: number; name: string; department_name?: string | null };
   candidates: ZoneCandidateListItem[];
+  reports?: ZoneReportListItem[];
   demo?: boolean;
+};
+
+export type ZoneReportListItem = {
+  vacancy_id: number;
+  title: string;
+  active: boolean;
+  period: string;
+  path: string;
+  to_client: number;
+  offer: number;
+  selected: number;
 };
 
 export type ZoneDetailData = {
