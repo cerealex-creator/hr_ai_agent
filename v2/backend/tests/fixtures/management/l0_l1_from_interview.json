@@ -1,0 +1,48 @@
+{
+  "description": "Fixture for L0/L1 prompt validation (E6) — answers → goals schema",
+  "answers": [
+    {
+      "id": "11111111-1111-1111-1111-111111111101",
+      "question_key": "main_goal_12m",
+      "answer_text": "Удвоить выручку за 12 месяцев без роста штата"
+    },
+    {
+      "id": "11111111-1111-1111-1111-111111111102",
+      "question_key": "critical_metrics",
+      "answer_text": "Выручка, маржа, NPS"
+    },
+    {
+      "id": "11111111-1111-1111-1111-111111111103",
+      "question_key": "baseline_numbers",
+      "answer_text": "Сейчас 50 млн руб в год"
+    },
+    {
+      "id": "11111111-1111-1111-1111-111111111104",
+      "question_key": "target_numbers",
+      "answer_text": "Цель 100 млн к концу года"
+    }
+  ],
+  "expected_goals": {
+    "goals": [
+      {
+        "title": "Удвоить выручку",
+        "weight": 40,
+        "dimension_codes": ["finance"],
+        "primary_dimension_code": "finance",
+        "baseline_value": 50,
+        "target_value": 100,
+        "metric_unit": "млн руб/год",
+        "metric_source": "owner",
+        "cited_answer_ids": [
+          "11111111-1111-1111-1111-111111111101",
+          "11111111-1111-1111-1111-111111111103",
+          "11111111-1111-1111-1111-111111111104"
+        ],
+        "tasks": [
+          {"title": "Запустить канал привлечения B2B"},
+          {"title": "Сократить цикл сделки на 20%"}
+        ]
+      }
+    ]
+  }
+}

@@ -7,7 +7,8 @@ export default function ManagementSystemMapPage() {
     <AuthGate>
       <ManagementShell activePath="/management-system" title="Карта системы">
         <p className="muted" style={{ marginBottom: 12 }}>
-          Интерактивный граф связей. Режим эксперта — для правки структуры; мастер онбординга — в U2.
+          Интерактивный граф связей. Включите «Режим ворот» и кликните по узлу draft/suggested, чтобы
+          утвердить (L0/L1/L2a/L2b). L2a требует роль на каждом шаге процесса.
         </p>
         <ManagementMap />
       </ManagementShell>

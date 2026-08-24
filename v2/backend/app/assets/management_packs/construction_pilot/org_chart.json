@@ -1,0 +1,13 @@
+{
+  "roles": [
+    { "title": "Руководитель проекта", "external_key": "project_manager" },
+    { "title": "Прораб", "external_key": "foreman" },
+    { "title": "Сметчик", "external_key": "estimator" }
+  ],
+  "org_nodes": [
+    { "title": "Директор", "role_title": "Руководитель проекта", "children": [
+      { "title": "Объекты", "role_title": "Прораб" },
+      { "title": "Сметный отдел", "role_title": "Сметчик" }
+    ]}
+  ]
+}

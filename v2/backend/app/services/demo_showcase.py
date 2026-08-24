@@ -951,6 +951,14 @@ def ensure_demo_showcase(db: Session) -> tuple[models.Organization, models.User,
         _seed_content(db, org.id)
         created_user = True
 
+    integrations = dict(org.integrations or {})
+    features = dict(integrations.get("features") or {})
+    if not features.get("management_system"):
+        features["management_system"] = True
+        integrations["features"] = features
+        org.integrations = integrations
+        flag_modified(org, "integrations")
+
     db.commit()
     db.refresh(org)
     db.refresh(user)

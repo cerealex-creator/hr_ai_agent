@@ -1169,10 +1169,26 @@ class MgmtSystemOut(BaseModel):
 
     id: UUID
     organization_id: UUID
+    title: str = "Основная система"
+    kind: str = "company"
+    parent_system_id: UUID | None = None
+    is_archived: bool = False
     status: str
     industry_pack_id: str | None = None
     draft_revision_id: UUID | None = None
     published_revision_id: UUID | None = None
+
+
+class MgmtSystemCreateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    kind: str = Field(default="company", pattern="^(company|holding|demo)$")
+    parent_system_id: UUID | None = None
+    activate: bool = True
+
+
+class MgmtSystemsListOut(BaseModel):
+    systems: list[MgmtSystemOut]
+    active_system_id: UUID | None = None
 
 
 class MgmtGoalDimensionOut(BaseModel):
@@ -1214,6 +1230,7 @@ class MgmtGoalOut(BaseModel):
     stale: bool
     cited_answer_ids: list[str] = Field(default_factory=list)
     sort_order: int
+    scope: str | None = None
 
 
 class MgmtGoalIn(BaseModel):
@@ -1289,6 +1306,43 @@ class MgmtCurrentPositionIn(BaseModel):
     headcount: int = Field(default=1, ge=0)
 
 
+class MgmtRoleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    title: str
+    external_key: str | None = None
+    status: str
+    stale: bool
+    sort_order: int
+
+
+class MgmtRoleAssignmentOut(BaseModel):
+    id: UUID
+    revision_id: UUID
+    target_role_id: UUID
+    target_role_title: str
+    current_position_id: UUID
+    current_position_title: str
+    coverage: str
+    note: str | None = None
+    stale: bool
+
+
+class MgmtRoleAssignmentIn(BaseModel):
+    target_role_id: UUID
+    current_position_id: UUID
+    coverage: str = Field(default="partial", pattern="^(full|partial|none)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class MgmtRoleAssignmentUpdateIn(BaseModel):
+    coverage: str | None = Field(default=None, pattern="^(full|partial|none)$")
+    note: str | None = Field(default=None, max_length=2000)
+    clear_note: bool = False
+
+
 class MgmtTraceLinkOut(BaseModel):
     source_type: str
     source_id: UUID
@@ -1318,9 +1372,484 @@ class MgmtWizardSessionOut(BaseModel):
 class MgmtOverviewOut(BaseModel):
     system: MgmtSystemOut
     goals: list[MgmtGoalOut]
+    inherited_goals: list[MgmtGoalOut] = Field(default_factory=list)
     tasks: list[MgmtTaskOut]
     links: list[MgmtEntityLinkOut]
     current_positions: list[MgmtCurrentPositionOut]
     wizard: MgmtWizardSessionOut | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtInterviewQuestionOut(BaseModel):
+    key: str
+    text: str
+
+
+class MgmtInterviewAnswerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    question_key: str
+    question_text: str
+    answer_text: str
+    sort_order: int
+    created_at: datetime
+
+
+class MgmtInterviewSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    revision_id: UUID
+    status: str
+    pack_hint: str | None = None
+
+
+class MgmtWizardStateOut(BaseModel):
+    session: MgmtWizardSessionOut
+    step: int
+    questions: list[MgmtInterviewQuestionOut] = Field(default_factory=list)
+    answers: list[MgmtInterviewAnswerOut] = Field(default_factory=list)
+    interview: MgmtInterviewSessionOut | None = None
+    positions: list[MgmtCurrentPositionOut]
+    business_profile: MgmtBusinessProfileOut | None = None
+    goal_blocks: list[MgmtGoalBlockOut] = Field(default_factory=list)
+    skipped_blocks: list[str] = Field(default_factory=list)
+    industry_packs: list[MgmtIndustryPackOut] = Field(default_factory=list)
+    industry_pack_id: str | None = None
+    inherited_goals: list[MgmtGoalOut] = Field(default_factory=list)
+    gap_report: MgmtGapReportOut | None = None
+    goals: list[MgmtGoalOut]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtWizardStep1In(BaseModel):
+    skipped: bool = False
+    import_text: str | None = None
+
+
+class MgmtWizardAnswerIn(BaseModel):
+    question_key: str = Field(min_length=1, max_length=64)
+    answer_text: str = Field(min_length=1, max_length=8000)
+
+
+class MgmtWizardGenerateOut(BaseModel):
+    ok: bool
+    error: str | None = None
+    message: str | None = None
+    retryable: bool = False
+    goals_count: int | None = None
+    tasks_count: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtWizardApproveOut(BaseModel):
+    ok: bool
+    error: str | None = None
+    message: str | None = None
+    approved_count: int | None = None
+
+
+class MgmtApproveOut(BaseModel):
+    ok: bool = True
+    id: UUID
+    status: str
+
+
+class MgmtBulkApproveOut(BaseModel):
+    ok: bool = True
+    approved_count: int
+
+
+class MgmtBusinessProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    industry_code: str | None = None
+    industry_custom: str | None = None
+    business_model: str | None = None
+    market_type: str | None = None
+    scale_band: str | None = None
+    maturity_stage: str | None = None
+    horizon_months: int | None = None
+    priorities: list[str] = Field(default_factory=list)
+    constraints_text: str | None = None
+    sensitive_metrics_opt_out: bool = False
+    optional_metrics: dict = Field(default_factory=dict)
+    status: str
+
+
+class MgmtBusinessProfileIn(BaseModel):
+    industry_code: str | None = None
+    industry_custom: str | None = None
+    business_model: str | None = None
+    market_type: str | None = None
+    scale_band: str | None = None
+    maturity_stage: str | None = None
+    horizon_months: int | None = Field(default=None, ge=1, le=60)
+    priorities: list[str] = Field(default_factory=list, max_length=6)
+    constraints_text: str | None = Field(default=None, max_length=4000)
+    sensitive_metrics_opt_out: bool = False
+    optional_metrics: dict = Field(default_factory=dict)
+
+
+class MgmtBusinessProfileSchemaOut(BaseModel):
+    industries: list[dict]
+    business_models: list[dict]
+    market_types: list[dict]
+    scale_bands: list[dict]
+    maturity_stages: list[dict]
+    horizons: list[dict]
+    priorities: list[dict]
+
+
+class MgmtGoalBlockQuestionOut(BaseModel):
+    key: str
+    text: str
+    field_type: str = "text"
+    placeholder: str | None = None
+    optional: bool = False
+    options: list[str] = Field(default_factory=list)
+
+
+class MgmtGoalBlockAnswerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    question_key: str
+    question_text: str
+    answer_text: str
+    sort_order: int
+
+
+class MgmtGoalBlockOut(BaseModel):
+    code: str
+    title: str
+    subtitle: str
+    sort_order: int
+    status: str
+    questions: list[MgmtGoalBlockQuestionOut]
+    answers: list[MgmtGoalBlockAnswerOut]
+    goals: list[MgmtGoalOut]
+    goals_count: int
+    approved_count: int
+
+
+class MgmtGoalBlockAnswerIn(BaseModel):
+    question_key: str = Field(min_length=1, max_length=64)
+    answer_text: str = Field(min_length=1, max_length=8000)
+
+
+class MgmtGoalBlockApproveIn(BaseModel):
+    goal_ids: list[UUID] = Field(default_factory=list)
+
+
+class MgmtGoalBlockGenerateOut(BaseModel):
+    ok: bool
+    error: str | None = None
+    message: str | None = None
+    retryable: bool = False
+    goals_count: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtGoalUpdateIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    baseline_value: float | None = None
+    target_value: float | None = None
+    metric_unit: str | None = Field(default=None, max_length=64)
+    metric_source: str | None = Field(default=None, max_length=32)
+
+
+class MgmtIndustryPackOut(BaseModel):
+    id: str
+    title: str
+    version: str | None = None
+    description: str | None = None
+
+
+class MgmtPackApplyIn(BaseModel):
+    pack_id: str = Field(min_length=1, max_length=64)
+
+
+class MgmtPackApplyOut(BaseModel):
+    ok: bool = True
+    pack_id: str
+    goals_suggested: int = 0
+    tasks_suggested: int = 0
+    roles_draft: int = 0
+    process_steps_draft: int = 0
+
+
+class MgmtGapItemOut(BaseModel):
+    code: str
+    severity: str
+    title: str
+    message: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+
+
+class MgmtGapReportOut(BaseModel):
+    revision_id: str
+    summary: dict
+    items: list[MgmtGapItemOut]
+
+
+class MgmtImplementationOut(BaseModel):
+    roles: list[MgmtRoleOut]
+    current_positions: list[MgmtCurrentPositionOut]
+    role_assignments: list[MgmtRoleAssignmentOut]
+    gap_report: MgmtGapReportOut
+
+
+class MgmtGateActionIn(BaseModel):
+    entity_type: str = Field(min_length=1, max_length=32)
+    entity_id: UUID
+
+
+class MgmtGateActionOut(BaseModel):
+    id: str
+    entity_type: str
+    status: str
+    already: bool = False
+
+
+class MgmtGateLevelOut(BaseModel):
+    approved_count: int
+    errors: list[str] = Field(default_factory=list)
+    level: str
+
+
+class MgmtProcessMapOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    title: str
+    status: str
+    stale: bool
+    sort_order: int
+
+
+class MgmtGateSummaryOut(BaseModel):
+    l0_pending: int = 0
+    l1_pending: int = 0
+    l2a_pending: int = 0
+    l2b_pending: int = 0
+    suggested_goals: int = 0
+    suggested_tasks: int = 0
+    process_maps: list[MgmtProcessMapOut] = Field(default_factory=list)
+    roles: list[MgmtRoleOut] = Field(default_factory=list)
+
+
+class MgmtNodeLayoutItemIn(BaseModel):
+    node_type: str = Field(min_length=1, max_length=32)
+    node_id: UUID
+    x: float
+    y: float
+
+
+class MgmtNodeLayoutBatchIn(BaseModel):
+    items: list[MgmtNodeLayoutItemIn] = Field(default_factory=list, max_length=500)
+
+
+class MgmtNodeLayoutBatchOut(BaseModel):
+    saved: int
+
+
+class MgmtL3DutyOut(BaseModel):
+    title: str
+    process_map: str | None = None
+    frequency: str | None = None
+    step_id: str | None = None
+
+
+class MgmtL3ChecklistItemOut(BaseModel):
+    title: str
+    direction: str
+    from_step: str | None = None
+
+
+class MgmtL3DocumentOut(BaseModel):
+    role_id: str
+    role_title: str
+    role_status: str
+    external_key: str | None = None
+    duties: list[MgmtL3DutyOut] = Field(default_factory=list)
+    checklist: list[MgmtL3ChecklistItemOut] = Field(default_factory=list)
+    kpi_hints: list[str] = Field(default_factory=list)
+    is_preview: bool = True
+    approvable: bool = False
+
+
+class MgmtL3PreviewOut(BaseModel):
+    revision_id: str
+    is_preview: bool = True
+    note: str
+    documents: list[MgmtL3DocumentOut] = Field(default_factory=list)
+    unassigned_steps: list[dict] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+
+
+class MgmtRoleDocumentLineOut(BaseModel):
+    id: str
+    title: str
+    target_value: float | None = None
+    metric_unit: str | None = None
+    source_step_id: str | None = None
+    source_task_id: str | None = None
+    is_manual: bool = False
+    sort_order: int = 0
+    stale: bool = False
+
+
+class MgmtRoleDocumentOut(BaseModel):
+    id: str
+    revision_id: str
+    role_id: str
+    role_title: str
+    doc_kind: str
+    title: str
+    status: str
+    stale: bool = False
+    lines: list[MgmtRoleDocumentLineOut] = Field(default_factory=list)
+
+
+class MgmtRoleDocsMaterializeIn(BaseModel):
+    role_id: UUID | None = None
+
+
+class MgmtRoleDocsMaterializeOut(BaseModel):
+    ok: bool = True
+    roles: int = 0
+    documents: int = 0
+    lines_created: int = 0
+
+
+class MgmtRoleDocLineIn(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    target_value: float | None = None
+    metric_unit: str | None = Field(default=None, max_length=64)
+    source_task_id: UUID | None = None
+
+
+class MgmtImpactOut(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+    stale_marked: int = 0
+
+
+class MgmtPolishIn(BaseModel):
+    document_id: UUID | None = None
+    use_ai: bool = True
+
+
+class MgmtPolishOut(BaseModel):
+    updated_lines: int = 0
+    documents: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtCriticIssueOut(BaseModel):
+    code: str
+    message: str
+
+
+class MgmtCriticOut(BaseModel):
+    ok: bool
+    blocking: list[MgmtCriticIssueOut] = Field(default_factory=list)
+    warnings: list[MgmtCriticIssueOut] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+
+
+class MgmtPublishIn(BaseModel):
+    document_ids: list[UUID] | None = None
+    use_llm_critic: bool = False
+    force: bool = False  # игнорировать warnings; blocking всё равно стоп
+
+
+class MgmtPublishOut(BaseModel):
+    ok: bool
+    published_count: int = 0
+    skipped: list[str] = Field(default_factory=list)
+    critic: MgmtCriticOut | None = None
+
+
+class MgmtChangesSummaryOut(BaseModel):
+    revision_id: str
+    documents_total: int = 0
+    by_status: dict = Field(default_factory=dict)
+    stale_documents: list[dict] = Field(default_factory=list)
+    stale_assignments: list[dict] = Field(default_factory=list)
+    stale_documents_count: int = 0
+    stale_assignments_count: int = 0
+
+
+class MgmtGapItemStoredOut(BaseModel):
+    id: str
+    revision_id: str
+    code: str
+    severity: str
+    title: str
+    message: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    recommendation: str | None = None
+    sort_order: int = 0
+
+
+class MgmtTransitionStepOut(BaseModel):
+    id: str
+    revision_id: str
+    gap_item_id: str | None = None
+    action_code: str
+    title: str
+    description: str | None = None
+    horizon: str
+    status: str
+    stale: bool = False
+    sort_order: int = 0
+    meta: dict = Field(default_factory=dict)
+
+
+class MgmtTransitionStepUpdateIn(BaseModel):
+    title: str | None = Field(default=None, max_length=512)
+    description: str | None = None
+    horizon: str | None = Field(default=None, pattern="^(short|medium|long)$")
+
+
+class MgmtTransitionDraftOut(BaseModel):
+    ok: bool = True
+    gap_items: int = 0
+    steps_created: int = 0
+    steps_total: int = 0
+
+
+class MgmtCoverageTrackerOut(BaseModel):
+    revision_id: str
+    roles: list[dict] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+
+
+class MgmtRoleVacancyPreviewOut(BaseModel):
+    ok: bool
+    profile: dict
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MgmtRoleVacancyApplyIn(BaseModel):
+    vacancy_id: int
+    role_id: UUID
+
+
+class MgmtRoleVacancyApplyOut(BaseModel):
+    ok: bool
+    vacancy_id: str
+    warnings: list[str] = Field(default_factory=list)
+    profile: dict = Field(default_factory=dict)
+
+
+MgmtWizardStateOut.model_rebuild()
 

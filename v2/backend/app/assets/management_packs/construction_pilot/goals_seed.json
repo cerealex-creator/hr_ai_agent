@@ -1,0 +1,18 @@
+{
+  "goals": [
+    {
+      "title": "Соблюдение сроков сдачи объектов",
+      "weight": 30,
+      "dimension_codes": ["processes"],
+      "primary_dimension_code": "processes",
+      "metric_source": "pack_hint"
+    },
+    {
+      "title": "Маржинальность проектов",
+      "weight": 30,
+      "dimension_codes": ["finance"],
+      "primary_dimension_code": "finance",
+      "metric_source": "pack_hint"
+    }
+  ]
+}

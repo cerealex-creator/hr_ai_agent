@@ -9,24 +9,137 @@ from sqlalchemy.orm import Session
 
 from app.db import management_models as m
 
+SYSTEM_KINDS = ("company", "holding", "demo")
+
+
+def list_systems(
+    db: Session, organization_id: uuid.UUID, *, include_archived: bool = False
+) -> list[m.MgmtSystem]:
+    q = select(m.MgmtSystem).where(m.MgmtSystem.organization_id == organization_id)
+    if not include_archived:
+        q = q.where(m.MgmtSystem.is_archived.is_(False))
+    q = q.order_by(m.MgmtSystem.created_at.asc())
+    return list(db.scalars(q).all())
+
+
+def _get_pref(
+    db: Session, *, organization_id: uuid.UUID, user_id: uuid.UUID | None
+) -> m.MgmtWorkspacePref | None:
+    if not user_id:
+        return None
+    return db.scalar(
+        select(m.MgmtWorkspacePref).where(
+            m.MgmtWorkspacePref.organization_id == organization_id,
+            m.MgmtWorkspacePref.user_id == user_id,
+        )
+    )
+
+
+def get_or_create_pref(
+    db: Session, *, organization_id: uuid.UUID, user_id: uuid.UUID
+) -> m.MgmtWorkspacePref:
+    pref = _get_pref(db, organization_id=organization_id, user_id=user_id)
+    if pref:
+        return pref
+    pref = m.MgmtWorkspacePref(organization_id=organization_id, user_id=user_id)
+    db.add(pref)
+    db.flush()
+    return pref
+
+
+def set_active_system(
+    db: Session,
+    *,
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID,
+    system_id: uuid.UUID,
+) -> m.MgmtSystem:
+    system = db.get(m.MgmtSystem, system_id)
+    if not system or system.organization_id != organization_id:
+        raise ValueError("System not found")
+    if system.is_archived:
+        raise ValueError("System is archived")
+    pref = get_or_create_pref(db, organization_id=organization_id, user_id=user_id)
+    pref.active_system_id = system.id
+    db.flush()
+    return system
+
+
+def create_system(
+    db: Session,
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    *,
+    title: str,
+    kind: str = "company",
+    parent_system_id: uuid.UUID | None = None,
+    activate: bool = True,
+) -> m.MgmtSystem:
+    kind = (kind or "company").strip().lower()
+    if kind not in SYSTEM_KINDS:
+        raise ValueError(f"Unknown kind: {kind}")
+    title = (title or "").strip() or "Новая система"
+    if parent_system_id:
+        parent = db.get(m.MgmtSystem, parent_system_id)
+        if not parent or parent.organization_id != organization_id:
+            raise ValueError("Parent system not found")
+        if parent.kind != "holding":
+            raise ValueError("Parent must be a holding system")
+
+    system = m.MgmtSystem(
+        organization_id=organization_id,
+        title=title,
+        kind=kind,
+        parent_system_id=parent_system_id,
+        status="draft",
+    )
+    db.add(system)
+    db.flush()
+    rev = _create_revision(db, system, user_id, version_number=1)
+    system.draft_revision_id = rev.id
+    db.flush()
+    if activate and user_id:
+        set_active_system(
+            db, organization_id=organization_id, user_id=user_id, system_id=system.id
+        )
+    return system
+
 
 def get_or_create_system(db: Session, organization_id: uuid.UUID, user_id: uuid.UUID | None) -> m.MgmtSystem:
-    system = db.scalar(
-        select(m.MgmtSystem).where(m.MgmtSystem.organization_id == organization_id)
-    )
-    if system:
+    """Активная система пользователя или первая в org; иначе создать «Основная система»."""
+    systems = list_systems(db, organization_id)
+    if systems:
+        if user_id:
+            pref = _get_pref(db, organization_id=organization_id, user_id=user_id)
+            if pref and pref.active_system_id:
+                active = next((s for s in systems if s.id == pref.active_system_id), None)
+                if active:
+                    if not active.draft_revision_id:
+                        rev = _create_revision(db, active, user_id, version_number=1)
+                        active.draft_revision_id = rev.id
+                        db.flush()
+                    return active
+            # авто-выбор первой при отсутствии prefs
+            preferred = systems[0]
+            set_active_system(
+                db, organization_id=organization_id, user_id=user_id, system_id=preferred.id
+            )
+            return preferred
+        system = systems[0]
         if not system.draft_revision_id:
             rev = _create_revision(db, system, user_id, version_number=1)
             system.draft_revision_id = rev.id
             db.flush()
         return system
 
-    system = m.MgmtSystem(organization_id=organization_id, status="draft")
-    db.add(system)
-    db.flush()
-    rev = _create_revision(db, system, user_id, version_number=1)
-    system.draft_revision_id = rev.id
-    db.flush()
+    system = create_system(
+        db,
+        organization_id,
+        user_id,
+        title="Основная система",
+        kind="company",
+        activate=bool(user_id),
+    )
     return system
 
 
@@ -414,3 +527,263 @@ def build_flow_graph(db: Session, revision_id: uuid.UUID) -> dict:
         )
 
     return {"nodes": nodes, "edges": edges}
+
+
+ALLOWED_LAYOUT_NODE_TYPES = (
+    "goal",
+    "task",
+    "role",
+    "process_map",
+    "process_step",
+    "current_position",
+    "org_node",
+)
+
+
+def upsert_node_layouts(
+    db: Session,
+    revision_id: uuid.UUID,
+    items: list[dict],
+) -> int:
+    """Сохранить позиции узлов карты (draft revision). Возвращает число upsert."""
+    if not items:
+        return 0
+    existing = {
+        (row.node_type, row.node_id): row
+        for row in db.scalars(
+            select(m.MgmtNodeLayout).where(m.MgmtNodeLayout.revision_id == revision_id)
+        ).all()
+    }
+    n = 0
+    for item in items:
+        node_type = str(item.get("node_type") or "").strip()
+        if node_type not in ALLOWED_LAYOUT_NODE_TYPES:
+            continue
+        try:
+            node_id = item["node_id"] if isinstance(item.get("node_id"), uuid.UUID) else uuid.UUID(str(item["node_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            x = float(item.get("x", 0))
+            y = float(item.get("y", 0))
+        except (TypeError, ValueError):
+            continue
+        key = (node_type, node_id)
+        row = existing.get(key)
+        if row:
+            row.x = x
+            row.y = y
+        else:
+            row = m.MgmtNodeLayout(
+                revision_id=revision_id,
+                node_type=node_type,
+                node_id=node_id,
+                x=x,
+                y=y,
+            )
+            db.add(row)
+            existing[key] = row
+        n += 1
+    db.flush()
+    return n
+
+
+def clear_draft_l0_l1(db: Session, revision_id: uuid.UUID) -> None:
+    """Удалить черновики L0/L1 перед повторной генерацией из интервью."""
+    goals = [g for g in list_goals(db, revision_id) if g.status == "draft"]
+    _delete_draft_goals_and_tasks(db, revision_id, goals)
+
+
+def clear_draft_goals_for_dimension(db: Session, revision_id: uuid.UUID, dimension_code: str) -> None:
+    """Удалить черновые цели только одного BSC-блока (scoped merge)."""
+    goals = list_goals(db, revision_id)
+    dim_map = goal_dimensions_map(db, [g.id for g in goals])
+    to_delete: list[m.MgmtGoal] = []
+    for g in goals:
+        if g.status != "draft":
+            continue
+        dims = dim_map.get(g.id, [])
+        primary = next((d for d in dims if d.get("is_primary")), None)
+        if primary and primary["code"] == dimension_code:
+            to_delete.append(g)
+        elif not primary and any(d["code"] == dimension_code for d in dims):
+            to_delete.append(g)
+    _delete_draft_goals_and_tasks(db, revision_id, to_delete)
+
+
+def _delete_draft_goals_and_tasks(db: Session, revision_id: uuid.UUID, goals: list[m.MgmtGoal]) -> None:
+    tasks = [t for t in list_tasks(db, revision_id) if t.status == "draft"]
+    goal_ids = {g.id for g in goals}
+    task_ids = {t.id for t in tasks}
+
+    for link in list_links(db, revision_id):
+        if link.link_kind == "decomposes" and (
+            (link.source_type == "goal" and link.source_id in goal_ids)
+            or (link.target_type == "task" and link.target_id in task_ids and link.source_id in goal_ids)
+        ):
+            db.delete(link)
+
+    for gid in goal_ids:
+        for link in db.scalars(
+            select(m.MgmtGoalDimensionLink).where(m.MgmtGoalDimensionLink.goal_id == gid)
+        ).all():
+            db.delete(link)
+
+    linked_task_ids = set()
+    for link in list_links(db, revision_id):
+        if link.link_kind == "decomposes" and link.source_type == "goal" and link.source_id in goal_ids:
+            linked_task_ids.add(link.target_id)
+    for tid in linked_task_ids:
+        task = db.get(m.MgmtTask, tid)
+        if task and task.status == "draft":
+            db.delete(task)
+
+    for g in goals:
+        db.delete(g)
+    db.flush()
+
+
+def update_goal(
+    db: Session,
+    goal: m.MgmtGoal,
+    *,
+    title: str | None = None,
+    baseline_value: Decimal | None = None,
+    target_value: Decimal | None = None,
+    metric_unit: str | None = None,
+    metric_source: str | None = None,
+    fields_set: set[str] | None = None,
+) -> m.MgmtGoal:
+    fs = fields_set or set()
+    if "title" in fs and title is not None:
+        goal.title = title.strip()
+    if "baseline_value" in fs:
+        goal.baseline_value = baseline_value
+        if baseline_value is not None and not goal.metric_source:
+            goal.metric_source = "owner"
+    if "target_value" in fs:
+        goal.target_value = target_value
+        if target_value is not None and not goal.metric_source:
+            goal.metric_source = "owner"
+    if "metric_unit" in fs:
+        goal.metric_unit = metric_unit.strip() if metric_unit else None
+    if "metric_source" in fs:
+        goal.metric_source = metric_source
+    db.flush()
+    return goal
+
+
+def approve_goal(db: Session, goal: m.MgmtGoal) -> m.MgmtGoal:
+    if goal.status == "approved":
+        return goal
+    goal.status = "approved"
+    db.flush()
+    return goal
+
+
+def approve_task(db: Session, task: m.MgmtTask) -> m.MgmtTask:
+    if task.status == "approved":
+        return task
+    task.status = "approved"
+    db.flush()
+    return task
+
+
+def approve_all_draft_goals(db: Session, revision_id: uuid.UUID) -> int:
+    """Утвердить draft и suggested (подсказки пакета)."""
+    n = 0
+    for g in list_goals(db, revision_id):
+        if g.status in ("draft", "suggested"):
+            approve_goal(db, g)
+            n += 1
+    return n
+
+
+def approve_all_draft_tasks(db: Session, revision_id: uuid.UUID) -> int:
+    """Утвердить draft и suggested (подсказки пакета)."""
+    n = 0
+    for t in list_tasks(db, revision_id):
+        if t.status in ("draft", "suggested"):
+            approve_task(db, t)
+            n += 1
+    return n
+
+
+def import_positions_from_text(db: Session, revision_id: uuid.UUID, text: str) -> list[m.MgmtCurrentPosition]:
+    """CSV/paste: «должность;headcount» или «должность» (headcount=1)."""
+    import csv
+    import io
+
+    rows: list[tuple[str, int]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("title"):
+            continue
+        if ";" in line or "\t" in line:
+            delim = ";" if ";" in line else "\t"
+            parts = [p.strip() for p in line.split(delim)]
+            title = parts[0]
+            hc = 1
+            if len(parts) > 1 and parts[1].isdigit():
+                hc = max(1, int(parts[1]))
+            if title:
+                rows.append((title, hc))
+        else:
+            reader = csv.reader(io.StringIO(line))
+            for row in reader:
+                if not row:
+                    continue
+                title = row[0].strip()
+                hc = 1
+                if len(row) > 1 and str(row[1]).strip().isdigit():
+                    hc = max(1, int(str(row[1]).strip()))
+                if title:
+                    rows.append((title, hc))
+
+    created: list[m.MgmtCurrentPosition] = []
+    base = len(list_current_positions(db, revision_id))
+    for i, (title, hc) in enumerate(rows):
+        pos = m.MgmtCurrentPosition(
+            revision_id=revision_id,
+            title=title,
+            headcount=hc,
+            sort_order=base + i,
+        )
+        db.add(pos)
+        created.append(pos)
+    db.flush()
+    return created
+
+
+def list_inherited_goals(db: Session, system: m.MgmtSystem) -> list[m.MgmtGoal]:
+    """Утверждённые цели родительского холдинга (read-only контекст)."""
+    if not system.parent_system_id:
+        return []
+    parent = db.get(m.MgmtSystem, system.parent_system_id)
+    if not parent or not parent.draft_revision_id:
+        return []
+    return [g for g in list_goals(db, parent.draft_revision_id) if g.status == "approved"]
+
+
+def goal_to_out_dict(db: Session, goal: m.MgmtGoal, *, scope: str = "own") -> dict:
+    dim_map = goal_dimensions_map(db, [goal.id])
+    gap = _numeric_gap(goal)
+    return {
+        "id": goal.id,
+        "revision_id": goal.revision_id,
+        "title": goal.title,
+        "weight": float(goal.weight) if goal.weight is not None else None,
+        "metric_unit": goal.metric_unit,
+        "baseline_value": float(goal.baseline_value) if goal.baseline_value is not None else None,
+        "baseline_date": goal.baseline_date,
+        "target_value": float(goal.target_value) if goal.target_value is not None else None,
+        "target_date": goal.target_date,
+        "metric_source": goal.metric_source,
+        "numeric_gap": float(gap) if gap is not None else None,
+        "dimensions": dim_map.get(goal.id, []),
+        "status": goal.status,
+        "stale": goal.stale,
+        "cited_answer_ids": goal.cited_answer_ids or [],
+        "sort_order": goal.sort_order,
+        "scope": scope,
+    }

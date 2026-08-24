@@ -1,7 +1,10 @@
 {
-  "description": "Bottom-up fixture scaffold for L3 prompt tests (E6)",
-  "revision": {},
-  "process_map": { "title": "Пример процесса" },
-  "steps": [],
-  "roles": []
+  "description": "E6 fixture: process steps → role document lines (INSERT from SELECT shape)",
+  "role": { "title": "Прораб", "external_key": "foreman" },
+  "process_steps": [
+    { "title": "План работ на день", "frequency": "daily" },
+    { "title": "Приёмка этапа", "frequency": "weekly" }
+  ],
+  "expected_instruction_titles": ["План работ на день", "Приёмка этапа"],
+  "expected_checklist_titles": ["Выполнить: План работ на день", "Выполнить: Приёмка этапа"]
 }

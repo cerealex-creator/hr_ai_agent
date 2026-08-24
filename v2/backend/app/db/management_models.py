@@ -33,6 +33,8 @@ ENTITY_TYPES = (
     "role",
     "org_node",
     "current_position",
+    "role_document",
+    "role_document_line",
 )
 
 
@@ -41,8 +43,14 @@ class MgmtSystem(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, unique=True
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
     )
+    title: Mapped[str] = mapped_column(String(256), nullable=False, default="Основная система")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="company")  # company|holding|demo
+    parent_system_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_systems.id"), nullable=True
+    )
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     industry_pack_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     published_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -55,6 +63,27 @@ class MgmtSystem(Base):
     revisions: Mapped[list["MgmtRevision"]] = relationship(
         back_populates="system",
         foreign_keys="MgmtRevision.system_id",
+    )
+
+
+class MgmtWorkspacePref(Base):
+    """Активная система СУП для пользователя в рамках org."""
+
+    __tablename__ = "mgmt_workspace_prefs"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="uq_mgmt_workspace_prefs_org_user"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    active_system_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_systems.id"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -294,6 +323,96 @@ class MgmtRoleAssignment(Base):
     stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
 
+class MgmtRoleDocument(Base):
+    """Документ роли L3: instruction | kpi | checklist."""
+
+    __tablename__ = "mgmt_role_documents"
+    __table_args__ = (
+        UniqueConstraint("revision_id", "role_id", "doc_kind", name="uq_mgmt_role_documents_rev_role_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_revisions.id"), nullable=False, index=True
+    )
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_roles.id"), nullable=False, index=True
+    )
+    doc_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # instruction|kpi|checklist
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MgmtRoleDocumentLine(Base):
+    """Атомарная строка документа роли; is_manual сохраняется при rematerialize."""
+
+    __tablename__ = "mgmt_role_document_lines"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_role_documents.id"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    target_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    metric_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_step_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    is_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+
+class MgmtGapItem(Base):
+    """Снимок пункта gap-отчёта (источник для transition_steps)."""
+
+    __tablename__ = "mgmt_gap_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_revisions.id"), nullable=False, index=True
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    recommendation: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MgmtTransitionStep(Base):
+    """Шаг плана перехода (U5); утверждается по одному."""
+
+    __tablename__ = "mgmt_transition_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_revisions.id"), nullable=False, index=True
+    )
+    gap_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_gap_items.id"), nullable=True
+    )
+    action_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    horizon: Mapped[str] = mapped_column(String(16), nullable=False, default="short")  # short|medium|long
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class MgmtNodeLayout(Base):
     __tablename__ = "mgmt_node_layouts"
     __table_args__ = (
@@ -326,3 +445,71 @@ class MgmtWizardSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class MgmtOwnerInterviewSession(Base):
+    """Интервью собственника (L0) — immutable answers, append-only."""
+
+    __tablename__ = "mgmt_owner_interview_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_revisions.id"), nullable=False, index=True
+    )
+    wizard_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_wizard_sessions.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="in_progress")
+    pack_hint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MgmtBusinessProfile(Base):
+    """Паспорт бизнеса — контекст для генерации целей без обязательных цифр."""
+
+    __tablename__ = "mgmt_business_profiles"
+    __table_args__ = (UniqueConstraint("revision_id", name="uq_mgmt_business_profiles_revision"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_revisions.id"), nullable=False, index=True
+    )
+    industry_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    industry_custom: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    market_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scale_band: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    maturity_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    horizon_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    priorities: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    constraints_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sensitive_metrics_opt_out: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    optional_metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MgmtOwnerInterviewAnswer(Base):
+    __tablename__ = "mgmt_owner_interview_answers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mgmt_owner_interview_sessions.id"), nullable=False, index=True
+    )
+    question_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+    deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

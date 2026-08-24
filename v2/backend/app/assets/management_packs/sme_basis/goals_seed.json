@@ -1,0 +1,18 @@
+{
+  "goals": [
+    {
+      "title": "Стабильная операционная маржа",
+      "weight": 25,
+      "dimension_codes": ["finance"],
+      "primary_dimension_code": "finance",
+      "metric_source": "pack_hint"
+    },
+    {
+      "title": "Предсказуемое качество для клиента",
+      "weight": 25,
+      "dimension_codes": ["customers"],
+      "primary_dimension_code": "customers",
+      "metric_source": "pack_hint"
+    }
+  ]
+}

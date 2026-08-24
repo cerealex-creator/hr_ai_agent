@@ -1,0 +1,19 @@
+{
+  "process_maps": [
+    {
+      "title": "Продажи и работа с клиентом",
+      "steps": [
+        { "title": "Приём заявки", "frequency": "daily", "role_title": "Менеджер по продажам" },
+        { "title": "Подготовка коммерческого предложения", "frequency": "weekly", "role_title": "Менеджер по продажам" },
+        { "title": "Закрытие сделки", "frequency": "weekly", "role_title": "Руководитель" }
+      ]
+    },
+    {
+      "title": "Финансовый контур",
+      "steps": [
+        { "title": "Учёт первичных документов", "frequency": "daily", "role_title": "Бухгалтер" },
+        { "title": "Сверка дебиторки", "frequency": "weekly", "role_title": "Бухгалтер" }
+      ]
+    }
+  ]
+}

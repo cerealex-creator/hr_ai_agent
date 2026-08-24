@@ -3,6 +3,219 @@
 Журнал разработки для восстановления контекста между сессиями AI/разработчика.  
 Только факты: код, git, `data/`, `deploy/`.
 
+## 2026-08-24 — СИСТЕМА U5: план перехода + покрытие + мост в вакансию
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `n4o5p6q7r8s9`: `mgmt_gap_items`, `mgmt_transition_steps` (применена локально).
+- `management_transition.py`: gap → draft steps (INSERT from SELECT), approve/reject, coverage tracker, preview/apply профиля вакансии.
+- API: `/transition/*`, `/coverage`, `/roles/.../vacancy-profile-preview`, `/roles/apply-vacancy-profile`.
+- UI: `TransitionPlanPanel` на шаге 5 мастера и во «Внедрение»; трекер покрытия + preview профиля.
+- Тест-маппинг `tests/test_management_u5_transition.py`.
+
+**Файлы:** `n4o5p6q7r8s9_*.py`, `management_models.py`, `management_transition.py`, routes/schemas, `TransitionPlanPanel.tsx`, `GapSummaryStep.tsx`, `ManagementImplementationPanel.tsx`, `lib/management.ts`, `globals.css`
+
+**Git:** незакоммичено
+
+**Риски:** экспорт PDF/DOCX плана ещё нет; apply в вакансию через API без отдельной кнопки vacancy_id в UI (есть preview).
+
+**Следующий шаг:**
+- U6 / экспорт плана; или кнопка apply профиля к выбранной вакансии в UI.
+
+---
+
+## 2026-08-24 — СИСТЕМА U4: polish + critic + publish + «Изменения»
+
+**Тип:** `feature`
+
+**Сделано:**
+- Полировка L3: локальная + ИИ (`mgmt_l3_polish_lines`), `is_manual` не трогаем.
+- Критик перед publish: детерминированный + опциональный LLM; blocking стопит publish.
+- `POST /role-documents/publish` (approved → published).
+- Экран «Изменения»: stale docs/assignments, impact, mark-stale, rematerialize.
+- UI: кнопки полировка/критик/publish в «Документ»; пункт навигации «Изменения».
+
+**Файлы:** `management_l3_polish.py`, `management_l3_critic.py`, `management_role_docs.py` (publish/changes), routes/schemas, `ManagementDocumentsPanel.tsx`, `ManagementChangesPanel.tsx`, `app/management-system/changes/page.tsx`
+
+**Git:** незакоммичено
+
+**Риски:** без ключа ИИ полировка/LLM-критик падают в локальный fallback; полный diff ревизий ещё нет.
+
+**Следующий шаг:**
+- U5: план перехода из gap + мастер шаг 5; или diff двух ревизий.
+
+---
+
+## 2026-08-24 — СИСТЕМА U4 (старт): документы ролей L3
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `m3n4o5p6q7r8`: `mgmt_role_documents` + `mgmt_role_document_lines` (is_manual, target, source_step/task).
+- `management_role_docs.py`: materialize (INSERT from SELECT), approve + KPI invariant, manual lines, impact/stale.
+- API: `/role-documents`, `/materialize`, `/approve`, `/lines`, `/impact/...`.
+- Frontend: режим «Документ» `/management-system/documents`.
+- E6 fixture `l3_process_to_role_docs.json` + unit-тест формы сборки.
+
+**Файлы:** `m3n4o5p6q7r8_*.py`, `management_models.py`, `management_role_docs.py`, routes/schemas, `ManagementDocumentsPanel.tsx`, `ManagementShell.tsx`, `lib/management.ts`
+
+**Данные / конфиг:** alembic head `m3n4o5p6q7r8`
+
+**Git:** незакоммичено
+
+**Риски:** ИИ-полировка wording и критик перед publish — не делали; diff UI «Изменения» — только impact API.
+
+**Следующий шаг:**
+- UI «Изменения» + scoped regen; критик L2→L3; U5 план перехода.
+
+---
+
+## 2026-08-24 — СИСТЕМА U3: layout карты + preview L3
+
+**Тип:** `feature`
+
+**Сделано:**
+- `PUT /graph/layout` — upsert `mgmt_node_layouts` при drag узла на карте.
+- `GET /l3-preview` — read-only сборка обязанностей/чек-листов из process_steps (без persist/approve).
+- UI: сохранение позиции в `ManagementMap`; `L3PreviewPanel` в шаге 5 мастера и эксперте.
+
+**Файлы:** `management_system.py` (upsert layouts), `management_l3_preview.py`, routes/schemas, `ManagementMap.tsx`, `L3PreviewPanel.tsx`, `GapSummaryStep.tsx`, `ManagementExpertPanel.tsx`, `lib/management.ts`
+
+**Git:** незакоммичено
+
+**Риски:** KPI в preview пока пустые (measures-links → U4); autolayout elkjs не делали.
+
+**Следующий шаг:**
+- U4: persist role_documents + утверждение L3; KPI invariant; impact/stale.
+
+---
+
+## 2026-08-24 — СИСТЕМА U3: gate mode L2a/L2b + accept/reject suggested
+
+**Тип:** `feature`
+
+**Сделано:**
+- `management_gates.py`: approve/reject сущности; bulk L2a/L2b; summary pending.
+- Валидатор L2a `STEP_NO_ROLE` при утверждении процесса.
+- API: `/gates/summary`, `/gates/approve`, `/gates/reject`, `/gates/l2a|l2b/approve-all`.
+- Карта: режим ворот (клик → панель Утвердить/Отклонить).
+- Эксперт: accept/reject suggested; блок L2a процессы / L2b роли.
+- `approve-all` draft теперь включает `suggested`.
+
+**Файлы:** `management_gates.py`, `management_validators.py`, routes/schemas, `ManagementMap.tsx`, `ManagementExpertPanel.tsx`, `lib/management.ts`, `globals.css`
+
+**Git:** незакоммичено
+
+**Риски:** layout drag→node_layout ещё не сохраняется; L3 preview в мастере — нет.
+
+**Следующий шаг:**
+- Сохранение layout на карте; preview L3 read-only; U4 документы ролей.
+
+---
+
+## 2026-08-24 — СИСТЕМА U3: пакеты, gap, внедрение, role_assignments
+
+**Тип:** `feature`
+
+**Сделано:**
+- Контент-пакеты `sme_basis`, `construction_pilot`; apply → seeds `suggested`, L2 draft.
+- `management_gap.py`: numeric gap, overload/coverage; исправлены импорты.
+- Мастер шаги 4–5: пакет + сводка/gap; inherited goals read-only.
+- API: `/industry-packs`, `/gap-report`, `/implementation`, CRUD `/role-assignments`, `/roles`.
+- Frontend: `IndustryPackStep`, `GapSummaryStep`, режим «Внедрение» (`/management-system/implementation`).
+
+**Файлы:** `management_packs.py`, `management_gap.py`, `management_assignments.py`, routes/schemas/wizard, `ManagementImplementationPanel.tsx`, `ManagementShell.tsx`, `lib/management.ts`, `test_management_u3_packs_gap.py`
+
+**Git:** незакоммичено
+
+**Риски:** merge целей холдинга в BSC-блоки — только список; L2 gates / L3 preview — следующий шаг.
+
+**Следующий шаг:**
+- L2a/L2b gate mode на карте; approve suggested goals inline; U4 документы ролей.
+
+---
+
+## 2026-08-23 — СИСТЕМА U2c: несколько систем + ранний экспорт
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `l2m3n4o5p6q7`: сняли unique на `mgmt_systems.organization_id`; поля `title`, `kind` (company|holding|demo), `parent_system_id`, `is_archived`; таблица `mgmt_workspace_prefs` (активная система на user+org).
+- API: `GET/POST /systems`, `POST /systems/{id}/activate`; экспорт `GET /export/goals.html` (печать→PDF) и `/export/goals.docx`.
+- Wizard привязан к `revision_id` активной системы (можно переключаться между компаниями).
+- Frontend: `ManagementSystemSwitcher` + кнопки экспорта в `ManagementShell`.
+- Холдинг: компания может ссылаться на parent holding (общие цели — следующий шаг).
+
+**Файлы:** `l2m3n4o5p6q7_*.py`, `management_models.py`, `management_system.py`, `management_export.py`, `management_wizard.py`, routes/schemas, `ManagementSystemSwitcher.tsx`, `ManagementExportButtons.tsx`, `ManagementShell.tsx`, `lib/management.ts`
+
+**Git:** незакоммичено
+
+**Риски:** при переключении системы страница перезагружается; shared goals холдинга пока не мержатся в UI.
+
+**Следующий шаг:**
+- Показ общих целей холдинга + компаний; U4 — оргсхема/ДИ в экспорт.
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `k1l2m3n4o5p6`: таблица `mgmt_business_profiles` (1 на revision).
+- Мастер перестроен: шаг 1 команда → шаг 2 паспорт → шаг 3 блоки BSC → шаг 4 заглушка U3.
+- Backend: `management_business_profile.py`, `management_goal_blocks.py`; scoped `clear_draft_goals_for_dimension`; ИИ `mgmt_l0_block_from_interview` (2–3 цели без L1).
+- API: `/business-profile`, `/goal-blocks/{code}/answer|generate|approve|skip`, `PATCH /goals/{id}`, `/wizard/step/2/complete` (паспорт), `/wizard/step/3/complete` (блоки).
+- Frontend: `BusinessProfileForm.tsx`, `GoalBlocksWizard.tsx` (мастер + эксперт), стили в `globals.css`.
+- Тесты: `test_management_u2b_profile_blocks.py`.
+
+**Файлы:** `k1l2m3n4o5p6_*.py`, `management_models.py`, `management_business_profile.py`, `management_goal_blocks.py`, `management_wizard.py`, `management_ai.py`, `management_system.py`, `management_validators.py`, routes/schemas, `BusinessProfileForm.tsx`, `GoalBlocksWizard.tsx`, `ManagementWizard.tsx`, `ManagementExpertPanel.tsx`, `lib/management.ts`
+
+**Git:** незакоммичено (ветка `feature/sistema-u1`)
+
+**Риски:** старые wizard-сессии с `step2.completed` (интервью) мигрируют на шаг 4; нужен `ROUTERAI_API_KEY` для генерации по блокам.
+
+**Следующий шаг:**
+- Прогнать миграцию на стенде (`alembic upgrade head`); U3 — отраслевой пакет.
+
+---
+
+
+**Тип:** `feature`
+
+**Сделано:**
+- Миграция `j0k1l2m3n4o5`: `mgmt_owner_interview_sessions`, `mgmt_owner_interview_answers` (immutable append).
+- Backend: интервью 7 вопросов, wizard step 1 (команда CSV/paste/skip), step 2 (answers → `chat_json` task=`mgmt_l0_l1_from_interview`, retry ×3, graceful `AI_UNAVAILABLE`).
+- API: `/wizard/state`, step/1, step/2/answer|generate|approve-goals|complete; approve L0/L1 в эксперте.
+- Frontend: `/management-system/wizard`, `ManagementWizard`; эксперт — кнопки «Утвердить L0/L1».
+- Тесты E6: `test_management_u2_validators.py` + fixture `l0_l1_from_interview.json`.
+
+**Файлы:** `j0k1l2m3n4o5_*.py`, `management_interview.py`, `management_ai.py`, `management_wizard.py`, `management_validators.py`, routes/schemas, `ManagementWizard.tsx`, `wizard/page.tsx`, `ManagementExpertPanel.tsx`, `lib/management.ts`
+
+**Git:** незакоммичено (ветка `feature/sistema-u1`)
+
+**Риски:** нужен `ROUTERAI_API_KEY` для генерации; шаги 3–5 — заглушка до U3.
+
+**Следующий шаг:**
+- UX-ревью мастера на тестовом сценарии; U3 — пакеты + gap.
+
+---
+
+## 2026-08-23 — СИСТЕМА U2 fix: 500 на /management/* (висела загрузка)
+
+**Тип:** `fix`
+
+**Сделано:**
+- `_require_mgmt_access`: `user.role` → `ROLE_PLATFORM_OWNER in user.roles` (AttributeError → 500).
+- Демо-орг: `features.management_system=true` в `ensure_demo_showcase`.
+- Перезапуск uvicorn (завис на reload после 500).
+
+**Файлы:** `management_system.py`, `demo_showcase.py`
+
+**Git:** незакоммичено
+
+---
+
 ## 2026-08-23 — СИСТЕМА: ревью №5 — BSC-измерения + baseline/target (U1)
 
 **Тип:** `feature` / `docs`

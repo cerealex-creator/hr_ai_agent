@@ -1,0 +1,7 @@
+{
+  "id": "construction_pilot",
+  "title": "Стройка (пилот)",
+  "version": "1.0.0",
+  "description": "Пилотный пакет для строительных и проектных компаний: сметы, объекты, субподряд.",
+  "defaults": { "overload_roles": 2, "overload_steps": 10 }
+}

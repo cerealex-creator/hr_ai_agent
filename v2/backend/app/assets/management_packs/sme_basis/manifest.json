@@ -1,0 +1,7 @@
+{
+  "id": "sme_basis",
+  "title": "Универсальный SME-базис",
+  "version": "1.0.0",
+  "description": "Базовые процессы и роли для малого и среднего бизнеса без отраслевой специфики.",
+  "defaults": { "overload_roles": 2, "overload_steps": 8 }
+}

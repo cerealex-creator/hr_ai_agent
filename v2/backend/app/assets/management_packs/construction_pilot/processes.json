@@ -1,0 +1,13 @@
+{
+  "process_maps": [
+    {
+      "title": "Ведение объекта",
+      "steps": [
+        { "title": "Приём заявки на объект", "frequency": "weekly", "role_title": "Руководитель проекта" },
+        { "title": "Согласование сметы", "frequency": "weekly", "role_title": "Сметчик" },
+        { "title": "Контроль графика работ", "frequency": "daily", "role_title": "Прораб" },
+        { "title": "Приёмка этапа заказчиком", "frequency": "monthly", "role_title": "Руководитель проекта" }
+      ]
+    }
+  ]
+}

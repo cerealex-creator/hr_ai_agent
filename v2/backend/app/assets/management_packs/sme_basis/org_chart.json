@@ -1,0 +1,13 @@
+{
+  "roles": [
+    { "title": "Руководитель", "external_key": "director" },
+    { "title": "Менеджер по продажам", "external_key": "sales_manager" },
+    { "title": "Бухгалтер", "external_key": "accountant" }
+  ],
+  "org_nodes": [
+    { "title": "Руководитель", "role_title": "Руководитель", "children": [
+      { "title": "Продажи", "role_title": "Менеджер по продажам" },
+      { "title": "Финансы", "role_title": "Бухгалтер" }
+    ]}
+  ]
+}
