@@ -3,7 +3,25 @@
 Журнал разработки для восстановления контекста между сессиями AI/разработчика.  
 Только факты: код, git, `data/`, `deploy/`.
 
+## 2026-08-24 — v2: отчёт заказчика + напоминания
+
+**Тип:** `feature`
+
+**Сделано:**
+- Отчёт заказчика: `client_report.py`, API `/c/…/report/…`, страница воронки, кнопка «Отчёт в чат» на вакансии.
+- Preview-макет `/design-preview/client-report`, доработки resume preview в зоне клиента.
+- Напоминания v2: правки keyboards/reminders/notify_prefs.
+- **main:** автосводки Telegram отключены (`DIGEST_SCHEDULE = ()`, commit `7ce11a2`).
+
+**Файлы:** `client_report.py`, `client_zone.py`, `vacancies.py`, report UI, `VacancyReportButton.tsx`, `telegram_reminders.py` (main)
+
+**Git:** `feature/v2` commit `26c0746`, push origin; `main` `7ce11a2` уже на origin
+
+**Следующий шаг:**
+- Деплой feature/v2; включить автосводки после проверки отчёта в prod.
+
 ---
+
 
 ## 2026-08-18 — Ветка docs: планы КАСКАД / ЯКОРЬ / АССИСТЕНТ / ЭФИР
 
