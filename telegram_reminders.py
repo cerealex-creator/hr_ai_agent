@@ -29,11 +29,9 @@ FEEDBACK_OVERDUE_MIN = timedelta(hours=24)
 FEEDBACK_REPEAT_MIN = timedelta(hours=24)
 THINK_LONG_MIN = timedelta(days=5)
 
-# Вторник 18:00 и пятница 15:00 (часовой пояс TELEGRAM_REMINDER_TZ)
-DIGEST_SCHEDULE = (
-    ("tuesday", 1, 18, 0),
-    ("friday", 4, 15, 0),
-)
+# Автосводки в Telegram отключены (2026-08-20): пока нет отчётной страницы в зоне заказчика.
+# Раньше: вторник 18:00 и пятница 15:00 (TELEGRAM_REMINDER_TZ).
+DIGEST_SCHEDULE = ()
 DIGEST_TIME_TOLERANCE_MIN = 12
 
 # Накопленное за сб–вс отправляем в понедельник с этого времени (TELEGRAM_REMINDER_TZ)
