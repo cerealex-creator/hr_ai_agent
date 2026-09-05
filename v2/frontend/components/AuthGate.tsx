@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -40,6 +41,19 @@ function rolesIncludeOwner(user: AuthMe | null): boolean {
   return (user.roles || []).includes("platform_owner");
 }
 
+function isManagementPath(pathname: string | null): boolean {
+  return pathname === "/management-system" || Boolean(pathname?.startsWith("/management-system/"));
+}
+
+function isConsultingPublicPath(pathname: string | null): boolean {
+  return Boolean(pathname?.startsWith("/consulting/p/") || pathname?.startsWith("/consulting/s/"));
+}
+
+function isConsultingPath(pathname: string | null): boolean {
+  if (isConsultingPublicPath(pathname)) return false;
+  return pathname === "/consulting" || Boolean(pathname?.startsWith("/consulting/"));
+}
+
 function isSharePublicPage(pathname: string | null): boolean {
   return (
     pathname === "/c" ||
@@ -49,7 +63,10 @@ function isSharePublicPage(pathname: string | null): boolean {
     pathname === "/i" ||
     Boolean(pathname?.startsWith("/i/")) ||
     pathname === "/design-preview" ||
-    Boolean(pathname?.startsWith("/design-preview/"))
+    Boolean(pathname?.startsWith("/design-preview/")) ||
+    pathname === "/demo" ||
+    Boolean(pathname?.startsWith("/demo/")) ||
+    isConsultingPublicPath(pathname)
   );
 }
 
@@ -71,6 +88,8 @@ export function AuthGate({ children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<AuthMe | null | undefined>(undefined);
+  const userRef = useRef(user);
+  userRef.current = user;
   const isLogin = pathname === "/login" || pathname?.startsWith("/login/");
   const isHub = pathname === "/";
   const isPublicPage = isHub || isSharePublicPage(pathname);
@@ -82,14 +101,28 @@ export function AuthGate({ children }: Props) {
 
   useEffect(() => {
     if (isSharePublicPage(pathname)) {
-      setUser(null);
       return;
     }
     let cancelled = false;
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled || settled) return;
+      settled = true;
+      // Уже есть сессия с предыдущей страницы — не выкидывать на вход из-за медленного /auth/me.
+      if (userRef.current) return;
+      setUser(null);
+      if (!isLogin && !isHub) {
+        const next = `${pathname || "/"}${typeof window !== "undefined" ? window.location.search : ""}`;
+        router.replace(`/login?next=${encodeURIComponent(next)}`);
+      }
+    }, 8000);
+
     (async () => {
       try {
         const me = await authMe();
         if (cancelled) return;
+        settled = true;
+        window.clearTimeout(timer);
         setUser(me);
         if (isHub) return;
         if (!me && !isLogin) {
@@ -97,23 +130,38 @@ export function AuthGate({ children }: Props) {
           router.replace(`/login?next=${encodeURIComponent(next)}`);
         }
         if (me && isLogin) {
-          const next =
+          const params =
             typeof window !== "undefined"
-              ? new URLSearchParams(window.location.search).get("next")
+              ? new URLSearchParams(window.location.search)
               : null;
+          // С сайта-профиля: показать форму входа, даже если сессия уже есть.
+          if (params?.get("stay") === "1") return;
+          const next = params?.get("next") ?? null;
           router.replace(safeNextPath(next));
         }
       } catch {
-        if (!cancelled) {
-          setUser(null);
-          if (!isLogin && !isHub) router.replace("/login");
-        }
+        if (cancelled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        if (userRef.current) return;
+        setUser(null);
+        if (!isLogin && !isHub) router.replace("/login");
       }
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [pathname, isLogin, isHub, router]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (isConsultingPath(pathname) && (user.is_demo || !rolesIncludeOwner(user))) {
+      router.replace("/");
+      return;
+    }
+    if (user.is_demo && isManagementPath(pathname)) router.replace("/");
+  }, [pathname, user, router]);
 
   const logout = async () => {
     await authLogout();
@@ -156,6 +204,28 @@ export function AuthGate({ children }: Props) {
       <div className="auth-boot">
         <p className="muted">Переход к входу…</p>
       </div>
+    );
+  }
+
+  if (isConsultingPath(pathname) && (user.is_demo || !rolesIncludeOwner(user))) {
+    return (
+      <AuthContext.Provider value={value}>
+        {user.is_demo ? <DemoBanner /> : null}
+        <div className="auth-boot">
+          <p className="muted">Консалтинг недоступен в этом входе…</p>
+        </div>
+      </AuthContext.Provider>
+    );
+  }
+
+  if (isManagementPath(pathname) && user.is_demo) {
+    return (
+      <AuthContext.Provider value={value}>
+        <DemoBanner />
+        <div className="auth-boot">
+          <p className="muted">Недоступно в демо-режиме…</p>
+        </div>
+      </AuthContext.Provider>
     );
   }
 

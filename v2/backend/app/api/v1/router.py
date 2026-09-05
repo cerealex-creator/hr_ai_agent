@@ -18,6 +18,7 @@ from app.api.v1.routes import (
     stats_history,
     talent_pool,
     management_system,
+    consulting,
     vacancies,
 )
 from app.core.auth import require_auth
@@ -31,6 +32,8 @@ router.include_router(integrations.public_router)
 router.include_router(client_zone.router)
 router.include_router(resume_preview.router)
 router.include_router(interview_digest.router)
+router.include_router(consulting.public_router)
+router.include_router(consulting.survey_public_router)
 
 # Protected
 protected = APIRouter(dependencies=[Depends(require_auth)])
@@ -46,5 +49,6 @@ protected.include_router(settings.router)
 protected.include_router(stats_history.router)
 protected.include_router(talent_pool.router)
 protected.include_router(management_system.router)
+protected.include_router(consulting.router)
 protected.include_router(vacancies.router)
 router.include_router(protected)
